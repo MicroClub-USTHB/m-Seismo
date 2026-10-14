@@ -1,0 +1,35 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Rust
+target/
+
+# Go
+*.test
+coverage.out
+backend/bin/
+
+# Swift / Xcode
+.build/
+DerivedData/
+xcuserdata/
+
+# Android / Kotlin
+.gradle/
+build/
+local.properties
+
+# Flutter, React Native
+node_modules/
+.dart_tool/
