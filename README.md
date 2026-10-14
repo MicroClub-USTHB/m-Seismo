@@ -17,4 +17,5 @@ Early setup. Nothing runs yet.
 Run these commands from the repository root.
 
 - `make fmt`: format the Go backend and Rust agent.
-- `make check`: check formatting, build, and test the Go backend and Rust agent.
+- `make lint`: run the Go and Rust linters.
+- `make check`: check formatting and linting, then build and test the Go backend and Rust agent.

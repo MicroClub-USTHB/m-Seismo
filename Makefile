@@ -1,17 +1,19 @@
-.PHONY: check backend-check agent-check fmt \
+.PHONY: check backend-check agent-check fmt lint \
         backend-build backend-test backend-fmt backend-fmt-check \
-        agent-build agent-test agent-fmt agent-fmt-check
+        agent-build agent-test agent-fmt agent-fmt-check backend-lint agent-lint
 
 check: backend-check agent-check
 
 fmt: backend-fmt agent-fmt
 
-backend-check: backend-fmt-check backend-build backend-test
+lint: backend-lint agent-lint
 
-agent-check: agent-fmt-check agent-build agent-test
+backend-check: backend-fmt-check backend-lint backend-build backend-test
+
+agent-check: agent-fmt-check agent-lint agent-build agent-test
 
 backend-build:
-	cd backend && go build -o bin/ ./...
+	cd backend && mkdir -p bin && go build -o bin/m-seismo .
 
 backend-test:
 	cd backend && go test ./...
@@ -34,3 +36,9 @@ agent-fmt:
 
 agent-fmt-check:
 	cd agent && cargo fmt --check
+
+backend-lint:
+	cd backend && golangci-lint run ./...
+
+agent-lint:
+	cd agent && cargo clippy --locked --all-targets -- -D warnings
