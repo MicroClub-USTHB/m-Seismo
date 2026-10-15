@@ -18,6 +18,8 @@ There is no admin tool yet. Add a project key by hand. Store the sha256 of the k
 
 ## Test
 
-    TEST_DATABASE_URL=postgres://user:pass@host/scratch make backend-test
+    cd backend
+    # set TEST_DATABASE_URL to postgres://user:pass@host/scratch, then:
+    go test ./...
 
 DB tests are skipped without `TEST_DATABASE_URL`. They truncate the tables, so use a scratch database.
