@@ -52,6 +52,18 @@ Each field group maps to PRD requirements. Field names and types are TBD.
 | Network requests | address, method, result, duration (default off) | FR-23, FR-28 |
 | Screenshot | original and annotated image (attachments) | FR-11, FR-19 |
 
+### Envelope (proposed, first slice)
+
+The report JSON goes in the multipart part named `report`. Other fields in this section are still TBD.
+
+| Field | Type | Required | Rule |
+| --- | --- | --- | --- |
+| `id` | string | yes | UUIDv7, client-generated |
+| `installation_id` | string | yes | 1 to 128 characters, anonymous |
+| `mode` | string | yes | `internal`, `QA` or `production` |
+| `trigger` | string | yes | `shake`, `screenshot`, `long_press`, `manual`, `crash` or `non_fatal` |
+| `occurred_at` | string | yes | RFC 3339, UTC (`Z` suffix) |
+
 Rules:
 
 - **Timestamps.** RFC 3339, UTC, with milliseconds (e.g. `2026-10-15T19:13:00.123Z`). The device sends its own timestamp. The server also records receive time and uses it for ordering, since offline reports arrive late.
