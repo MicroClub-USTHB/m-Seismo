@@ -40,13 +40,18 @@ public struct Report {
     /// (FR-15), not filled in by the reporter.
     public var deviceContext: DeviceContext?
 
+    /// The session this report was filed from (FR-22, SDK-09), so it can
+    /// be matched against whatever the server logged for the same session.
+    public var sessionID: String?
+
     public init(
         title: String = "",
         description: String = "",
         category: Category = .bug,
         severity: Severity = .medium,
         screenshot: Data? = nil,
-        deviceContext: DeviceContext? = nil
+        deviceContext: DeviceContext? = nil,
+        sessionID: String? = nil
     ) {
         self.title = title
         self.description = description
@@ -54,5 +59,6 @@ public struct Report {
         self.severity = severity
         self.screenshot = screenshot
         self.deviceContext = deviceContext
+        self.sessionID = sessionID
     }
 }

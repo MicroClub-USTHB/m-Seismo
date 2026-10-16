@@ -11,5 +11,6 @@ final class ReportTests: XCTestCase {
         XCTAssertEqual(report.severity, .medium)
         XCTAssertNil(report.screenshot)
         XCTAssertNil(report.deviceContext)
+        XCTAssertNil(report.sessionID)
     }
 }

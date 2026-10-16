@@ -13,6 +13,9 @@ public final class MSeismo: ObservableObject {
 
     public private(set) var configuration: Configuration?
 
+    /// One per app launch; carried on every report (FR-22, SDK-09).
+    public let session = Session()
+
     public let shakeDetector = ShakeDetector()
 
     #if os(iOS)
