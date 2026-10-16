@@ -68,6 +68,11 @@ public final class MSeismo: ObservableObject {
     /// `.sheet(isPresented:)`.
     @Published public var isReportSheetPresented = false
 
+    /// The real screen, captured at the moment of the trigger, before the
+    /// report sheet appears (FR-19). An app reads this when constructing
+    /// `ReportFormView`'s initial `Report`.
+    @Published public private(set) var capturedScreenshot: Data?
+
     private init() {
         crashReporter.start()
 
@@ -130,6 +135,9 @@ public final class MSeismo: ObservableObject {
     /// screenshot triggers; also public so an app can call it directly,
     /// e.g. from a "Report a bug" button or a long-press gesture (FR-07).
     public func report() {
+        #if os(iOS)
+        capturedScreenshot = ScreenshotCapture.captureCurrentScreen()?.jpegData(compressionQuality: 0.8)
+        #endif
         isReportSheetPresented = true
     }
 
