@@ -26,6 +26,10 @@ public final class MSeismo: ObservableObject {
     /// on its own.
     public let breadcrumbs = BreadcrumbTracker()
 
+    /// Strips PII from report text before it leaves the phone (FR-25).
+    /// Configure `rules`, `allowList`, `denyList` directly on this.
+    public let redactor = Redactor()
+
     private let crashReporter = CrashReporter.shared
 
     /// Called with a crash/error report that was captured automatically
@@ -118,6 +122,21 @@ public final class MSeismo: ObservableObject {
         report.deviceContext = DeviceContext.current()
         #endif
 
-        onAutoReport?(report)
+        onAutoReport?(redacted(report))
+    }
+
+    /// Applies `redactor` to every free-text field of a report (FR-25):
+    /// title, description, and each recorded log line/breadcrumb message.
+    public func redacted(_ report: Report) -> Report {
+        var report = report
+        report.title = redactor.redact(report.title)
+        report.description = redactor.redact(report.description)
+        report.recentLogs = report.recentLogs?.map {
+            LogLine(message: redactor.redact($0.message), timestamp: $0.timestamp)
+        }
+        report.breadcrumbs = report.breadcrumbs?.map {
+            Breadcrumb(kind: $0.kind, message: redactor.redact($0.message), timestamp: $0.timestamp)
+        }
+        return report
     }
 }
