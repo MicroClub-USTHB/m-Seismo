@@ -6,8 +6,7 @@ import Foundation
 public final class MSeismo: ObservableObject {
     public static let shared = MSeismo()
 
-    public private(set) var projectKey: String?
-    public private(set) var environment: String?
+    public private(set) var configuration: Configuration?
 
     public let shakeDetector = ShakeDetector()
 
@@ -23,8 +22,7 @@ public final class MSeismo: ObservableObject {
     }
 
     /// Connects the app to an m-Seismo project.
-    public func configure(projectKey: String, environment: String = "production") {
-        self.projectKey = projectKey
-        self.environment = environment
+    public func configure(_ configuration: Configuration) {
+        self.configuration = configuration
     }
 }

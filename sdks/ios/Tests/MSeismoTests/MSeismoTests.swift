@@ -2,16 +2,16 @@ import XCTest
 @testable import MSeismo
 
 final class MSeismoTests: XCTestCase {
-    func testConfigureStoresProjectKeyAndEnvironment() {
-        MSeismo.shared.configure(projectKey: "test-key", environment: "staging")
+    func testConfigureStoresConfiguration() {
+        let config = Configuration(
+            endpoint: URL(string: "https://seismo.example.com")!,
+            projectKey: "test-key",
+            environment: "staging"
+        )
 
-        XCTAssertEqual(MSeismo.shared.projectKey, "test-key")
-        XCTAssertEqual(MSeismo.shared.environment, "staging")
-    }
+        MSeismo.shared.configure(config)
 
-    func testConfigureDefaultsEnvironmentToProduction() {
-        MSeismo.shared.configure(projectKey: "test-key")
-
-        XCTAssertEqual(MSeismo.shared.environment, "production")
+        XCTAssertEqual(MSeismo.shared.configuration?.projectKey, "test-key")
+        XCTAssertEqual(MSeismo.shared.configuration?.environment, "staging")
     }
 }

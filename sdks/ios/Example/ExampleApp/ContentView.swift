@@ -8,8 +8,8 @@ struct ContentView: View {
         VStack(spacing: 12) {
             Text("m-Seismo Example")
                 .font(.headline)
-            Text("Project key: \(mseismo.projectKey ?? "none")")
-            Text("Environment: \(mseismo.environment ?? "none")")
+            Text("Project key: \(mseismo.configuration?.projectKey ?? "none")")
+            Text("Environment: \(mseismo.configuration?.environment ?? "none")")
             Text("Shake the device (or Hardware > Shake Gesture in the Simulator) to open the report form.")
                 .font(.caption)
                 .multilineTextAlignment(.center)
