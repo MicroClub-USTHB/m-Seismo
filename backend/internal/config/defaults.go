@@ -11,4 +11,8 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("database.url", "postgres://seismo:seismo@localhost:5432/seismo?sslmode=disable")
 	v.SetDefault("database.max_conns", 10)
+
+	v.SetDefault("redis.url", "redis://localhost:6379/0")
+
+	v.SetDefault("nats.url", "nats://localhost:4222")
 }

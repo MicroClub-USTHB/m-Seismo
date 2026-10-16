@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-
 func Load(configPath string) (*Config, error) {
 	v := viper.New()
 
@@ -44,6 +43,12 @@ func Load(configPath string) (*Config, error) {
 		Database: DatabaseConfig{
 			URL:      v.GetString("database.url"),
 			MaxConns: int32(v.GetInt("database.max_conns")),
+		},
+		Redis: RedisConfig{
+			URL: v.GetString("redis.url"),
+		},
+		NATS: NATSConfig{
+			URL: v.GetString("nats.url"),
 		},
 	}
 
