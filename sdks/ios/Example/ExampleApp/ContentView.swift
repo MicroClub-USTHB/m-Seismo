@@ -28,6 +28,9 @@ struct ContentView: View {
             ReportFormView(
                 onSubmit: { report in
                     print("Report submitted: \(report)")
+                    if let context = report.deviceContext {
+                        print("Device context: \(context)")
+                    }
                     mseismo.isReportSheetPresented = false
                 },
                 onCancel: {

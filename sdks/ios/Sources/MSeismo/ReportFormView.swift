@@ -91,6 +91,7 @@ public struct ReportFormView: View {
                     .foregroundColor(.accentColor),
                 trailing: Button("Send") {
                     report.screenshot = screenshot?.jpegData(compressionQuality: 0.8)
+                    report.deviceContext = DeviceContext.current()
                     onSubmit(report)
                 }
                 .foregroundColor(.accentColor)

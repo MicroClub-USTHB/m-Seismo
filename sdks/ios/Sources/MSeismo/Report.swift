@@ -36,17 +36,23 @@ public struct Report {
     /// code (see `ReportFormView`, which populates it).
     public var screenshot: Data?
 
+    /// Device/app context captured automatically at submission time
+    /// (FR-15), not filled in by the reporter.
+    public var deviceContext: DeviceContext?
+
     public init(
         title: String = "",
         description: String = "",
         category: Category = .bug,
         severity: Severity = .medium,
-        screenshot: Data? = nil
+        screenshot: Data? = nil,
+        deviceContext: DeviceContext? = nil
     ) {
         self.title = title
         self.description = description
         self.category = category
         self.severity = severity
         self.screenshot = screenshot
+        self.deviceContext = deviceContext
     }
 }
