@@ -2,6 +2,7 @@ import Combine
 import Foundation
 
 #if os(iOS)
+import Network
 import UIKit
 #endif
 
@@ -34,6 +35,12 @@ public final class MSeismo: ObservableObject {
     /// Configure `rules`, `allowList`, `denyList` directly on this.
     public let redactor = Redactor()
 
+    /// Persistent delivery queue (FR-33/FR-34, SDK-10). `submit(_:)` is the
+    /// normal way reports get here; exposed directly so an app can call
+    /// `queue.retryNow()` on reconnect or `queue.pendingCount` for a
+    /// "N reports waiting to send" indicator.
+    public let queue = OfflineQueue(transport: URLSessionTransport())
+
     private let crashReporter = CrashReporter.shared
 
     /// Called with a crash/error report that was captured automatically
@@ -46,7 +53,15 @@ public final class MSeismo: ObservableObject {
     #if os(iOS)
     private let screenshotObserver = NotificationObserver(name: UIApplication.userDidTakeScreenshotNotification)
     private var lifecycleObservers: [NotificationObserver] = []
+    private let reachabilityMonitor = NWPathMonitor()
     #endif
+
+    /// Retries the offline queue at a fixed interval, independent of
+    /// reachability changes, so a retry eventually happens even without a
+    /// clean "offline → online" transition to key off (FR-33: "retrying
+    /// at growing intervals" — the queue's own per-item backoff already
+    /// grows; this timer is just what re-checks it).
+    private var retryTimer: Timer?
 
     /// Drives presentation of `ReportFormView`. An app observes this
     /// (`@ObservedObject var mseismo = MSeismo.shared`) and binds it to a
@@ -69,7 +84,19 @@ public final class MSeismo: ObservableObject {
 
         observeLifecycle(UIApplication.didBecomeActiveNotification, message: "resumed")
         observeLifecycle(UIApplication.didEnterBackgroundNotification, message: "backgrounded")
+
+        // "sent automatically when the connection returns" (FR-33).
+        reachabilityMonitor.pathUpdateHandler = { [weak self] path in
+            if path.status == .satisfied {
+                self?.queue.retryNow()
+            }
+        }
+        reachabilityMonitor.start(queue: DispatchQueue(label: "mseismo.reachability"))
         #endif
+
+        retryTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            self?.queue.retryNow()
+        }
     }
 
     #if os(iOS)
@@ -86,6 +113,7 @@ public final class MSeismo: ObservableObject {
     /// settings (`shakeEnabled`, `screenshotEnabled`).
     public func configure(_ configuration: Configuration) {
         self.configuration = configuration
+        queue.configuration = configuration
 
         shakeDetector.isEnabled = configuration.shakeEnabled
 
@@ -117,17 +145,36 @@ public final class MSeismo: ObservableObject {
     /// same context a manual report gets and delivers it — no sheet shown.
     public func checkForPendingCrash() {
         guard let crash = crashReporter.pendingCrash() else { return }
+        onAutoReport?(submit(crash.asReport()))
+    }
 
-        var report = crash.asReport()
+    /// Attaches device context, session, logs, breadcrumbs, and network
+    /// requests — everything a report gets regardless of how it was
+    /// triggered. Shared by the manual-submit path (`ReportFormView`) and
+    /// the automatic crash path (`checkForPendingCrash`).
+    public func enrich(_ report: Report) -> Report {
+        var report = report
         report.sessionID = session.id
         report.recentLogs = logs.recent
         report.breadcrumbs = breadcrumbs.recent
         report.networkRequests = networkLog.recent
         #if os(iOS)
-        report.deviceContext = DeviceContext.current()
+        if report.deviceContext == nil {
+            report.deviceContext = DeviceContext.current()
+        }
         #endif
+        return report
+    }
 
-        onAutoReport?(redacted(report))
+    /// Queues a redacted, context-enriched report for delivery and
+    /// returns the report as queued (FR-32: this call itself returns
+    /// immediately — the actual network send happens in the background
+    /// via `queue`, with offline retry per FR-33).
+    @discardableResult
+    public func submit(_ report: Report) -> Report {
+        let final = redacted(enrich(report))
+        queue.enqueue(final)
+        return final
     }
 
     /// Applies `redactor` to every free-text field of a report (FR-25):

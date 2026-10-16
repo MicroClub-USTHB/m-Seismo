@@ -3,8 +3,8 @@ import Foundation
 /// A reporter-submitted bug report (PRD FR-10). Every field is optional
 /// (FR-12): defaults exist so a report can be sent with none of them filled
 /// in, in auto-submit mode.
-public struct Report {
-    public enum Category: String, CaseIterable, Identifiable, Equatable {
+public struct Report: Codable, Equatable {
+    public enum Category: String, CaseIterable, Identifiable, Equatable, Codable {
         case bug, crash, ui, other
 
         public var id: String { rawValue }
@@ -19,7 +19,7 @@ public struct Report {
         }
     }
 
-    public enum Severity: String, CaseIterable, Identifiable, Equatable {
+    public enum Severity: String, CaseIterable, Identifiable, Equatable, Codable {
         case low, medium, high, critical
 
         public var id: String { rawValue }

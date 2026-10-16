@@ -33,6 +33,22 @@ xcodegen generate
 open ExampleApp.xcodeproj
 ```
 
+### Testing the network layer / offline queue against something real
+
+`Example/fake_server.py` is a throwaway local HTTP server (not part of the
+SDK or CI) for exercising `URLSessionTransport`/`OfflineQueue` against a real
+server instead of only mocks:
+
+```sh
+cd sdks/ios/Example
+python3 fake_server.py          # logs every /reports POST it receives
+python3 fake_server.py 2        # fails the first 2 requests with 503, to watch retry/backoff
+```
+
+The example app points at `http://127.0.0.1:8787/reports` and submits a test
+report automatically at launch (`ExampleApp.swift`) — no UI interaction
+needed, just run the server and launch the app.
+
 ## CI
 
 - `.github/workflows/ios-ci.yml` — on every push/PR touching `sdks/ios/**`:
