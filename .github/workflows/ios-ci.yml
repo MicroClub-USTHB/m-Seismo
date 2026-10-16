@@ -19,8 +19,18 @@ jobs:
       - name: Build package
         run: swift build
 
-      - name: Test package
+      - name: Test package (macOS host)
         run: swift test
+
+      - name: Test package (iOS Simulator)
+        # swift test above only runs on the macOS host, which silently
+        # skips everything behind #if os(iOS) -- most of this package.
+        # xcodebuild can test the same SPM target against a real iOS
+        # Simulator destination; that's the one that actually covers it.
+        run: |
+          xcodebuild test \
+            -scheme MSeismo \
+            -destination 'platform=iOS Simulator,name=iPhone 16'
 
       - name: Install xcodegen
         run: brew install xcodegen

@@ -13,6 +13,7 @@ public struct ReportFormView: View {
     @State private var report: Report
     @State private var screenshot: UIImage?
     @State private var isScreenshotPickerPresented = false
+    @State private var isAnnotating = false
 
     let onSubmit: (Report) -> Void
     let onCancel: () -> Void
@@ -69,6 +70,10 @@ public struct ReportFormView: View {
 
                             Spacer()
 
+                            Button("Annotate") {
+                                isAnnotating = true
+                            }
+
                             Button("Remove") {
                                 self.screenshot = nil
                             }
@@ -99,6 +104,18 @@ public struct ReportFormView: View {
                 ScreenshotPicker { image in
                     screenshot = image
                     isScreenshotPickerPresented = false
+                }
+            }
+            .sheet(isPresented: $isAnnotating) {
+                if let screenshot {
+                    ScreenshotAnnotationView(
+                        image: screenshot,
+                        onDone: { annotated in
+                            self.screenshot = annotated
+                            isAnnotating = false
+                        },
+                        onCancel: { isAnnotating = false }
+                    )
                 }
             }
         }
