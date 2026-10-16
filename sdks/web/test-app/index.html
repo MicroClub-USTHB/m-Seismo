@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>m-Seismo Web SDK — test app</title>
+  </head>
+  <body>
+    <main class="page">
+      <h1>m-Seismo Web SDK — test app</h1>
+      <p class="subtitle">
+        Phase 1 harness. Buttons trigger scenarios and log locally; the SDK
+        itself is not wired to any scenario yet.
+      </p>
+
+      <section class="grid">
+        <button type="button" data-testid="open-form">Open bug-report form</button>
+        <button type="button" data-testid="throw-sync">Throw uncaught exception</button>
+        <button type="button" data-testid="unhandled-rejection">Unhandled promise rejection</button>
+        <button type="button" data-testid="fetch-500">Request → HTTP 500</button>
+        <button type="button" data-testid="fetch-200">Request → HTTP 200</button>
+        <button type="button" data-testid="silent-save">Save (silent logical bug)</button>
+        <button type="button" data-testid="theme-toggle">Toggle theme</button>
+      </section>
+
+      <section class="panel">
+        <h2>Ctrl + Enter shortcut area</h2>
+        <p>
+          Press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> anywhere on the page. The
+          indicator below updates, and later phases will use this to submit
+          reports. The textarea exists to test "user is typing" behaviour.
+        </p>
+        <textarea
+          data-testid="ctrl-enter-input"
+          rows="3"
+          placeholder="Type here, then press Ctrl + Enter…"
+        ></textarea>
+        <p data-testid="ctrl-enter-indicator" class="indicator">No Ctrl+Enter yet.</p>
+      </section>
+
+      <section class="panel">
+        <h2>Event log</h2>
+        <ol data-testid="event-log" class="event-log"></ol>
+      </section>
+    </main>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
