@@ -1,0 +1,22 @@
+name: ExampleApp
+options:
+  bundleIdPrefix: com.microclub.mseismo
+  deploymentTarget:
+    iOS: "14.0"
+
+packages:
+  MSeismo:
+    path: ..
+
+targets:
+  ExampleApp:
+    type: application
+    platform: iOS
+    sources:
+      - ExampleApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.microclub.mseismo.example
+        GENERATE_INFOPLIST_FILE: true
+    dependencies:
+      - package: MSeismo

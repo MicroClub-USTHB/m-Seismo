@@ -1,0 +1,40 @@
+name: iOS SDK CI
+
+on:
+  push:
+    branches: [main]
+    paths: ["sdks/ios/**"]
+  pull_request:
+    paths: ["sdks/ios/**"]
+
+jobs:
+  build-and-test:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: sdks/ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build package
+        run: swift build
+
+      - name: Test package
+        run: swift test
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate example app project
+        working-directory: sdks/ios/Example
+        run: xcodegen generate
+
+      - name: Build example app
+        working-directory: sdks/ios/Example
+        run: |
+          xcodebuild \
+            -project ExampleApp.xcodeproj \
+            -scheme ExampleApp \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            build
