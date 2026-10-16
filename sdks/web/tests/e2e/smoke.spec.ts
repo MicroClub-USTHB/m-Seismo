@@ -8,6 +8,7 @@ const BUTTON_TESTIDS = [
   'fetch-200',
   'silent-save',
   'theme-toggle',
+  'send-report',
 ] as const;
 
 test.beforeEach(async ({ page }) => {

@@ -1,17 +1,36 @@
 /**
  * Public API surface of the m-Seismo Web SDK.
  *
- * Phase 1 only exposes typed no-op stubs so the test application and the unit
- * tests have something stable to import. None of these functions touch the DOM
- * or `window`/`document` yet, which keeps the module import SSR-safe.
+ * Phase 2 adds the pieces needed to talk to a backend: config/`init`, a minimal
+ * report builder, the `sanitize()` privacy boundary, and the HTTP transport.
+ * `openReportForm`, `captureException`, and `captureMessage` remain stubs.
+ *
+ * The whole module is SSR-safe: importing it touches no `window`/`document`.
+ *
+ * Anything backend-shaped is **ASSUMED** — see `docs/backend-contract.md`.
  */
+import { configure } from './core/config';
+import type { InitOptions } from './core/config';
 
-export const SDK_VERSION = '0.0.0';
+export { SDK_VERSION } from './core/version';
+export { SCHEMA_VERSION, DEFAULT_TIMEOUT_MS, getConfig, isEnabled, buildReport, createReportId } from './core/index';
+export type {
+  SchemaVersion,
+  ReportError,
+  ReportApplication,
+  ReportContext,
+  ReportPayload,
+  InitOptions,
+  SdkConfig,
+  BuildReportInput,
+  BuildReportOptions,
+} from './core/index';
 
-export interface InitOptions {
-  /** Endpoint that receives unified reports. Contract defined in a later phase. */
-  readonly endpoint?: string;
-}
+export { sanitize } from './privacy/index';
+export type { SanitizedReport } from './privacy/index';
+
+export { sendReport } from './transport/index';
+export type { SendFailure, SendFailureKind, SendResult, SendSuccess } from './transport/index';
 
 export interface CaptureContext {
   /** Arbitrary structured context attached to a report. */
@@ -19,35 +38,38 @@ export interface CaptureContext {
 }
 
 /**
- * Initialise the SDK. Phase 1: no-op stub.
+ * Initialise the SDK. Validates and stores config. Invalid config logs one
+ * warning, does not throw, and leaves the SDK disabled.
+ *
+ * @returns `true` when the config was accepted.
  */
-export function init(_options: InitOptions = {}): void {
-  // no-op in Phase 1
+export function init(options: InitOptions): boolean {
+  return configure(options);
 }
 
 /**
- * Open the bug-reporting form. Phase 1: no-op stub.
+ * Open the bug-reporting form. Phase 2: no-op stub.
  */
 export function openReportForm(_context?: CaptureContext): void {
-  // no-op in Phase 1
+  // no-op until the form phase
 }
 
 /**
- * Capture an exception and send it as part of a report. Phase 1: no-op stub.
+ * Capture an exception. Phase 2: no-op stub.
  */
 export function captureException(
   _error: unknown,
   _context?: CaptureContext,
 ): void {
-  // no-op in Phase 1
+  // no-op until the collectors phase
 }
 
 /**
- * Capture a free-form message. Phase 1: no-op stub.
+ * Capture a free-form message. Phase 2: no-op stub.
  */
 export function captureMessage(
   _message: string,
   _context?: CaptureContext,
 ): void {
-  // no-op in Phase 1
+  // no-op until the collectors phase
 }

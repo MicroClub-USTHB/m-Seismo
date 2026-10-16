@@ -1,4 +1,12 @@
-import { init, openReportForm, SDK_VERSION } from '@m-seismo/web';
+import {
+  buildReport,
+  getConfig,
+  init,
+  openReportForm,
+  sanitize,
+  SDK_VERSION,
+  sendReport,
+} from '@m-seismo/web';
 import './styles.css';
 
 /**
@@ -31,9 +39,24 @@ function applyInitialTheme(): void {
 
 applyInitialTheme();
 
-// --- SDK init (stub) -------------------------------------------------------
-init({});
-record(`SDK imported, SDK_VERSION=${SDK_VERSION}`);
+// --- SDK init --------------------------------------------------------------
+// Endpoint is configurable via Vite env; defaults to the local mock receiver so
+// the browser makes a REAL cross-origin request during development.
+// `import.meta.env` values are typed `any` by Vite; cast to the expected type.
+const ENDPOINT =
+  (import.meta.env.VITE_MSEISMO_ENDPOINT as string | undefined) ??
+  'http://localhost:4010/api/reports';
+
+const enabled = init({
+  endpoint: ENDPOINT,
+  appVersion: '0.0.0',
+  environment: 'test-app',
+});
+const endpointLabel = document.querySelector('[data-testid="receiver-endpoint"]');
+if (endpointLabel) endpointLabel.textContent = ENDPOINT;
+record(
+  `SDK imported, SDK_VERSION=${SDK_VERSION}, init ${enabled ? 'enabled' : 'disabled'}`,
+);
 
 // --- Scenario 1: open the bug-reporting form (stub) -----------------------
 document
@@ -106,4 +129,28 @@ document
     const next = root.dataset['theme'] === 'dark' ? 'light' : 'dark';
     root.dataset['theme'] = next;
     record(`theme toggled to ${next}`);
+  });
+
+// --- Send a test report via the SDK transport ------------------------------
+document
+  .querySelector('[data-testid="send-report"]')
+  ?.addEventListener('click', async () => {
+    const config = getConfig();
+    if (!config) {
+      record('send test report: SDK is not configured (init failed)');
+      return;
+    }
+    // Build a minimal manual report (error: null) then send it through the
+    // privacy boundary + transport, exactly like the real flow will.
+    const report = buildReport({
+      description: 'Manual test report from the m-Seismo test app',
+    });
+    const result = await sendReport(sanitize(report), config);
+    if (result.ok) {
+      const id = result.id ? ` id=${result.id}` : '';
+      record(`send test report: ok status=${result.status}${id}`);
+    } else {
+      const status = result.status !== undefined ? ` status=${result.status}` : '';
+      record(`send test report: failed kind=${result.kind}${status} (${result.message})`);
+    }
   });

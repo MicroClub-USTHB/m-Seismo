@@ -13,7 +13,6 @@ describe('public API surface', () => {
   });
 
   it('stub functions are callable no-ops in a Node environment', () => {
-    expect(() => init()).not.toThrow();
     expect(() => init({ endpoint: 'https://example.test/ingest' })).not.toThrow();
     expect(() => openReportForm()).not.toThrow();
     expect(() => captureException(new Error('boom'), { tag: 'test' })).not.toThrow();

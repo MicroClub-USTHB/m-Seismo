@@ -21,7 +21,13 @@
         <button type="button" data-testid="fetch-200">Request → HTTP 200</button>
         <button type="button" data-testid="silent-save">Save (silent logical bug)</button>
         <button type="button" data-testid="theme-toggle">Toggle theme</button>
+        <button type="button" data-testid="send-report">Send test report</button>
       </section>
+      <p class="subtitle">
+        Reports are sent to
+        <code data-testid="receiver-endpoint">?</code>
+        (configurable via <code>VITE_MSEISMO_ENDPOINT</code>).
+      </p>
 
       <section class="panel">
         <h2>Ctrl + Enter shortcut area</h2>
