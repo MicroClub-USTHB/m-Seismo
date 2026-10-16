@@ -10,5 +10,10 @@ final class ReportTests: XCTestCase {
         XCTAssertEqual(report.category, .bug)
         XCTAssertEqual(report.severity, .medium)
         XCTAssertNil(report.screenshot)
+        XCTAssertNil(report.deviceContext)
+        XCTAssertNil(report.sessionID)
+        XCTAssertNil(report.recentLogs)
+        XCTAssertNil(report.breadcrumbs)
+        XCTAssertNil(report.networkRequests)
     }
 }
