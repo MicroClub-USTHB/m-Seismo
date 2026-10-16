@@ -1,5 +1,6 @@
 import {
   buildReport,
+  destroy,
   getConfig,
   init,
   openReportForm,
@@ -7,12 +8,13 @@ import {
   SDK_VERSION,
   sendReport,
 } from '@m-seismo/web';
+import type { SdkEvent } from '@m-seismo/web';
 import './styles.css';
 
 /**
- * Phase 1 test harness. Every button triggers a scenario and records what
- * happened locally. No SDK collector, form, or network instrumentation is wired
- * up yet — that is deliberate.
+ * Phase 3 test harness. The SDK is initialised with a launcher + shortcut;
+ * buttons drive config/lifecycle/receiver scenarios and every SDK lifecycle
+ * event is written to the event log via `onEvent`.
  */
 
 const log = document.querySelector<HTMLOListElement>('[data-testid="event-log"]');
@@ -30,7 +32,6 @@ function record(message: string): void {
 }
 
 // --- Theme -----------------------------------------------------------------
-// Default to the system preference; the toggle flips between light and dark.
 function applyInitialTheme(): void {
   const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   document.documentElement.dataset['theme'] = prefersDark ? 'dark' : 'light';
@@ -42,61 +43,73 @@ applyInitialTheme();
 // --- SDK init --------------------------------------------------------------
 // Endpoint is configurable via Vite env; defaults to the local mock receiver so
 // the browser makes a REAL cross-origin request during development.
-// `import.meta.env` values are typed `any` by Vite; cast to the expected type.
 const ENDPOINT =
   (import.meta.env.VITE_MSEISMO_ENDPOINT as string | undefined) ??
   'http://localhost:4010/api/reports';
+const RECEIVER_BASE = new URL(ENDPOINT).origin;
 
-const enabled = init({
-  endpoint: ENDPOINT,
-  appVersion: '0.0.0',
-  environment: 'test-app',
-});
+function describeEvent(event: SdkEvent): string {
+  switch (event.type) {
+    case 'form:open':
+      return 'sdk event: form:open';
+    case 'form:close':
+      return `sdk event: form:close (${event.reason})`;
+    case 'submit:start':
+      return `sdk event: submit:start id=${event.reportId}`;
+    case 'submit:success':
+      return `sdk event: submit:success id=${event.reportId} status=${event.status}`;
+    case 'submit:failure':
+      return `sdk event: submit:failure id=${event.reportId} kind=${event.kind}`;
+    case 'validation:error':
+      return `sdk event: validation:error`;
+  }
+}
+
+const onEvent = (event: SdkEvent): void => record(describeEvent(event));
+
+function initSdk(label: string, extra: { shortcut?: string | false } = {}): void {
+  const enabled = init({
+    endpoint: ENDPOINT,
+    appVersion: '0.0.0',
+    environment: 'test-app',
+    launcher: true,
+    screenshot: true,
+    onEvent,
+    ...extra,
+  });
+  record(`${label}: init ${enabled ? 'enabled' : 'disabled'}`);
+}
+
+initSdk('initial');
 const endpointLabel = document.querySelector('[data-testid="receiver-endpoint"]');
 if (endpointLabel) endpointLabel.textContent = ENDPOINT;
-record(
-  `SDK imported, SDK_VERSION=${SDK_VERSION}, init ${enabled ? 'enabled' : 'disabled'}`,
-);
+record(`SDK imported, SDK_VERSION=${SDK_VERSION}`);
 
-// --- Scenario 1: open the bug-reporting form (stub) -----------------------
+// --- Open the form ---------------------------------------------------------
 document
   .querySelector('[data-testid="open-form"]')
   ?.addEventListener('click', () => {
     openReportForm();
-    record('openReportForm() stub called');
+    record('openReportForm() called');
   });
 
-// --- Scenario 2: Ctrl + Enter shortcut ------------------------------------
-window.addEventListener('keydown', (event) => {
-  if (event.ctrlKey && event.key === 'Enter') {
-    if (indicator) indicator.textContent = `Ctrl+Enter pressed at ${new Date().toISOString()}`;
-    record('Ctrl+Enter pressed');
-  }
-});
-
-// --- Scenario 3: uncaught synchronous exception ---------------------------
+// --- Phase 1 error/request scenarios (kept for regression coverage) --------
 document
   .querySelector('[data-testid="throw-sync"]')
   ?.addEventListener('click', () => {
     record('uncaught exception thrown (see console)');
-    // Thrown from a timeout so it is truly uncaught and not swallowed by the
-    // click handler / Playwright's event dispatch.
     setTimeout(() => {
       throw new Error('m-Seismo test app: uncaught synchronous exception');
     }, 0);
   });
 
-// --- Scenario 4: unhandled promise rejection ------------------------------
 document
   .querySelector('[data-testid="unhandled-rejection"]')
   ?.addEventListener('click', () => {
     record('unhandled promise rejection triggered (see console)');
-    void Promise.reject(
-      new Error('m-Seismo test app: unhandled promise rejection'),
-    );
+    void Promise.reject(new Error('m-Seismo test app: unhandled promise rejection'));
   });
 
-// --- Scenarios 5 & 6: HTTP 500 / 200 --------------------------------------
 async function requestEndpoint(url: string, testid: string): Promise<void> {
   document.querySelector(`[data-testid="${testid}"]`)?.addEventListener(
     'click',
@@ -114,12 +127,53 @@ async function requestEndpoint(url: string, testid: string): Promise<void> {
 void requestEndpoint('/api/fail', 'fetch-500');
 void requestEndpoint('/api/ok', 'fetch-200');
 
-// --- Scenario 7: silent logical bug ---------------------------------------
 document
   .querySelector('[data-testid="silent-save"]')
   ?.addEventListener('click', () => {
     record('Save clicked — nothing happened (simulated logical bug)');
   });
+
+// --- Config / lifecycle controls ------------------------------------------
+document
+  .querySelector('[data-testid="init-twice"]')
+  ?.addEventListener('click', () => initSdk('init() again'));
+
+document
+  .querySelector('[data-testid="init-no-shortcut"]')
+  ?.addEventListener('click', () => initSdk('init() without shortcut', { shortcut: false }));
+
+document
+  .querySelector('[data-testid="destroy"]')
+  ?.addEventListener('click', () => {
+    destroy();
+    record('destroy() called');
+  });
+
+// --- Ctrl + Enter indicator (test-app's own handler) ----------------------
+window.addEventListener('keydown', (event) => {
+  if (event.ctrlKey && event.key === 'Enter') {
+    if (indicator) indicator.textContent = `Ctrl+Enter pressed at ${new Date().toISOString()}`;
+    record('Ctrl+Enter pressed');
+  }
+});
+
+// --- Receiver mode controls ------------------------------------------------
+function wireModeButton(testid: string, mode: string): void {
+  document.querySelector(`[data-testid="${testid}"]`)?.addEventListener('click', () => {
+    void fetch(`${RECEIVER_BASE}/__mode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    })
+      .then((response) => record(`receiver mode -> ${mode} (HTTP ${response.status})`))
+      .catch((error) => record(`receiver mode -> ${mode} failed: ${String(error)}`));
+  });
+}
+
+wireModeButton('mode-ok', 'ok');
+wireModeButton('mode-fail500', 'fail500');
+wireModeButton('mode-slow', 'slow');
+wireModeButton('mode-drop', 'offline');
 
 // --- Theme toggle ----------------------------------------------------------
 document
@@ -137,11 +191,9 @@ document
   ?.addEventListener('click', async () => {
     const config = getConfig();
     if (!config) {
-      record('send test report: SDK is not configured (init failed)');
+      record('send test report: SDK is not configured (init failed or destroyed)');
       return;
     }
-    // Build a minimal manual report (error: null) then send it through the
-    // privacy boundary + transport, exactly like the real flow will.
     const report = buildReport({
       description: 'Manual test report from the m-Seismo test app',
     });

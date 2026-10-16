@@ -3,18 +3,26 @@
  *
  * Produces a {@link ReportPayload} matching the **ASSUMED** draft contract in
  * `docs/backend-contract.md`. This is SSR-safe: it never touches `window`,
- * `document`, or `location` unless they exist.
+ * `document`, or `location` unless they exist (context capture lives in
+ * `src/context/getContext.ts`).
  */
 import { SDK_VERSION } from './version';
 import { SCHEMA_VERSION } from './types';
-import type { ReportApplication, ReportError, ReportPayload } from './types';
-import { getConfig } from './config';
+import type {
+  ReportApplication,
+  ReportError,
+  ReportPayload,
+  ScreenshotAttachment,
+} from './types';
+import { getContext } from '../context/getContext';
 
 export interface BuildReportInput {
   /** Human description. Must be non-empty by contract. */
   readonly description: string;
   /** Captured error, or `null` for a manual report. */
   readonly error?: ReportError | null;
+  /** Optional screenshot attachment; omitted/`null` when none. */
+  readonly screenshot?: ScreenshotAttachment | null;
 }
 
 export interface BuildReportOptions {
@@ -26,29 +34,6 @@ export interface BuildReportOptions {
   readonly now?: Date;
   /** Override the generated id (useful in tests / for idempotency). */
   readonly reportId?: string;
-}
-
-/** Returns `location.href` when a browser location exists, else an empty string. */
-function safeLocationHref(): string {
-  if (
-    typeof location !== 'undefined' &&
-    location !== null &&
-    typeof location.href === 'string'
-  ) {
-    return location.href;
-  }
-  return '';
-}
-
-/** Builds `context.application` from the stored config (omitting absent fields). */
-function applicationFromConfig(): ReportApplication {
-  const config = getConfig();
-  const application: { version?: string; environment?: string } = {};
-  if (config?.appVersion !== undefined) application.version = config.appVersion;
-  if (config?.environment !== undefined) {
-    application.environment = config.environment;
-  }
-  return application;
 }
 
 /**
@@ -95,13 +80,15 @@ export function buildReport(
     reportId: options.reportId ?? createReportId(),
     description: input.description,
     error: input.error ?? null,
-    context: {
-      url: options.url ?? safeLocationHref(),
-      timestamp: now.toISOString(),
-      application: options.application ?? applicationFromConfig(),
-    },
+    context: getContext({
+      ...(options.url !== undefined ? { url: options.url } : {}),
+      ...(options.application !== undefined
+        ? { application: options.application }
+        : {}),
+      now,
+    }),
     breadcrumbs: [],
     networkFailures: [],
-    screenshot: null,
+    screenshot: input.screenshot ?? null,
   };
 }

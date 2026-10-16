@@ -49,6 +49,7 @@ The Web SDK's implementation of this contract lives in `src/core/` (payload),
   },
   "breadcrumbs": [],
   "networkFailures": [],
+  // null, or an inline base64 attachment (see §3.1):
   "screenshot": null
 }
 ```
@@ -67,10 +68,33 @@ Field notes (ASSUMED):
 | `context.application` | object | yes | May be `{}`. `version`/`environment` optional. |
 | `breadcrumbs` | array | yes | Empty in this version; shape TBD in a later phase. |
 | `networkFailures` | array | yes | Empty in this version; shape TBD in a later phase. |
-| `screenshot` | literal `null` | yes | **Out of scope** for this version of the contract. |
+| `screenshot` | `null` or object | yes | Optional inline attachment; see §3.1. Always `null` unless the reporter attached a file. |
 
-**Screenshot is explicitly OUT of this contract.** The field is present and always
-`null` so the schema is stable, but no image data is sent yet.
+### 3.1 Screenshot attachment (ASSUMED — Phase 3)
+
+When the reporter attaches a file, `screenshot` is an object (otherwise `null`):
+
+```jsonc
+{
+  "screenshot": {
+    "name": "screen.png",
+    "mimeType": "image/png",
+    "sizeBytes": 20480,
+    "dataBase64": "iVBORw0KGgo..." // raw base64, NO data: prefix
+  }
+}
+```
+
+Constraints enforced by the SDK before sending:
+
+- `mimeType` ∈ { `image/png`, `image/jpeg`, `image/webp` }.
+- `sizeBytes` ≤ 1 048 576 (1 MiB).
+- `dataBase64` is the raw base64 of the file bytes (no `data:` URL prefix).
+
+The SDK does **not** capture the screen automatically; a screenshot is only ever
+attached when the user picks a file. Inline base64 is an **assumption** — the
+real backend may instead want multipart or a separate upload + reference (see
+§8, question 7).
 
 ## 4. Responses (ASSUMED)
 
@@ -110,7 +134,10 @@ again.)
 ## 7. Size limits (ASSUMED)
 
 - The backend may reject oversized bodies with `413`.
-- The mock receiver enforces a default limit of 256 KiB (`MAX_BYTES` env var).
+- The mock receiver enforces a default limit of 4 MiB (`MAX_BYTES` env var),
+  raised from 256 KiB in Phase 3 to allow inline screenshots.
+- The SDK caps a single screenshot at 1 MiB before sending; the 4 MiB body limit
+  leaves room for the rest of the JSON and a little headroom.
 
 ## 8. Questions for the backend
 
@@ -127,8 +154,11 @@ again.)
    server store and return?
 6. **Responses:** Are the status codes and bodies in §4 correct? What is the
    success body shape — `{ "id": "..." }` or something else? Any location header?
-7. **Attachments:** When screenshots/attachments are added later, will they be
-   inline base64 in the JSON, multipart, or a separate upload + reference flow?
+7. **Attachments (Phase 3):** The SDK currently sends screenshots as inline
+   base64 in the JSON (§3.1). Is that acceptable, or does the backend require
+   multipart/form-data or a separate upload-then-reference flow? If inline, is
+   there a stricter decoded-size limit, and should `dataBase64` include the
+   `data:<mime>;base64,` prefix?
 8. **Rate limiting:** What are the limits and is `Retry-After` returned?
 
 ---

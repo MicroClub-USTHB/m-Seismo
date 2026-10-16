@@ -37,6 +37,17 @@ body {
   padding: 2rem 1.25rem 4rem;
 }
 
+/*
+ * Deliberately hostile host stylesheet. It proves the SDK's shadow-DOM form is
+ * NOT affected by page CSS: the form sets its own explicit colors inside its
+ * shadow root. Scoped to .page so the harness itself stays readable; the e2e
+ * suite additionally injects a global hostile rule to test isolation harder.
+ */
+.page,
+.page * {
+  color: red !important;
+}
+
 h1 {
   margin: 0 0 0.25rem;
   font-size: 1.5rem;

@@ -106,3 +106,11 @@ test('D: duplicate reportId is not stored twice (idempotency)', async ({
   const stored = await (await request.get(`${RECEIVER}/__reports`)).json();
   expect(stored.count).toBe(1);
 });
+
+test('E: the report endpoint rejects a wrong method with 405 (not a bare 404)', async ({
+  request,
+}) => {
+  const response = await request.get(ENDPOINT);
+  expect(response.status()).toBe(405);
+  expect(response.headers()['allow']).toBe('POST, OPTIONS');
+});

@@ -30,6 +30,24 @@ export interface ReportContext {
   readonly application: ReportApplication;
 }
 
+/**
+ * A user-supplied screenshot, embedded inline as base64.
+ *
+ * **ASSUMED** shape (see `docs/backend-contract.md`): inline base64 in the JSON
+ * body, not multipart or a separate upload. `dataBase64` carries no data-URL
+ * prefix (it is the raw base64 of the file bytes).
+ */
+export interface ScreenshotAttachment {
+  /** Original file name, e.g. `screen.png`. */
+  readonly name: string;
+  /** IANA media type; one of `image/png`, `image/jpeg`, `image/webp`. */
+  readonly mimeType: string;
+  /** Size of the decoded image in bytes. */
+  readonly sizeBytes: number;
+  /** Base64-encoded file bytes (no `data:` prefix). */
+  readonly dataBase64: string;
+}
+
 export interface ReportPayload {
   readonly schemaVersion: SchemaVersion;
   readonly sdkVersion: string;
@@ -42,6 +60,6 @@ export interface ReportPayload {
   readonly breadcrumbs: readonly unknown[];
   /** Empty in this version; shape TBD. */
   readonly networkFailures: readonly unknown[];
-  /** Screenshot is OUT of scope for this contract version. */
-  readonly screenshot: null;
+  /** Optional screenshot attachment, or `null` when none was provided. */
+  readonly screenshot: ScreenshotAttachment | null;
 }

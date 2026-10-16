@@ -2,15 +2,47 @@
  * SDK configuration and `init()` validation.
  *
  * `endpoint` is the only required option. Invalid configuration makes the SDK
- * fail predictably: exactly one warning is logged, nothing is thrown, and the
- * SDK stays disabled until a valid `init()` call.
+ * fail predictably: a warning is logged, nothing is thrown, and the SDK stays
+ * disabled until a valid `init()` call.
  *
  * The endpoint value is user-supplied. `/api/reports` is only an **ASSUMED**
  * convention (see `docs/backend-contract.md`); no backend host is hard-coded.
  */
+import { warn } from './log';
+import { detectMac, parseShortcut } from './shortcut';
+import type { ShortcutSpec } from './shortcut';
+import type { SdkEvent, SdkEventListener } from './events';
 
 /** Default request timeout, in milliseconds. */
 export const DEFAULT_TIMEOUT_MS = 10_000;
+
+/** Default keyboard shortcut that opens the form. */
+export const DEFAULT_SHORTCUT = 'Ctrl+Enter';
+
+/** Default label for the launcher button. */
+export const DEFAULT_LAUNCHER_LABEL = 'Report a bug';
+
+export type LauncherPosition =
+  | 'bottom-right'
+  | 'bottom-left'
+  | 'top-right'
+  | 'top-left';
+
+export interface LauncherOptions {
+  /** Button label. Defaults to {@link DEFAULT_LAUNCHER_LABEL}. */
+  readonly label?: string;
+  /** Corner to anchor the button in. Defaults to `'bottom-right'`. */
+  readonly position?: LauncherPosition;
+}
+
+/** Normalised launcher configuration stored on {@link SdkConfig}. */
+export type LauncherConfig =
+  | { readonly enabled: false }
+  | {
+      readonly enabled: true;
+      readonly label: string;
+      readonly position: LauncherPosition;
+    };
 
 export interface InitOptions {
   /** Full URL of the ingest endpoint, e.g. `https://example.com/api/reports`. */
@@ -26,6 +58,21 @@ export interface InitOptions {
   readonly projectKey?: string;
   /** Request timeout in milliseconds. Defaults to {@link DEFAULT_TIMEOUT_MS}. */
   readonly timeoutMs?: number;
+  /**
+   * Keyboard combo that opens the form, e.g. `'Ctrl+Enter'` or `'Mod+Shift+K'`.
+   * Defaults to {@link DEFAULT_SHORTCUT}. Pass `false` to disable it. An invalid
+   * value logs a warning and disables the shortcut.
+   */
+  readonly shortcut?: string | false;
+  /**
+   * Floating launcher button. `true` shows it with defaults; an object customises
+   * its label/position. Defaults to `false` (no launcher).
+   */
+  readonly launcher?: boolean | LauncherOptions;
+  /** Whether the form offers a screenshot attachment. Defaults to `true`. */
+  readonly screenshot?: boolean;
+  /** Optional listener for SDK lifecycle events. */
+  readonly onEvent?: SdkEventListener;
 }
 
 export interface SdkConfig {
@@ -34,14 +81,13 @@ export interface SdkConfig {
   readonly environment?: string;
   readonly projectKey?: string;
   readonly timeoutMs: number;
+  readonly shortcut: ShortcutSpec | false;
+  readonly launcher: LauncherConfig;
+  readonly screenshot: boolean;
+  readonly onEvent?: SdkEventListener;
 }
 
 let currentConfig: SdkConfig | null = null;
-
-function warn(message: string): void {
-  // eslint-disable-next-line no-console -- one predictable warning per bad init.
-  console.warn(`[m-seismo] ${message}`);
-}
 
 /** Returns true for an absolute http(s) URL string. */
 function isHttpUrl(value: unknown): value is string {
@@ -59,6 +105,61 @@ function normaliseTimeout(value: unknown): number {
     return value;
   }
   return DEFAULT_TIMEOUT_MS;
+}
+
+function normaliseShortcut(value: unknown, isMac: boolean): ShortcutSpec | false {
+  if (value === false) return false;
+  const raw = value === undefined ? DEFAULT_SHORTCUT : value;
+  if (typeof raw !== 'string') {
+    warn(
+      'init() option "shortcut" must be a key-combo string or false; shortcut disabled.',
+    );
+    return false;
+  }
+  const spec = parseShortcut(raw, isMac);
+  if (spec === null) {
+    warn(
+      `init() option "shortcut" is not a valid key combo ("${raw}"); shortcut disabled.`,
+    );
+    return false;
+  }
+  return spec;
+}
+
+const LAUNCHER_POSITIONS: readonly LauncherPosition[] = [
+  'bottom-right',
+  'bottom-left',
+  'top-right',
+  'top-left',
+];
+
+function isLauncherPosition(value: unknown): value is LauncherPosition {
+  return (
+    typeof value === 'string' &&
+    (LAUNCHER_POSITIONS as readonly string[]).includes(value)
+  );
+}
+
+function normaliseLauncher(value: unknown): LauncherConfig {
+  if (value === true) {
+    return { enabled: true, label: DEFAULT_LAUNCHER_LABEL, position: 'bottom-right' };
+  }
+  if (value !== null && typeof value === 'object') {
+    const options = value as LauncherOptions;
+    const label =
+      typeof options.label === 'string' && options.label.length > 0
+        ? options.label
+        : DEFAULT_LAUNCHER_LABEL;
+    const position = isLauncherPosition(options.position)
+      ? options.position
+      : 'bottom-right';
+    return { enabled: true, label, position };
+  }
+  return { enabled: false };
+}
+
+function normaliseScreenshot(value: unknown): boolean {
+  return value !== false;
 }
 
 /**
@@ -84,13 +185,21 @@ export function configure(options: InitOptions): boolean {
     environment?: string;
     projectKey?: string;
     timeoutMs: number;
+    shortcut: ShortcutSpec | false;
+    launcher: LauncherConfig;
+    screenshot: boolean;
+    onEvent?: SdkEventListener;
   } = {
     endpoint: options.endpoint,
     timeoutMs: normaliseTimeout(options.timeoutMs),
+    shortcut: normaliseShortcut(options.shortcut, detectMac()),
+    launcher: normaliseLauncher(options.launcher),
+    screenshot: normaliseScreenshot(options.screenshot),
   };
   if (options.appVersion !== undefined) next.appVersion = options.appVersion;
   if (options.environment !== undefined) next.environment = options.environment;
   if (options.projectKey !== undefined) next.projectKey = options.projectKey;
+  if (typeof options.onEvent === 'function') next.onEvent = options.onEvent;
 
   currentConfig = next;
   return true;
@@ -110,3 +219,6 @@ export function isEnabled(): boolean {
 export function resetConfig(): void {
   currentConfig = null;
 }
+
+// Re-exported for convenience so callers can type event handlers.
+export type { SdkEvent, SdkEventListener };

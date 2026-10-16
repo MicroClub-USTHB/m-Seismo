@@ -2,13 +2,20 @@ import { expect, test } from '@playwright/test';
 
 const BUTTON_TESTIDS = [
   'open-form',
+  'send-report',
   'throw-sync',
   'unhandled-rejection',
   'fetch-500',
   'fetch-200',
   'silent-save',
+  'init-twice',
+  'init-no-shortcut',
+  'destroy',
+  'mode-ok',
+  'mode-fail500',
+  'mode-slow',
+  'mode-drop',
   'theme-toggle',
-  'send-report',
 ] as const;
 
 test.beforeEach(async ({ page }) => {
@@ -72,5 +79,5 @@ test('uncaught exception and unhandled rejection do not crash the page', async (
 
   // Page is still alive and interactive after the errors.
   await page.getByTestId('open-form').click();
-  await expect(page.getByTestId('event-log')).toContainText('openReportForm() stub called');
+  await expect(page.getByTestId('event-log')).toContainText('openReportForm() called');
 });

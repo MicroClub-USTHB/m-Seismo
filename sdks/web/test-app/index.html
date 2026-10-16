@@ -3,38 +3,49 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:," />
     <title>m-Seismo Web SDK — test app</title>
   </head>
   <body>
     <main class="page">
       <h1>m-Seismo Web SDK — test app</h1>
       <p class="subtitle">
-        Phase 1 harness. Buttons trigger scenarios and log locally; the SDK
-        itself is not wired to any scenario yet.
+        Phase 3 harness. The SDK is initialised with a launcher button and the
+        <kbd>Ctrl</kbd> + <kbd>Enter</kbd> shortcut; the buttons below also drive
+        config, lifecycle, and receiver-mode scenarios.
       </p>
 
       <section class="grid">
         <button type="button" data-testid="open-form">Open bug-report form</button>
+        <button type="button" data-testid="send-report">Send test report</button>
         <button type="button" data-testid="throw-sync">Throw uncaught exception</button>
         <button type="button" data-testid="unhandled-rejection">Unhandled promise rejection</button>
         <button type="button" data-testid="fetch-500">Request → HTTP 500</button>
         <button type="button" data-testid="fetch-200">Request → HTTP 200</button>
         <button type="button" data-testid="silent-save">Save (silent logical bug)</button>
+        <button type="button" data-testid="init-twice">init() again (same config)</button>
+        <button type="button" data-testid="init-no-shortcut">init() without shortcut</button>
+        <button type="button" data-testid="destroy">destroy()</button>
+        <button type="button" data-testid="mode-ok">Receiver: mode = ok</button>
+        <button type="button" data-testid="mode-fail500">Receiver: mode = fail500</button>
+        <button type="button" data-testid="mode-slow">Receiver: mode = slow</button>
+        <button type="button" data-testid="mode-drop">Receiver: mode = drop (offline)</button>
         <button type="button" data-testid="theme-toggle">Toggle theme</button>
-        <button type="button" data-testid="send-report">Send test report</button>
       </section>
       <p class="subtitle">
         Reports are sent to
         <code data-testid="receiver-endpoint">?</code>
-        (configurable via <code>VITE_MSEISMO_ENDPOINT</code>).
+        (configurable via <code>VITE_MSEISMO_ENDPOINT</code>). The launcher button
+        appears bottom-right; the shortcut opens the same form.
       </p>
 
       <section class="panel">
         <h2>Ctrl + Enter shortcut area</h2>
         <p>
-          Press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> anywhere on the page. The
-          indicator below updates, and later phases will use this to submit
-          reports. The textarea exists to test "user is typing" behaviour.
+          Press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> outside a text field to open
+          the SDK form. Inside a text field the SDK ignores it (so it never
+          hijacks typing) — this page's own indicator still updates. The
+          textarea exists to test that "user is typing" behaviour.
         </p>
         <textarea
           data-testid="ctrl-enter-input"

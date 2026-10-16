@@ -5,9 +5,19 @@ import type { SdkConfig } from '@m-seismo/web';
 function makeConfig(
   overrides: { endpoint?: string; projectKey?: string; timeoutMs?: number } = {},
 ): SdkConfig {
-  const config: { endpoint: string; projectKey?: string; timeoutMs: number } = {
+  const config: {
+    endpoint: string;
+    projectKey?: string;
+    timeoutMs: number;
+    shortcut: false;
+    launcher: { enabled: false };
+    screenshot: boolean;
+  } = {
     endpoint: overrides.endpoint ?? 'https://receiver.test/api/reports',
     timeoutMs: overrides.timeoutMs ?? 10_000,
+    shortcut: false,
+    launcher: { enabled: false },
+    screenshot: true,
   };
   if (overrides.projectKey !== undefined) config.projectKey = overrides.projectKey;
   return config;

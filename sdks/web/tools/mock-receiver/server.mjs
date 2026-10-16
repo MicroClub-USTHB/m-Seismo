@@ -10,30 +10,41 @@
  *   OPTIONS *              CORS preflight (counted)
  *   GET  /__health         200 {ok:true}             (used by Playwright webServer)
  *   GET  /__reports        {count, reports:[...]}    (inspect stored reports)
+ *                          Add ?full=1 to include screenshot base64 data;
+ *                          by default screenshot.dataBase64 is replaced with
+ *                          screenshot.dataBase64Length to keep responses small.
  *   GET  /__stats          {preflightCount, requestCount, storedCount, mode}
  *   POST /__reset          clear reports + counters, mode -> "ok"
- *   POST /__mode           {mode} where mode is ok|fail500|slow|offline|rateLimited
+ *   POST /__mode           {mode, delayMs?} where mode is
+ *                          ok|fail500|slow|offline|rateLimited; delayMs overrides
+ *                          the slow-mode delay for this session (reset restores
+ *                          the default)
  *   POST /api/reports      validate + store a report (201 {id})
+ *                          Other methods => 405 (Allow: POST, OPTIONS)
  *
  * Config via env:
  *   PORT            (default 4010)
  *   ALLOWED_ORIGIN  (default http://localhost:5173)
- *   MAX_BYTES       (default 262144)
+ *   MAX_BYTES       (default 4194304, i.e. 4 MiB, to allow inline screenshots)
  *   MAX_REPORTS     (default 100)
+ *   SLOW_DELAY_MS   (default 7000, deliberately below the SDK's default 10s
+ *                    timeout so slow-mode is a *delayed success*; pass a larger
+ *                    delayMs to /__mode to exercise the timeout path)
  */
 import http from 'node:http';
 
 const PORT = Number(process.env.PORT ?? 4010);
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN ?? 'http://localhost:5173';
-const MAX_BYTES = Number(process.env.MAX_BYTES ?? 262_144);
+const MAX_BYTES = Number(process.env.MAX_BYTES ?? 4_194_304);
 const MAX_REPORTS = Number(process.env.MAX_REPORTS ?? 100);
-const SLOW_DELAY_MS = Number(process.env.SLOW_DELAY_MS ?? 15_000);
+const SLOW_DELAY_MS = Number(process.env.SLOW_DELAY_MS ?? 7_000);
 
 const VALID_MODES = new Set(['ok', 'fail500', 'slow', 'offline', 'rateLimited']);
 
 /** @type {Map<string, object>} */
 const reports = new Map();
 let mode = 'ok';
+let slowDelayMs = SLOW_DELAY_MS;
 let preflightCount = 0;
 let requestCount = 0;
 
@@ -83,6 +94,44 @@ function isNonEmptyString(value) {
   return typeof value === 'string' && value.length > 0;
 }
 
+const ALLOWED_SCREENSHOT_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
+/** Validates an inline screenshot attachment. Returns an error string or null. */
+function validateScreenshot(screenshot) {
+  if (typeof screenshot !== 'object' || screenshot === null) {
+    return 'screenshot must be null or an object';
+  }
+  if (!isNonEmptyString(screenshot.name)) return 'screenshot.name must be a non-empty string';
+  if (!ALLOWED_SCREENSHOT_MIME.has(screenshot.mimeType)) {
+    return 'screenshot.mimeType must be image/png, image/jpeg, or image/webp';
+  }
+  if (typeof screenshot.sizeBytes !== 'number' || screenshot.sizeBytes < 0) {
+    return 'screenshot.sizeBytes must be a non-negative number';
+  }
+  if (!isNonEmptyString(screenshot.dataBase64)) {
+    return 'screenshot.dataBase64 must be a non-empty base64 string';
+  }
+  return null;
+}
+
+/**
+ * Returns a copy of the report with the screenshot's base64 payload replaced by
+ * its length, so `/__reports` stays readable. Use `/__reports?full=1` for the raw
+ * stored object.
+ */
+function redactScreenshot(report) {
+  const screenshot = report?.screenshot;
+  if (typeof screenshot !== 'object' || screenshot === null) return report;
+  const { dataBase64, ...rest } = screenshot;
+  return {
+    ...report,
+    screenshot: {
+      ...rest,
+      dataBase64Length: typeof dataBase64 === 'string' ? dataBase64.length : 0,
+    },
+  };
+}
+
 /** Validates against the ASSUMED draft contract. Returns an error string or null. */
 function validateReport(report) {
   if (typeof report !== 'object' || report === null) return 'body must be a JSON object';
@@ -108,7 +157,10 @@ function validateReport(report) {
 
   if (!Array.isArray(report.breadcrumbs)) return 'breadcrumbs must be an array';
   if (!Array.isArray(report.networkFailures)) return 'networkFailures must be an array';
-  if (report.screenshot !== null) return 'screenshot must be null in this contract version';
+  if (report.screenshot !== null) {
+    const screenshotError = validateScreenshot(report.screenshot);
+    if (screenshotError) return screenshotError;
+  }
   return null;
 }
 
@@ -129,7 +181,7 @@ async function handleIngest(req, res) {
     return;
   }
   if (mode === 'slow') {
-    await new Promise((resolve) => setTimeout(resolve, SLOW_DELAY_MS));
+    await new Promise((resolve) => setTimeout(resolve, slowDelayMs));
   }
 
   let raw;
@@ -193,10 +245,11 @@ const server = http.createServer((req, res) => {
   }
 
   if (method === 'GET' && pathname === '/__reports') {
-    sendJson(res, 200, {
-      count: reports.size,
-      reports: Array.from(reports.values()),
-    });
+    const full = url.searchParams.get('full') === '1';
+    const stored = Array.from(reports.values()).map((report) =>
+      full ? report : redactScreenshot(report),
+    );
+    sendJson(res, 200, { count: reports.size, reports: stored });
     return;
   }
 
@@ -215,6 +268,7 @@ const server = http.createServer((req, res) => {
     preflightCount = 0;
     requestCount = 0;
     mode = 'ok';
+    slowDelayMs = SLOW_DELAY_MS;
     sendJson(res, 200, { ok: true, mode });
     return;
   }
@@ -235,8 +289,15 @@ const server = http.createServer((req, res) => {
           });
           return;
         }
+        if (body.delayMs !== undefined) {
+          if (typeof body.delayMs !== 'number' || !Number.isFinite(body.delayMs) || body.delayMs < 0) {
+            sendJson(res, 400, { message: 'delayMs must be a non-negative number' });
+            return;
+          }
+          slowDelayMs = body.delayMs;
+        }
         mode = body.mode;
-        sendJson(res, 200, { ok: true, mode });
+        sendJson(res, 200, { ok: true, mode, slowDelayMs });
       })
       .catch(() => sendJson(res, 400, { message: 'could not read request body' }));
     return;
@@ -244,6 +305,14 @@ const server = http.createServer((req, res) => {
 
   if (method === 'POST' && pathname === '/api/reports') {
     void handleIngest(req, res);
+    return;
+  }
+
+  if (pathname === '/api/reports') {
+    // The report endpoint is POST-only. Answer a wrong method explicitly so a
+    // direct browser visit (`GET`) is self-explanatory rather than a bare 404.
+    res.setHeader('Allow', 'POST, OPTIONS');
+    sendJson(res, 405, { message: `method ${method} not allowed; use POST` });
     return;
   }
 

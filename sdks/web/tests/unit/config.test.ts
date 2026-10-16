@@ -39,6 +39,9 @@ describe('configure / init validation', () => {
     expect(getConfig()).toEqual({
       endpoint: 'https://example.test/api/reports',
       timeoutMs: 10_000,
+      shortcut: { key: 'enter', alt: false, ctrl: true, meta: false, shift: false },
+      launcher: { enabled: false },
+      screenshot: true,
     });
   });
 
@@ -58,6 +61,9 @@ describe('configure / init validation', () => {
       environment: 'test',
       projectKey: 'pk_123',
       timeoutMs: 2500,
+      shortcut: { key: 'enter', alt: false, ctrl: true, meta: false, shift: false },
+      launcher: { enabled: false },
+      screenshot: true,
     });
   });
 
@@ -81,5 +87,75 @@ describe('configure / init validation', () => {
     expect(getConfig()?.timeoutMs).toBe(10_000);
     configure({ endpoint: 'https://a.test/reports', timeoutMs: Number.NaN });
     expect(getConfig()?.timeoutMs).toBe(10_000);
+  });
+
+  it('defaults the shortcut to Ctrl+Enter', () => {
+    configure({ endpoint: 'https://a.test/reports' });
+    expect(getConfig()?.shortcut).toEqual({
+      key: 'enter',
+      alt: false,
+      ctrl: true,
+      meta: false,
+      shift: false,
+    });
+  });
+
+  it('accepts a custom shortcut string', () => {
+    configure({ endpoint: 'https://a.test/reports', shortcut: 'Alt+Shift+K' });
+    expect(getConfig()?.shortcut).toEqual({
+      key: 'k',
+      alt: true,
+      ctrl: false,
+      meta: false,
+      shift: true,
+    });
+  });
+
+  it('shortcut: false disables the shortcut without warning', () => {
+    configure({ endpoint: 'https://a.test/reports', shortcut: false });
+    expect(getConfig()?.shortcut).toBe(false);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('an invalid shortcut warns once and disables the shortcut', () => {
+    expect(
+      configure({ endpoint: 'https://a.test/reports', shortcut: 'Ctrl+Shift' }),
+    ).toBe(true);
+    expect(getConfig()?.shortcut).toBe(false);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('launcher: true uses the default label and position', () => {
+    configure({ endpoint: 'https://a.test/reports', launcher: true });
+    expect(getConfig()?.launcher).toEqual({
+      enabled: true,
+      label: 'Report a bug',
+      position: 'bottom-right',
+    });
+  });
+
+  it('launcher options customise label and position', () => {
+    configure({
+      endpoint: 'https://a.test/reports',
+      launcher: { label: 'Found a bug?', position: 'top-left' },
+    });
+    expect(getConfig()?.launcher).toEqual({
+      enabled: true,
+      label: 'Found a bug?',
+      position: 'top-left',
+    });
+  });
+
+  it('screenshot defaults to true and can be disabled', () => {
+    configure({ endpoint: 'https://a.test/reports' });
+    expect(getConfig()?.screenshot).toBe(true);
+    configure({ endpoint: 'https://a.test/reports', screenshot: false });
+    expect(getConfig()?.screenshot).toBe(false);
+  });
+
+  it('stores an onEvent listener only when it is a function', () => {
+    const onEvent = (): void => {};
+    configure({ endpoint: 'https://a.test/reports', onEvent });
+    expect(getConfig()?.onEvent).toBe(onEvent);
   });
 });
