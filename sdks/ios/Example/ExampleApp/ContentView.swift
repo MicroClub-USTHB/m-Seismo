@@ -10,9 +10,15 @@ struct ContentView: View {
                 .font(.headline)
             Text("Project key: \(mseismo.configuration?.projectKey ?? "none")")
             Text("Environment: \(mseismo.configuration?.environment ?? "none")")
-            Text("Shake the device (or Hardware > Shake Gesture in the Simulator) to open the report form.")
+            Text("Shake the device (or Device > Shake in the Simulator), take a screenshot, long-press this text, or use the button below to open the report form.")
                 .font(.caption)
                 .multilineTextAlignment(.center)
+                .onLongPressGesture {
+                    mseismo.report()
+                }
+            Button("Report a bug") {
+                mseismo.report()
+            }
         }
         .padding()
         .onShake {
