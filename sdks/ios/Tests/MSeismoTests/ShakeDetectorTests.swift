@@ -37,4 +37,15 @@ final class ShakeDetectorTests: XCTestCase {
 
         XCTAssertEqual(fired, 2)
     }
+
+    func testDisabledDetectorNeverFires() {
+        var fired = 0
+        let detector = ShakeDetector(cooldown: 2.0, now: { Date(timeIntervalSinceReferenceDate: 0) })
+        detector.isEnabled = false
+        detector.onShake = { fired += 1 }
+
+        detector.shakeDetected()
+
+        XCTAssertEqual(fired, 0)
+    }
 }

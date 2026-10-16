@@ -34,4 +34,28 @@ final class ConfigurationTests: XCTestCase {
 
         XCTAssertEqual(config.release, "1.2.3 (45)")
     }
+
+    func testShakeEnabledDefaultsToTrue() {
+        let config = Configuration(endpoint: endpoint, projectKey: "test-key")
+
+        XCTAssertTrue(config.shakeEnabled)
+    }
+
+    func testScreenshotEnabledDefaultsToFalse() {
+        let config = Configuration(endpoint: endpoint, projectKey: "test-key")
+
+        XCTAssertFalse(config.screenshotEnabled)
+    }
+
+    func testTriggerFlagsCanBeOverridden() {
+        let config = Configuration(
+            endpoint: endpoint,
+            projectKey: "test-key",
+            shakeEnabled: false,
+            screenshotEnabled: true
+        )
+
+        XCTAssertFalse(config.shakeEnabled)
+        XCTAssertTrue(config.screenshotEnabled)
+    }
 }

@@ -8,7 +8,8 @@ struct ExampleApp: App {
             Configuration(
                 endpoint: URL(string: "https://seismo.example.com")!,
                 projectKey: "example-project-key",
-                environment: "staging"
+                environment: "staging",
+                screenshotEnabled: true
             )
         )
 

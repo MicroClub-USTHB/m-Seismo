@@ -56,7 +56,8 @@ public final class MSeismo: ObservableObject {
         screenshotObserver.onNotify = { [weak self] in
             self?.report()
         }
-        screenshotObserver.start()
+        // Not started here: off by default until configure(_:) says
+        // otherwise (Configuration.screenshotEnabled).
 
         observeLifecycle(UIApplication.didBecomeActiveNotification, message: "resumed")
         observeLifecycle(UIApplication.didEnterBackgroundNotification, message: "backgrounded")
@@ -73,9 +74,20 @@ public final class MSeismo: ObservableObject {
     }
     #endif
 
-    /// Connects the app to an m-Seismo project.
+    /// Connects the app to an m-Seismo project, and applies its trigger
+    /// settings (`shakeEnabled`, `screenshotEnabled`).
     public func configure(_ configuration: Configuration) {
         self.configuration = configuration
+
+        shakeDetector.isEnabled = configuration.shakeEnabled
+
+        #if os(iOS)
+        if configuration.screenshotEnabled {
+            screenshotObserver.start()
+        } else {
+            screenshotObserver.stop()
+        }
+        #endif
     }
 
     /// Opens the report sheet. Called automatically by the shake and

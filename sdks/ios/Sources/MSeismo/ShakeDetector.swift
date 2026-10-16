@@ -7,6 +7,10 @@ public final class ShakeDetector {
     public var cooldown: TimeInterval
     public var onShake: (() -> Void)?
 
+    /// Set from `Configuration.shakeEnabled`. True by default, so shake
+    /// works even before `configure(_:)` is called.
+    public var isEnabled = true
+
     private var lastTrigger: Date?
     private let now: () -> Date
 
@@ -16,8 +20,11 @@ public final class ShakeDetector {
     }
 
     /// Called whenever the underlying platform detects a shake gesture.
-    /// Ignored if called again before `cooldown` has elapsed.
+    /// Ignored if `isEnabled` is false, or if called again before
+    /// `cooldown` has elapsed.
     public func shakeDetected() {
+        guard isEnabled else { return }
+
         let current = now()
 
         if let last = lastTrigger, current.timeIntervalSince(last) < cooldown {
