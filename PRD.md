@@ -3,8 +3,8 @@
 |                   |                                                        |
 | ----------------- | ------------------------------------------------------ |
 | **Status**        | Draft, under product review                            |
-| **Version**       | 1.0                                                    |
-| **Last updated**  | 2026-10-15                                             |
+| **Version**       | 1.1                                                    |
+| **Last updated**  | 2026-10-16                                             |
 | **Product owner** | @wail                                                  |
 | **Organisation**  | MicroClub USTHB                                        |
 | **Source**        | m-Seismo cahier des charges (2026-10-14)               |
@@ -15,6 +15,7 @@
 | Version | Change                                                                                                                                                                       |
 | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1.0     | First full product scope, derived from the cahier des charges. Technical architecture removed; only the features and the behaviour they must have are kept. |
+| 1.1     | Amendments from building the iOS SDK's first release (FR-03, FR-08, FR-11, FR-20, FR-21, NFR-09): see the implementation notes under each affected requirement, added per the change-control process in section 22. |
 
 ### How to read this document
 
@@ -170,6 +171,13 @@ looks and which fields are required. For example, `QA` can require a
 description and severity, while `production` can disable shake entirely.
 `[FE-04]` — v1
 
+> **iOS v1 implementation note (2026-10-16):** the mode system is not built
+> yet. In its place, the iOS SDK's `Configuration` exposes flat per-trigger
+> switches (`shakeEnabled`, default on; `screenshotEnabled`, default off)
+> set once at `configure()`, with no per-mode variation and no required-field
+> logic. `internal`/`QA`/`production` modes remain planned, not yet
+> implemented.
+
 **FR-04** — A project admin can create, rotate and revoke project keys. A
 revoked key stops being accepted immediately. `[BE-09]` — v1
 
@@ -198,6 +206,18 @@ next launch if it could not be sent at the time. `[SDK-08]` — v1
 **FR-09** — Non-fatal errors that the app chooses to record are reported the
 same way as crashes, flagged as non-fatal. `[SDK-08]` — v1
 
+> **iOS v1 implementation note (2026-10-16):** FR-08's automatic capture
+> currently covers uncaught Objective-C/Swift-bridged exceptions
+> (`NSException`) and errors the app explicitly records via `recordError(_:)`
+> (FR-09) — both reported on the next launch, as specified. It does **not**
+> yet catch native/signal-level crashes (`fatalError()`, force-unwraps,
+> array-index traps, `SIGSEGV`-class failures), which cover most of what
+> actually crashes a Swift app day to day. Catching those safely needs an
+> async-signal-safe handler (no memory allocation at crash time); getting
+> that wrong risks violating NFR-02 ("must never crash the app"), so it was
+> deliberately left out of this release. Crashlytics remains the only source
+> of those crash traces until a dedicated native crash handler is built.
+
 ---
 
 ## 6. Report sheet
@@ -209,10 +229,23 @@ category and a severity, and shows the screenshot of the screen they were on.
 **FR-11** — The reporter can draw on the screenshot to point at the bug, and
 blur or black out any part of it before sending. `[SDK-04, SDK-06]` — v1
 
+> **iOS v1 implementation note (2026-10-16):** masking is implemented as a
+> freehand solid-black stroke (draw over the area to hide it), not a true
+> Gaussian blur. A blackout fully hides the content underneath, same
+> practical effect as a blur, and was far simpler to implement correctly; a
+> real blur region was not built for this release.
+
 **FR-12** — Every field is optional by default. The sheet can be skipped
 entirely: in **auto-submit** mode the report is sent as soon as it is triggered,
 with whatever context was captured. Which fields are required depends on the
 mode (FR-03). `[SDK-04]` — v1
+
+> **iOS v1 implementation note (2026-10-16):** every field being optional is
+> implemented. Auto-submit (skipping the sheet entirely) is not: every
+> manual trigger (shake, screenshot, long-press, the manual call) currently
+> always opens the report sheet. Automatic crash/error reports (FR-08/FR-09)
+> are the one exception already in place — those are sent with no sheet
+> shown, which is auto-submit behavior for that one path.
 
 **FR-13** — The report sheet must never block the app: the reporter can
 dismiss it at any time and return exactly where they were. `[SDK-04]` — v1
@@ -249,12 +282,26 @@ actions: screens visited, taps, network calls made, and app lifecycle events
 moment of the trigger, before the report sheet appears. `[SDK-06]` — v1
 
 **FR-20** — **Crash details.** A crash report includes the full crash trace and
-the state of the app at the time of the crash. `[SDK-08]` — v1
+the state of the app at the time of the crash. `[SDK-08]` — v1 — see the
+implementation note under FR-08/FR-09: this currently applies to uncaught
+exceptions and recorded errors, not native/signal-level crashes.
 
 **FR-21** — **Works with Crashlytics.** m-Seismo's crash handling runs alongside
 Crashlytics and never replaces it: every crash still reaches Crashlytics
 exactly as before. Each report carries the Crashlytics installation and user
 identifiers and custom keys, so the two can be linked. `[SDK-08, SDK-11]` — v1
+
+> **iOS v1 implementation note / conflict (2026-10-16):** decided during the
+> iOS SDK build that the SDK will **not** integrate with the Crashlytics SDK
+> on-device at all — it never reads Crashlytics' installation ID, user ID or
+> custom keys, and does not attach them to the report. The first sentence of
+> FR-21 (crash handling runs alongside Crashlytics, never replaces it) still
+> holds. The second sentence (identifiers attached to the report) does not:
+> that linking is intended to happen entirely on the backend instead, via the
+> Crashlytics Data Export API, matching on installation ID and time proximity
+> (FR-43/FR-44) — not by embedding Crashlytics' own identifiers into the
+> report at capture time. SDK-11 ("attach Crashlytics user/installation ID
+> and custom keys to the report") is accordingly out of scope for the SDK.
 
 **FR-22** — **Session link.** Every report carries a session reference that is
 also attached to every request the app makes to our servers, so a report can be
@@ -556,9 +603,11 @@ grow by adding more capacity.
 m-Seismo. Hosting and storage are choices made at installation, not built into
 the product. The code is published under an open-source licence.
 
-**NFR-09 — Supported platforms.** iOS 15 and later, Android 7.0 (API 24) and
-later, Flutter 3, React Native 0.73 and later. These minimums are placeholders
-until the open question in section 19 is answered.
+**NFR-09 — Supported platforms.** iOS 13 and later, Android 7.0 (API 24) and
+later, Flutter 3, React Native 0.73 and later. The iOS minimum was decided
+2026-10-16 building the iOS SDK's first release (was an iOS 15 placeholder in
+v1.0); Android/Flutter/React Native minimums remain placeholders until the
+open question in section 19 is answered.
 
 **NFR-10 — m-Seismo watches itself.** m-Seismo reports its own health and
 failures to the operator, and never tries to report its own failures through
@@ -570,7 +619,7 @@ itself.
 
 | # | Question                                                                                                    | Owner         |
 | - | ----------------------------------------------------------------------------------------------------------- | ------------- |
-| 1 | Which apps and platforms ship first, and which minimum OS versions are required? (NFR-09)                   | Product owner |
+| 1 | Which apps and platforms ship first, and which minimum OS versions are required? (NFR-09) — **iOS minimum decided: iOS 13** (2026-10-16); Android/Flutter/React Native minimums and ship order still open | Product owner |
 | 2 | Which licence: Apache-2.0 or MIT?                                                                           | Product owner |
 | 3 | Does the name m-Seismo clash with an existing project or trademark? To be checked before the public release | Product owner |
 
