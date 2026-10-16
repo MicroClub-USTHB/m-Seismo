@@ -26,6 +26,10 @@ public final class MSeismo: ObservableObject {
     /// on its own.
     public let breadcrumbs = BreadcrumbTracker()
 
+    /// Recent network requests (FR-23). Call `networkLog.record(...)` from
+    /// wherever the app already has access to its own requests/responses.
+    public let networkLog = NetworkLogger()
+
     /// Strips PII from report text before it leaves the phone (FR-25).
     /// Configure `rules`, `allowList`, `denyList` directly on this.
     public let redactor = Redactor()
@@ -118,6 +122,7 @@ public final class MSeismo: ObservableObject {
         report.sessionID = session.id
         report.recentLogs = logs.recent
         report.breadcrumbs = breadcrumbs.recent
+        report.networkRequests = networkLog.recent
         #if os(iOS)
         report.deviceContext = DeviceContext.current()
         #endif
@@ -126,7 +131,8 @@ public final class MSeismo: ObservableObject {
     }
 
     /// Applies `redactor` to every free-text field of a report (FR-25):
-    /// title, description, and each recorded log line/breadcrumb message.
+    /// title, description, each recorded log line/breadcrumb message, and
+    /// any captured network request/response body.
     public func redacted(_ report: Report) -> Report {
         var report = report
         report.title = redactor.redact(report.title)
@@ -136,6 +142,12 @@ public final class MSeismo: ObservableObject {
         }
         report.breadcrumbs = report.breadcrumbs?.map {
             Breadcrumb(kind: $0.kind, message: redactor.redact($0.message), timestamp: $0.timestamp)
+        }
+        report.networkRequests = report.networkRequests?.map { entry in
+            var entry = entry
+            entry.requestBody = entry.requestBody.map { redactor.redact($0) }
+            entry.responseBody = entry.responseBody.map { redactor.redact($0) }
+            return entry
         }
         return report
     }

@@ -14,5 +14,6 @@ final class ReportTests: XCTestCase {
         XCTAssertNil(report.sessionID)
         XCTAssertNil(report.recentLogs)
         XCTAssertNil(report.breadcrumbs)
+        XCTAssertNil(report.networkRequests)
     }
 }

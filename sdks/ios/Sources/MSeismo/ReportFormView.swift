@@ -95,6 +95,7 @@ public struct ReportFormView: View {
                     report.sessionID = MSeismo.shared.session.id
                     report.recentLogs = MSeismo.shared.logs.recent
                     report.breadcrumbs = MSeismo.shared.breadcrumbs.recent
+                    report.networkRequests = MSeismo.shared.networkLog.recent
                     onSubmit(MSeismo.shared.redacted(report))
                 }
                 .foregroundColor(.accentColor)

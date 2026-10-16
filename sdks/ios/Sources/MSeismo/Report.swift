@@ -50,6 +50,10 @@ public struct Report {
     /// The user's recent actions leading up to this report (FR-18/SDK-07).
     public var breadcrumbs: [Breadcrumb]?
 
+    /// Recent network requests (FR-23). Bodies are only present when the
+    /// app opted in via `NetworkLogger.capturesBodies` (FR-28).
+    public var networkRequests: [NetworkRequestLog]?
+
     public init(
         title: String = "",
         description: String = "",
@@ -59,7 +63,8 @@ public struct Report {
         deviceContext: DeviceContext? = nil,
         sessionID: String? = nil,
         recentLogs: [LogLine]? = nil,
-        breadcrumbs: [Breadcrumb]? = nil
+        breadcrumbs: [Breadcrumb]? = nil,
+        networkRequests: [NetworkRequestLog]? = nil
     ) {
         self.title = title
         self.description = description
@@ -70,5 +75,6 @@ public struct Report {
         self.sessionID = sessionID
         self.recentLogs = recentLogs
         self.breadcrumbs = breadcrumbs
+        self.networkRequests = networkRequests
     }
 }
