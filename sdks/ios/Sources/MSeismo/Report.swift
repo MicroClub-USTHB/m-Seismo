@@ -44,6 +44,12 @@ public struct Report {
     /// be matched against whatever the server logged for the same session.
     public var sessionID: String?
 
+    /// Recent app log lines at the moment of submission (FR-17/SDK-07).
+    public var recentLogs: [LogLine]?
+
+    /// The user's recent actions leading up to this report (FR-18/SDK-07).
+    public var breadcrumbs: [Breadcrumb]?
+
     public init(
         title: String = "",
         description: String = "",
@@ -51,7 +57,9 @@ public struct Report {
         severity: Severity = .medium,
         screenshot: Data? = nil,
         deviceContext: DeviceContext? = nil,
-        sessionID: String? = nil
+        sessionID: String? = nil,
+        recentLogs: [LogLine]? = nil,
+        breadcrumbs: [Breadcrumb]? = nil
     ) {
         self.title = title
         self.description = description
@@ -60,5 +68,7 @@ public struct Report {
         self.screenshot = screenshot
         self.deviceContext = deviceContext
         self.sessionID = sessionID
+        self.recentLogs = recentLogs
+        self.breadcrumbs = breadcrumbs
     }
 }

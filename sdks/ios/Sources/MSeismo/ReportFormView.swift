@@ -93,6 +93,8 @@ public struct ReportFormView: View {
                     report.screenshot = screenshot?.jpegData(compressionQuality: 0.8)
                     report.deviceContext = DeviceContext.current()
                     report.sessionID = MSeismo.shared.session.id
+                    report.recentLogs = MSeismo.shared.logs.recent
+                    report.breadcrumbs = MSeismo.shared.breadcrumbs.recent
                     onSubmit(report)
                 }
                 .foregroundColor(.accentColor)

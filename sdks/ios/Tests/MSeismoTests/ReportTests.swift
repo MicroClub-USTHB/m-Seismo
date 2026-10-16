@@ -12,5 +12,7 @@ final class ReportTests: XCTestCase {
         XCTAssertNil(report.screenshot)
         XCTAssertNil(report.deviceContext)
         XCTAssertNil(report.sessionID)
+        XCTAssertNil(report.recentLogs)
+        XCTAssertNil(report.breadcrumbs)
     }
 }

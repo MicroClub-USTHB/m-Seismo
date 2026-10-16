@@ -16,10 +16,21 @@ public final class MSeismo: ObservableObject {
     /// One per app launch; carried on every report (FR-22, SDK-09).
     public let session = Session()
 
+    /// Recent app log lines (FR-17/SDK-07). Call `logs.log(_:)` wherever
+    /// the app already logs.
+    public let logs = LogBuffer()
+
+    /// The user's recent actions (FR-18/SDK-07). Lifecycle events are
+    /// recorded automatically; call `breadcrumbs.record(_:_:)` for
+    /// navigation, taps, and network calls, which this SDK can't observe
+    /// on its own.
+    public let breadcrumbs = BreadcrumbTracker()
+
     public let shakeDetector = ShakeDetector()
 
     #if os(iOS)
     private let screenshotObserver = NotificationObserver(name: UIApplication.userDidTakeScreenshotNotification)
+    private var lifecycleObservers: [NotificationObserver] = []
     #endif
 
     /// Drives presentation of `ReportFormView`. An app observes this
@@ -37,8 +48,21 @@ public final class MSeismo: ObservableObject {
             self?.report()
         }
         screenshotObserver.start()
+
+        observeLifecycle(UIApplication.didBecomeActiveNotification, message: "resumed")
+        observeLifecycle(UIApplication.didEnterBackgroundNotification, message: "backgrounded")
         #endif
     }
+
+    #if os(iOS)
+    private func observeLifecycle(_ name: Notification.Name, message: String) {
+        let observer = NotificationObserver(name: name) { [weak self] in
+            self?.breadcrumbs.record(.lifecycle, message)
+        }
+        observer.start()
+        lifecycleObservers.append(observer)
+    }
+    #endif
 
     /// Connects the app to an m-Seismo project.
     public func configure(_ configuration: Configuration) {
