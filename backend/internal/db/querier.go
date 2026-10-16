@@ -14,10 +14,14 @@ type Querier interface {
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateProjectKey(ctx context.Context, arg CreateProjectKeyParams) (ProjectKey, error)
 	GetActiveProjectKey(ctx context.Context, key string) (ProjectKey, error)
+	GetDefaultProjectRepository(ctx context.Context, projectID pgtype.UUID) (ProjectRepository, error)
 	GetProjectByID(ctx context.Context, id pgtype.UUID) (Project, error)
 	GetProjectBySlug(ctx context.Context, slug string) (Project, error)
+	LinkProjectRepository(ctx context.Context, arg LinkProjectRepositoryParams) (ProjectRepository, error)
+	ListProjectRepositories(ctx context.Context, projectID pgtype.UUID) ([]ProjectRepository, error)
 	ListProjects(ctx context.Context) ([]Project, error)
 	RevokeProjectKey(ctx context.Context, id pgtype.UUID) error
+	UnlinkProjectRepository(ctx context.Context, id pgtype.UUID) error
 }
 
 var _ Querier = (*Queries)(nil)

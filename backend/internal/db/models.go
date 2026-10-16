@@ -5,8 +5,54 @@
 package db
 
 import (
+	"database/sql/driver"
+	"fmt"
+
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+type Tracker string
+
+const (
+	TrackerGithub    Tracker = "github"
+	TrackerGitlab    Tracker = "gitlab"
+	TrackerBitbucket Tracker = "bitbucket"
+)
+
+func (e *Tracker) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = Tracker(s)
+	case string:
+		*e = Tracker(s)
+	default:
+		return fmt.Errorf("unsupported scan type for Tracker: %T", src)
+	}
+	return nil
+}
+
+type NullTracker struct {
+	Tracker Tracker `json:"tracker"`
+	Valid   bool    `json:"valid"` // Valid is true if Tracker is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTracker) Scan(value interface{}) error {
+	if value == nil {
+		ns.Tracker, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.Tracker.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTracker) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.Tracker), nil
+}
 
 type Project struct {
 	ID                pgtype.UUID        `json:"id"`
@@ -23,6 +69,15 @@ type ProjectKey struct {
 	Key       string             `json:"key"`
 	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type ProjectRepository struct {
+	ID         pgtype.UUID        `json:"id"`
+	ProjectID  pgtype.UUID        `json:"project_id"`
+	Tracker    Tracker            `json:"tracker"`
+	Repository string             `json:"repository"`
+	IsDefault  bool               `json:"is_default"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
 type SchemaMigration struct {
