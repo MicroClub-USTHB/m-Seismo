@@ -19,6 +19,15 @@ struct ContentView: View {
             Button("Report a bug") {
                 mseismo.report()
             }
+            Button("Record Non-Fatal Error") {
+                mseismo.recordError(NSError(domain: "ExampleApp", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "Something recoverable went wrong"
+                ]))
+            }
+            Button("Trigger Crash") {
+                NSException(name: .genericException, reason: "Deliberate test crash", userInfo: nil).raise()
+            }
+            .foregroundColor(.red)
         }
         .padding()
         .onShake {

@@ -26,6 +26,13 @@ public final class MSeismo: ObservableObject {
     /// on its own.
     public let breadcrumbs = BreadcrumbTracker()
 
+    private let crashReporter = CrashReporter.shared
+
+    /// Called with a crash/error report that was captured automatically
+    /// (FR-08/FR-09) — no sheet is shown for these. Set this, then call
+    /// `checkForPendingCrash()` once at launch.
+    public var onAutoReport: ((Report) -> Void)?
+
     public let shakeDetector = ShakeDetector()
 
     #if os(iOS)
@@ -39,6 +46,8 @@ public final class MSeismo: ObservableObject {
     @Published public var isReportSheetPresented = false
 
     private init() {
+        crashReporter.start()
+
         shakeDetector.onShake = { [weak self] in
             self?.report()
         }
@@ -74,5 +83,29 @@ public final class MSeismo: ObservableObject {
     /// e.g. from a "Report a bug" button or a long-press gesture (FR-07).
     public func report() {
         isReportSheetPresented = true
+    }
+
+    /// Records an error the app already caught, to be auto-reported on
+    /// the next launch (FR-09). Pass `fatal: true` to flag it the same
+    /// way an uncaught crash would be.
+    public func recordError(_ error: Error, fatal: Bool = false) {
+        crashReporter.recordError(error, fatal: fatal)
+    }
+
+    /// Call once at launch, after setting `onAutoReport`. If the previous
+    /// launch crashed (or recorded an error), builds its report with the
+    /// same context a manual report gets and delivers it — no sheet shown.
+    public func checkForPendingCrash() {
+        guard let crash = crashReporter.pendingCrash() else { return }
+
+        var report = crash.asReport()
+        report.sessionID = session.id
+        report.recentLogs = logs.recent
+        report.breadcrumbs = breadcrumbs.recent
+        #if os(iOS)
+        report.deviceContext = DeviceContext.current()
+        #endif
+
+        onAutoReport?(report)
     }
 }

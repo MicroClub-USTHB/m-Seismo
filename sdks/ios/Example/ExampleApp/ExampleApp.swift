@@ -11,6 +11,11 @@ struct ExampleApp: App {
                 environment: "staging"
             )
         )
+
+        MSeismo.shared.onAutoReport = { report in
+            print("Auto-reported (no sheet shown): \(report.title) — \(report.description)")
+        }
+        MSeismo.shared.checkForPendingCrash()
     }
 
     var body: some Scene {
