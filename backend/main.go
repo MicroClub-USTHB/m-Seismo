@@ -1,25 +1,36 @@
 package main
 
 import (
-	"log"
-
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/nats-io/nats.go/jetstream"
-	"github.com/redis/go-redis/v9"
 	"go.uber.org/fx"
 
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/app"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/auth"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/infra"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/owner"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/project"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider/github"
 )
 
 func main() {
-	fx.New(
-		config.Module,
-		infra.Module,
-		fx.Invoke(run),
-	).Run()
+	fx.New(Options()).Run()
 }
 
-func run(cfg *config.Config, _ *pgxpool.Pool, _ *redis.Client, _ jetstream.JetStream) {
-	log.Printf("m-seismo backend: env=%s listening on %s:%d", cfg.Env, cfg.Server.Host, cfg.Server.Port)
+// Options is the full application graph, shared with the e2e tests.
+func Options() fx.Option {
+	return fx.Options(
+		config.Module,
+		infra.Module,
+		httpx.Module,
+		auth.Module,
+		owner.Module,
+		project.Module,
+		app.Module,
+		provider.Module,
+		github.Module,
+		issue.Module,
+	)
 }
