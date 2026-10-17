@@ -160,7 +160,7 @@ fn run_query(mut args: Peekable<impl Iterator<Item = String>>) -> Result<(), Str
         deadline,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_time()
+        .enable_all()
         .build()
         .map_err(|error| format!("could not start async runtime: {error}"))?;
     let result: QueryResult = runtime.block_on(engine::execute(&source, &query, &config));
