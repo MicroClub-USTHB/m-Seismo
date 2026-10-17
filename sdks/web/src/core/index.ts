@@ -4,6 +4,8 @@ export type {
   SchemaVersion,
   ReportError,
   ReportApplication,
+  ReportBrowser,
+  ReportViewport,
   ReportContext,
   ReportPayload,
   ScreenshotAttachment,
@@ -20,6 +22,7 @@ export {
 export type {
   InitOptions,
   SdkConfig,
+  PrivacyOptions,
   LauncherOptions,
   LauncherPosition,
   LauncherConfig,
@@ -33,6 +36,7 @@ export { parseShortcut, matchesShortcut, detectMac } from './shortcut';
 export type { ShortcutSpec } from './shortcut';
 export { buildReport, createReportId } from './reportBuilder';
 export type { BuildReportInput, BuildReportOptions } from './reportBuilder';
-export { getContext, safeLocationHref, applicationFromConfig } from '../context/getContext';
-export type { ContextOverrides } from '../context/getContext';
+export { getContext } from '../context/getContext';
+export type { CollectedContext, ContextInput } from '../context/getContext';
+export type { ContextEnvironment } from '../context/env';
 export { initSdk, openForm, destroySdk } from './sdk';

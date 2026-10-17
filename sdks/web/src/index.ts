@@ -24,6 +24,7 @@ export {
   isEnabled,
   buildReport,
   createReportId,
+  getContext,
   parseShortcut,
   matchesShortcut,
 } from './core/index';
@@ -31,11 +32,14 @@ export type {
   SchemaVersion,
   ReportError,
   ReportApplication,
+  ReportBrowser,
+  ReportViewport,
   ReportContext,
   ReportPayload,
   ScreenshotAttachment,
   InitOptions,
   SdkConfig,
+  PrivacyOptions,
   LauncherOptions,
   LauncherPosition,
   ShortcutSpec,
@@ -43,7 +47,13 @@ export type {
   SdkEventListener,
   BuildReportInput,
   BuildReportOptions,
+  CollectedContext,
+  ContextInput,
+  ContextEnvironment,
 } from './core/index';
+
+export { sanitizeUrl } from './context/sanitizeUrl';
+export { DEFAULT_SENSITIVE_QUERY_PARAMS, MAX_URL_LENGTH } from './context/sanitizeUrl';
 
 export { sanitize } from './privacy/index';
 export type { SanitizedReport } from './privacy/index';

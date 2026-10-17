@@ -2,13 +2,14 @@ import {
   buildReport,
   destroy,
   getConfig,
+  getContext,
   init,
   openReportForm,
   sanitize,
   SDK_VERSION,
   sendReport,
 } from '@m-seismo/web';
-import type { SdkEvent } from '@m-seismo/web';
+import type { ContextInput, SdkEvent } from '@m-seismo/web';
 import './styles.css';
 
 /**
@@ -78,6 +79,30 @@ function initSdk(label: string, extra: { shortcut?: string | false } = {}): void
     ...extra,
   });
   record(`${label}: init ${enabled ? 'enabled' : 'disabled'}`);
+}
+
+/** Re-init with no appVersion/environment, to test context without app metadata. */
+function initSdkWithoutMeta(label: string): void {
+  const enabled = init({
+    endpoint: ENDPOINT,
+    launcher: true,
+    screenshot: true,
+    onEvent,
+  });
+  record(`${label}: init ${enabled ? 'enabled' : 'disabled'} (no app metadata)`);
+}
+
+/** Builds a fresh context input from the current SDK config (Phase 5.1). */
+function contextInput(reportId?: string): ContextInput {
+  const config = getConfig();
+  return {
+    ...(reportId !== undefined ? { reportId } : {}),
+    ...(config?.appVersion !== undefined ? { appVersion: config.appVersion } : {}),
+    ...(config?.environment !== undefined ? { environment: config.environment } : {}),
+    ...(config?.sensitiveQueryParams !== undefined
+      ? { sensitiveQueryParams: config.sensitiveQueryParams }
+      : {}),
+  };
 }
 
 initSdk('initial');
@@ -185,6 +210,52 @@ document
     record(`theme toggled to ${next}`);
   });
 
+// --- Phase 5.1 context lab -------------------------------------------------
+document
+  .querySelector('[data-testid="context-lab-navigate"]')
+  ?.addEventListener('click', () => {
+    const url = `${location.pathname}?token=fake-secret-123&utm_source=docs&email=a@b.c#section`;
+    history.replaceState(null, '', url);
+    record(`context lab: URL set to ${location.href}`);
+  });
+
+document
+  .querySelector('[data-testid="context-lab-reset-url"]')
+  ?.addEventListener('click', () => {
+    history.replaceState(null, '', location.pathname);
+    record(`context lab: URL reset to ${location.href}`);
+  });
+
+document
+  .querySelector('[data-testid="context-lab-reinit"]')
+  ?.addEventListener('click', () => initSdk('context lab: re-init with app metadata'));
+
+document
+  .querySelector('[data-testid="context-lab-reinit-no-meta"]')
+  ?.addEventListener('click', () =>
+    initSdkWithoutMeta('context lab: re-init without app metadata'),
+  );
+
+document
+  .querySelector('[data-testid="show-context"]')
+  ?.addEventListener('click', async () => {
+    try {
+      const response = await fetch(`${RECEIVER_BASE}/__reports`);
+      const body = (await response.json()) as {
+        count: number;
+        reports: Array<{ context?: unknown }>;
+      };
+      if (body.count === 0) {
+        record('show last context: no reports stored yet');
+        return;
+      }
+      const latest = body.reports[body.reports.length - 1];
+      record(`show last context: ${JSON.stringify(latest?.context)}`);
+    } catch (error) {
+      record(`show last context failed: ${String(error)}`);
+    }
+  });
+
 // --- Send a test report via the SDK transport ------------------------------
 document
   .querySelector('[data-testid="send-report"]')
@@ -196,6 +267,7 @@ document
     }
     const report = buildReport({
       description: 'Manual test report from the m-Seismo test app',
+      context: getContext(contextInput()).context,
     });
     const result = await sendReport(sanitize(report), config);
     if (result.ok) {

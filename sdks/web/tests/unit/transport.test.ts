@@ -25,7 +25,17 @@ function makeConfig(
 
 function makeReport() {
   return sanitize(
-    buildReport({ description: 'transport test' }, { reportId: 'r-1' }),
+    buildReport(
+      {
+        description: 'transport test',
+        context: {
+          url: 'https://app.test/',
+          timestamp: new Date('2026-01-02T03:04:05.000Z').toISOString(),
+          application: {},
+        },
+      },
+      { reportId: 'r-1' },
+    ),
   );
 }
 

@@ -56,6 +56,30 @@
       </section>
 
       <section class="panel">
+        <h2>Context lab (Phase 5.1)</h2>
+        <p>
+          Exercise automatic context collection. Use DevTools to resize the
+          viewport for the measurement test, and switch device emulation to see
+          the platform/browser change.
+        </p>
+        <div class="grid">
+          <button type="button" data-testid="context-lab-navigate">
+            Set URL with fake secrets
+          </button>
+          <button type="button" data-testid="context-lab-reset-url">Reset URL</button>
+          <button type="button" data-testid="context-lab-reinit">
+            Re-init with app metadata
+          </button>
+          <button type="button" data-testid="context-lab-reinit-no-meta">
+            Re-init without app metadata
+          </button>
+          <button type="button" data-testid="show-context">
+            Show last stored report context
+          </button>
+        </div>
+      </section>
+
+      <section class="panel">
         <h2>Event log</h2>
         <ol data-testid="event-log" class="event-log"></ol>
       </section>

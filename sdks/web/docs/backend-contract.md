@@ -40,8 +40,17 @@ The Web SDK's implementation of this contract lives in `src/core/` (payload),
   "description": "Non-empty human description of the problem",
   "error": null, // or { "type": "...", "message": "...", "stack": "..." }
   "context": {
-    "url": "https://app.example.com/page",
+    "url": "https://app.example.com/page?utm_source=docs&token=[REDACTED]",
     "timestamp": "2026-10-16T20:00:00.000Z",
+    "browser": {
+      "name": "Chrome",        // optional
+      "version": "120"         // optional
+    },
+    "platform": "Windows",     // optional
+    "viewport": {
+      "width": 1280,           // optional
+      "height": 720
+    },
     "application": {
       "version": "1.4.2",     // optional
       "environment": "prod"    // optional
@@ -63,8 +72,11 @@ Field notes (ASSUMED):
 | `reportId` | string (UUID v4) | yes | Unique per report; see §7 idempotency. |
 | `description` | string | yes | Must be non-empty. |
 | `error` | `null` or object | yes | `null` for manual reports. Object: `type` (string), `message` (string), optional `stack` (string). |
-| `context.url` | string | yes | Page URL at capture time (may be empty in non-browser contexts). |
+| `context.url` | string | no | Sanitized page URL at capture time. Omitted (not `null`) when unavailable or unparseable. See §3.2. |
 | `context.timestamp` | string (ISO 8601) | yes | Capture time, UTC. |
+| `context.browser` | object | no | `{ name, version }`; both optional. Omitted when it cannot be detected. See §3.2. |
+| `context.platform` | string | no | e.g. `Windows`, `macOS`, `Linux`, `Android`, `iOS`, `ChromeOS`. Omitted when unknown. |
+| `context.viewport` | object | no | `{ width, height }`, positive integers. Omitted when unavailable. |
 | `context.application` | object | yes | May be `{}`. `version`/`environment` optional. |
 | `breadcrumbs` | array | yes | Empty in this version; shape TBD in a later phase. |
 | `networkFailures` | array | yes | Empty in this version; shape TBD in a later phase. |
@@ -95,6 +107,36 @@ The SDK does **not** capture the screen automatically; a screenshot is only ever
 attached when the user picks a file. Inline base64 is an **assumption** — the
 real backend may instead want multipart or a separate upload + reference (see
 §8, question 7).
+
+### 3.2 Automatic context (ASSUMED — Phase 5.1)
+
+Phase 5.1 adds **optional** `browser`, `platform`, and `viewport` fields to
+`context`, and makes `context.url` optional. This is an **additive,
+backward-compatible** change: `schemaVersion` stays `1`, and a backend that
+ignores the new fields continues to work.
+
+Collection and privacy rules (implemented in `src/context/`):
+
+- **`url`** is sanitized before sending: the fragment (`#...`) and userinfo
+  (`user:pass@`) are stripped; the values of sensitive-looking query parameters
+  are replaced with the literal `[REDACTED]` (key kept); values that look like a
+  JWT or long opaque secret are redacted even under an ordinary key; the result
+  is truncated to 2048 chars (`...[truncated]`). Unparseable URLs are omitted.
+  The default sensitive keys are listed in
+  `DEFAULT_SENSITIVE_QUERY_PARAMS`; apps may add more via
+  `init({ privacy: { sensitiveQueryParams: [...] } })`.
+- **`browser`** is `{ name, version }` with `name` one of `Chrome`, `Edge`,
+  `Firefox`, `Safari`, `Opera`, `Samsung Internet`, and `version` the major
+  version only. Detection prefers `navigator.userAgentData.brands` (ignoring
+  GREASE entries) and falls back to the user-agent string.
+- **`platform`** is a coarse OS label (see the table row above).
+- **`viewport`** is `{ width, height }` from `window.innerWidth/innerHeight`
+  (positive integers only).
+- The raw **`userAgent` is never sent** (not top-level, not inside `context`).
+  Only the parsed `browser`/`platform` labels are transmitted.
+- The whole `context` object is collected fresh at submit time, is read-only
+  (nothing is written to `navigator`, `location`, `history`, storage, or
+  cookies), and never throws — a failing collector simply omits its field.
 
 ## 4. Responses (ASSUMED)
 
@@ -160,6 +202,13 @@ again.)
    there a stricter decoded-size limit, and should `dataBase64` include the
    `data:<mime>;base64,` prefix?
 8. **Rate limiting:** What are the limits and is `Retry-After` returned?
+9. **Automatic context (Phase 5.1):** Does the backend accept the optional
+   `context.browser`, `context.platform`, and `context.viewport` fields, and an
+   omitted `context.url`? Does anything downstream require `url` to always be
+   present? Is the `[REDACTED]` placeholder in the query string acceptable as a
+   stored value, or should redacted params be dropped entirely? Are the
+   `browser.name` / `platform` vocabularies above acceptable, or is a fixed
+   enum expected?
 
 ---
 

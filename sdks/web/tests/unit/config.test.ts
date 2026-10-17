@@ -158,4 +158,36 @@ describe('configure / init validation', () => {
     configure({ endpoint: 'https://a.test/reports', onEvent });
     expect(getConfig()?.onEvent).toBe(onEvent);
   });
+
+  it('omits sensitiveQueryParams by default', () => {
+    configure({ endpoint: 'https://a.test/reports' });
+    expect(getConfig()?.sensitiveQueryParams).toBeUndefined();
+  });
+
+  it('stores a valid privacy.sensitiveQueryParams list (trimmed)', () => {
+    configure({
+      endpoint: 'https://a.test/reports',
+      privacy: { sensitiveQueryParams: [' workspace ', 'tenant'] },
+    });
+    expect(getConfig()?.sensitiveQueryParams).toEqual(['workspace', 'tenant']);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('ignores non-string entries with one warning', () => {
+    configure({
+      endpoint: 'https://a.test/reports',
+      privacy: { sensitiveQueryParams: ['ok', 5 as unknown as string, ''] },
+    });
+    expect(getConfig()?.sensitiveQueryParams).toEqual(['ok']);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a non-array sensitiveQueryParams with one warning', () => {
+    configure({
+      endpoint: 'https://a.test/reports',
+      privacy: { sensitiveQueryParams: 'nope' as unknown as string[] },
+    });
+    expect(getConfig()?.sensitiveQueryParams).toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
 });

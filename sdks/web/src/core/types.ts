@@ -22,11 +22,36 @@ export interface ReportApplication {
   readonly environment?: string;
 }
 
+/** Detected browser name/version. Both fields are optional and may be omitted. */
+export interface ReportBrowser {
+  readonly name?: string;
+  readonly version?: string;
+}
+
+/** Viewport size in integer pixels. */
+export interface ReportViewport {
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * Automatic context captured with every report (Phase 5.1).
+ *
+ * Every field except `timestamp` and `application` is optional and is omitted
+ * when it cannot be collected. `url` is already sanitized (fragment, userinfo
+ * and sensitive query values removed) before it reaches this type.
+ */
 export interface ReportContext {
-  /** Page URL at capture time. Empty string when there is no `location` (SSR). */
-  readonly url: string;
-  /** ISO 8601 timestamp, UTC. */
+  /** Sanitized page URL. Omitted when there is no `location` or it is unusable. */
+  readonly url?: string;
+  /** ISO 8601 timestamp, UTC. Always present. */
   readonly timestamp: string;
+  /** Detected browser, or omitted when it cannot be determined. */
+  readonly browser?: ReportBrowser;
+  /** Normalized platform/OS, or omitted when it cannot be determined. */
+  readonly platform?: string;
+  /** Viewport in integer pixels, or omitted when unavailable. */
+  readonly viewport?: ReportViewport;
   readonly application: ReportApplication;
 }
 

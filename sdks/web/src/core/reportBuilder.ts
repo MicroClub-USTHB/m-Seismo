@@ -1,24 +1,28 @@
 /**
- * Minimal report builder.
+ * Report builder — assembly only.
  *
- * Produces a {@link ReportPayload} matching the **ASSUMED** draft contract in
- * `docs/backend-contract.md`. This is SSR-safe: it never touches `window`,
- * `document`, or `location` unless they exist (context capture lives in
- * `src/context/getContext.ts`).
+ * The builder takes an already-collected {@link ReportContext} and the user's
+ * input and assembles a {@link ReportPayload} matching the **ASSUMED** draft
+ * contract in `docs/backend-contract.md`. It performs NO context collection: the
+ * submit flow calls `getContext()` first and passes the result in. This keeps
+ * collection, assembly and transport separate.
+ *
+ * SSR-safe: it never touches `window`, `document`, or `location`.
  */
 import { SDK_VERSION } from './version';
 import { SCHEMA_VERSION } from './types';
 import type {
-  ReportApplication,
+  ReportContext,
   ReportError,
   ReportPayload,
   ScreenshotAttachment,
 } from './types';
-import { getContext } from '../context/getContext';
 
 export interface BuildReportInput {
   /** Human description. Must be non-empty by contract. */
   readonly description: string;
+  /** Context collected by `getContext()` at submit time. */
+  readonly context: ReportContext;
   /** Captured error, or `null` for a manual report. */
   readonly error?: ReportError | null;
   /** Optional screenshot attachment; omitted/`null` when none. */
@@ -26,12 +30,6 @@ export interface BuildReportInput {
 }
 
 export interface BuildReportOptions {
-  /** Override the page URL (defaults to `location.href` when available). */
-  readonly url?: string;
-  /** Override `context.application` (defaults to the configured app metadata). */
-  readonly application?: ReportApplication;
-  /** Override the timestamp (defaults to `new Date()`). */
-  readonly now?: Date;
   /** Override the generated id (useful in tests / for idempotency). */
   readonly reportId?: string;
 }
@@ -66,27 +64,20 @@ export function createReportId(): string {
 }
 
 /**
- * Builds a report payload. `error` defaults to `null`, which is valid for manual
- * reports.
+ * Assembles a report payload from user input and pre-collected context.
+ * `error` defaults to `null`, which is valid for manual reports.
  */
 export function buildReport(
   input: BuildReportInput,
   options: BuildReportOptions = {},
 ): ReportPayload {
-  const now = options.now ?? new Date();
   return {
     schemaVersion: SCHEMA_VERSION,
     sdkVersion: SDK_VERSION,
     reportId: options.reportId ?? createReportId(),
     description: input.description,
     error: input.error ?? null,
-    context: getContext({
-      ...(options.url !== undefined ? { url: options.url } : {}),
-      ...(options.application !== undefined
-        ? { application: options.application }
-        : {}),
-      now,
-    }),
+    context: input.context,
     breadcrumbs: [],
     networkFailures: [],
     screenshot: input.screenshot ?? null,

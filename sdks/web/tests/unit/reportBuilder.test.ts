@@ -1,23 +1,27 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  SDK_VERSION,
-  buildReport,
-  createReportId,
-  init,
-} from '@m-seismo/web';
+import { SDK_VERSION, buildReport, createReportId } from '@m-seismo/web';
+import type { ReportContext } from '@m-seismo/web';
 import { resetConfig } from '@sdk/core/config';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function makeContext(overrides: Partial<ReportContext> = {}): ReportContext {
+  return {
+    timestamp: new Date('2026-01-02T03:04:05.000Z').toISOString(),
+    application: {},
+    ...overrides,
+  };
+}
 
 afterEach(() => {
   resetConfig();
   vi.unstubAllGlobals();
 });
 
-describe('report builder', () => {
+describe('report builder (assembly only)', () => {
   it('builds a minimal manual report with error: null', () => {
-    const report = buildReport({ description: 'manual report' });
+    const report = buildReport({ description: 'manual report', context: makeContext() });
     expect(report.schemaVersion).toBe(1);
     expect(report.sdkVersion).toBe(SDK_VERSION);
     expect(report.description).toBe('manual report');
@@ -27,58 +31,41 @@ describe('report builder', () => {
     expect(report.networkFailures).toEqual([]);
   });
 
-  it('produces a UUID reportId and an ISO timestamp', () => {
-    const report = buildReport({ description: 'x' });
+  it('produces a UUID reportId and carries the provided context verbatim', () => {
+    const context = makeContext({
+      url: 'https://app.test/page',
+      browser: { name: 'Chrome', version: '120' },
+      platform: 'Linux',
+      viewport: { width: 800, height: 600 },
+      application: { version: '1.2.3', environment: 'prod' },
+    });
+    const report = buildReport({ description: 'x', context });
     expect(report.reportId).toMatch(UUID_RE);
+    expect(report.context).toBe(context);
     expect(Number.isNaN(Date.parse(report.context.timestamp))).toBe(false);
-    expect(new Date(report.context.timestamp).toISOString()).toBe(
-      report.context.timestamp,
-    );
   });
 
   it('keeps a captured error object', () => {
     const report = buildReport({
       description: 'boom',
+      context: makeContext(),
       error: { type: 'TypeError', message: 'bad', stack: 'at x' },
     });
     expect(report.error).toEqual({ type: 'TypeError', message: 'bad', stack: 'at x' });
   });
 
-  it('pulls application metadata from the configured SDK', () => {
-    init({
-      endpoint: 'https://example.test/api/reports',
-      appVersion: '9.9.9',
-      environment: 'staging',
-    });
-    const report = buildReport({ description: 'x' });
-    expect(report.context.application).toEqual({
-      version: '9.9.9',
-      environment: 'staging',
-    });
-  });
-
-  it('is SSR-safe: no location -> empty url, application {} by default', () => {
-    const report = buildReport({ description: 'x' });
-    expect(typeof globalThis.window).toBe('undefined');
-    expect(report.context.url).toBe('');
-    expect(report.context.application).toEqual({});
-  });
-
-  it('honours overrides for url, application, now and reportId', () => {
-    const now = new Date('2026-01-02T03:04:05.000Z');
+  it('honours the reportId override (idempotency)', () => {
     const report = buildReport(
-      { description: 'x' },
-      {
-        url: 'https://app.test/page',
-        application: { version: '1', environment: 'test' },
-        now,
-        reportId: 'fixed-id',
-      },
+      { description: 'x', context: makeContext() },
+      { reportId: 'fixed-id' },
     );
-    expect(report.context.url).toBe('https://app.test/page');
-    expect(report.context.application).toEqual({ version: '1', environment: 'test' });
-    expect(report.context.timestamp).toBe(now.toISOString());
     expect(report.reportId).toBe('fixed-id');
+  });
+
+  it('is SSR-safe: importing and building touches no globals', () => {
+    const report = buildReport({ description: 'x', context: makeContext() });
+    expect(typeof globalThis.window).toBe('undefined');
+    expect(report.context.application).toEqual({});
   });
 });
 

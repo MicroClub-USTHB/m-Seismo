@@ -20,7 +20,8 @@ import type { SdkConfig } from '../core/config';
 import { emitEvent } from '../core/emit';
 import { buildReport, createReportId } from '../core/reportBuilder';
 import { matchesShortcut } from '../core/shortcut';
-import type { ScreenshotAttachment } from '../core/types';
+import type { ReportContext, ScreenshotAttachment } from '../core/types';
+import { getContext } from '../context/getContext';
 import { sanitize } from '../privacy/sanitize';
 import type { SanitizedReport } from '../privacy/sanitize';
 import { sendReport } from '../transport/sendReport';
@@ -280,8 +281,28 @@ export function createFormController(
     setBusy(true);
     emitEvent({ type: 'submit:start', reportId: id });
 
+    // Collect context fresh at click time (not at form open) so a retry always
+    // reflects the current page/viewport. Never let a context failure block the
+    // submission: fall back to a minimal timestamp + config-value context.
+    let context: ReportContext;
+    try {
+      context = getContext({
+        reportId: id,
+        ...(current.appVersion !== undefined ? { appVersion: current.appVersion } : {}),
+        ...(current.environment !== undefined ? { environment: current.environment } : {}),
+        ...(current.sensitiveQueryParams !== undefined
+          ? { sensitiveQueryParams: current.sensitiveQueryParams }
+          : {}),
+      }).context;
+    } catch {
+      const application: { version?: string; environment?: string } = {};
+      if (current.appVersion !== undefined) application.version = current.appVersion;
+      if (current.environment !== undefined) application.environment = current.environment;
+      context = { timestamp: new Date().toISOString(), application };
+    }
+
     const payload = buildReport(
-      { description: validation.value, screenshot },
+      { description: validation.value, screenshot, context },
       { reportId: id },
     );
 

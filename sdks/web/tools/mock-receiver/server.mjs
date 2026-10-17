@@ -132,6 +132,65 @@ function redactScreenshot(report) {
   };
 }
 
+/** Validates an optional context sub-object against the ASSUMED contract. */
+function validateContext(context) {
+  if (typeof context !== 'object' || context === null) return 'context must be an object';
+
+  // url: optional; when present must be a string.
+  if (context.url !== undefined && typeof context.url !== 'string') {
+    return 'context.url must be a string when present';
+  }
+  if (!isNonEmptyString(context.timestamp)) {
+    return 'context.timestamp must be a non-empty string';
+  }
+  if (Number.isNaN(Date.parse(context.timestamp))) {
+    return 'context.timestamp must be an ISO date';
+  }
+
+  // browser: optional; wrong types are rejected, unknown sub-fields accepted.
+  if (context.browser !== undefined) {
+    const browser = context.browser;
+    if (typeof browser !== 'object' || browser === null) {
+      return 'context.browser must be an object when present';
+    }
+    if (browser.name !== undefined && typeof browser.name !== 'string') {
+      return 'context.browser.name must be a string when present';
+    }
+    if (browser.version !== undefined && typeof browser.version !== 'string') {
+      return 'context.browser.version must be a string when present';
+    }
+  }
+
+  // platform: optional string.
+  if (context.platform !== undefined && typeof context.platform !== 'string') {
+    return 'context.platform must be a string when present';
+  }
+
+  // viewport: optional { width, height } of finite positive numbers.
+  if (context.viewport !== undefined) {
+    const viewport = context.viewport;
+    if (typeof viewport !== 'object' || viewport === null) {
+      return 'context.viewport must be an object when present';
+    }
+    if (
+      typeof viewport.width !== 'number' ||
+      !Number.isFinite(viewport.width) ||
+      viewport.width <= 0 ||
+      typeof viewport.height !== 'number' ||
+      !Number.isFinite(viewport.height) ||
+      viewport.height <= 0
+    ) {
+      return 'context.viewport must have positive numeric width and height';
+    }
+  }
+
+  // application: required object; unknown sub-fields accepted.
+  if (typeof context.application !== 'object' || context.application === null) {
+    return 'context.application must be an object';
+  }
+  return null;
+}
+
 /** Validates against the ASSUMED draft contract. Returns an error string or null. */
 function validateReport(report) {
   if (typeof report !== 'object' || report === null) return 'body must be a JSON object';
@@ -146,20 +205,23 @@ function validateReport(report) {
     if (!isNonEmptyString(report.error.message)) return 'error.message must be a non-empty string';
   }
 
-  const context = report.context;
-  if (typeof context !== 'object' || context === null) return 'context must be an object';
-  if (typeof context.url !== 'string') return 'context.url must be a string';
-  if (!isNonEmptyString(context.timestamp)) return 'context.timestamp must be a non-empty string';
-  if (Number.isNaN(Date.parse(context.timestamp))) return 'context.timestamp must be an ISO date';
-  if (typeof context.application !== 'object' || context.application === null) {
-    return 'context.application must be an object';
-  }
+  const contextError = validateContext(report.context);
+  if (contextError) return contextError;
 
   if (!Array.isArray(report.breadcrumbs)) return 'breadcrumbs must be an array';
   if (!Array.isArray(report.networkFailures)) return 'networkFailures must be an array';
   if (report.screenshot !== null) {
     const screenshotError = validateScreenshot(report.screenshot);
     if (screenshotError) return screenshotError;
+  }
+
+  // A raw userAgent field is never sent by the SDK. Store it if it arrives, but
+  // flag it so an accidental leak is obvious in the receiver log.
+  if (report.userAgent !== undefined) {
+    // eslint-disable-next-line no-console -- deliberate accidental-leak warning.
+    console.warn(
+      '[mock-receiver] WARNING: report carried a raw "userAgent" field; the SDK must not send this.',
+    );
   }
   return null;
 }

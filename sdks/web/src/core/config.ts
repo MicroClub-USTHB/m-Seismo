@@ -44,6 +44,16 @@ export type LauncherConfig =
       readonly position: LauncherPosition;
     };
 
+/** Privacy controls. Phase 5.1 introduces `sensitiveQueryParams`. */
+export interface PrivacyOptions {
+  /**
+   * Extra query-parameter names whose values are redacted from the report URL,
+   * in addition to the built-in sensitive list. Case-insensitive. Invalid
+   * entries are ignored with a single warning.
+   */
+  readonly sensitiveQueryParams?: readonly string[];
+}
+
 export interface InitOptions {
   /** Full URL of the ingest endpoint, e.g. `https://example.com/api/reports`. */
   readonly endpoint: string;
@@ -71,6 +81,8 @@ export interface InitOptions {
   readonly launcher?: boolean | LauncherOptions;
   /** Whether the form offers a screenshot attachment. Defaults to `true`. */
   readonly screenshot?: boolean;
+  /** Optional additional privacy controls (Phase 5.1). */
+  readonly privacy?: PrivacyOptions;
   /** Optional listener for SDK lifecycle events. */
   readonly onEvent?: SdkEventListener;
 }
@@ -84,6 +96,8 @@ export interface SdkConfig {
   readonly shortcut: ShortcutSpec | false;
   readonly launcher: LauncherConfig;
   readonly screenshot: boolean;
+  /** Extra sensitive query params for URL sanitizing; omitted when empty. */
+  readonly sensitiveQueryParams?: readonly string[];
   readonly onEvent?: SdkEventListener;
 }
 
@@ -163,6 +177,36 @@ function normaliseScreenshot(value: unknown): boolean {
 }
 
 /**
+ * Normalises `privacy.sensitiveQueryParams`. Returns `undefined` when there is
+ * nothing valid to store. A non-array value or non-string entries are ignored
+ * with at most one warning.
+ */
+function normaliseSensitiveQueryParams(
+  value: unknown,
+): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    warn(
+      'init() option "privacy.sensitiveQueryParams" must be an array of strings; ignored.',
+    );
+    return undefined;
+  }
+  const valid: string[] = [];
+  let warned = false;
+  for (const entry of value) {
+    if (typeof entry === 'string' && entry.trim().length > 0) {
+      valid.push(entry.trim());
+    } else if (!warned) {
+      warn(
+        'init() option "privacy.sensitiveQueryParams" contains non-string entries; those were ignored.',
+      );
+      warned = true;
+    }
+  }
+  return valid.length > 0 ? valid : undefined;
+}
+
+/**
  * Validate and store configuration.
  *
  * Calling this again with a valid config fully replaces the previous one (no
@@ -188,6 +232,7 @@ export function configure(options: InitOptions): boolean {
     shortcut: ShortcutSpec | false;
     launcher: LauncherConfig;
     screenshot: boolean;
+    sensitiveQueryParams?: readonly string[];
     onEvent?: SdkEventListener;
   } = {
     endpoint: options.endpoint,
@@ -200,6 +245,14 @@ export function configure(options: InitOptions): boolean {
   if (options.environment !== undefined) next.environment = options.environment;
   if (options.projectKey !== undefined) next.projectKey = options.projectKey;
   if (typeof options.onEvent === 'function') next.onEvent = options.onEvent;
+
+  const privacy = options.privacy;
+  const sensitive = normaliseSensitiveQueryParams(
+    privacy !== null && typeof privacy === 'object'
+      ? (privacy as PrivacyOptions).sensitiveQueryParams
+      : undefined,
+  );
+  if (sensitive !== undefined) next.sensitiveQueryParams = sensitive;
 
   currentConfig = next;
   return true;
