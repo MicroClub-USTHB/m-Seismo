@@ -9,6 +9,7 @@ use crate::{
 
 #[cfg(test)]
 pub mod fake;
+pub mod docker;
 
 pub trait LogSource: Send + Sync {
     fn list_workloads(
