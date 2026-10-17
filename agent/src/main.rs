@@ -1,4 +1,5 @@
 mod cli;
+pub mod model;
 pub mod query;
 
 fn main() {
