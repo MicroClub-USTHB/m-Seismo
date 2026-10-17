@@ -7,46 +7,97 @@ package db
 
 import (
 	"context"
+	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/google/uuid"
 )
 
-const getDefaultProjectRepository = `-- name: GetDefaultProjectRepository :one
-SELECT id, project_id, tracker, repository, is_default, created_at FROM project_repositories
+const clearDefaultProjectRepository = `-- name: ClearDefaultProjectRepository :exec
+UPDATE project_repositories
+SET is_default = false
 WHERE project_id = $1 AND is_default
 `
 
-func (q *Queries) GetDefaultProjectRepository(ctx context.Context, projectID pgtype.UUID) (ProjectRepository, error) {
-	row := q.db.QueryRow(ctx, getDefaultProjectRepository, projectID)
+func (q *Queries) ClearDefaultProjectRepository(ctx context.Context, projectID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, clearDefaultProjectRepository, projectID)
+	return err
+}
+
+const getIssueTarget = `-- name: GetIssueTarget :one
+SELECT
+    pr.id AS project_repository_id,
+    pr.project_id,
+    pr.repository,
+    pc.tracker,
+    pc.external_id
+FROM project_repositories pr
+JOIN provider_connections pc ON pc.id = pr.provider_connection_id
+WHERE pr.id = $1 AND pc.suspended_at IS NULL
+`
+
+type GetIssueTargetRow struct {
+	ProjectRepositoryID uuid.UUID `json:"project_repository_id"`
+	ProjectID           uuid.UUID `json:"project_id"`
+	Repository          string    `json:"repository"`
+	Tracker             Tracker   `json:"tracker"`
+	ExternalID          string    `json:"external_id"`
+}
+
+// Resolves one project repository to everything needed to open an issue in it.
+func (q *Queries) GetIssueTarget(ctx context.Context, id uuid.UUID) (GetIssueTargetRow, error) {
+	row := q.db.QueryRow(ctx, getIssueTarget, id)
+	var i GetIssueTargetRow
+	err := row.Scan(
+		&i.ProjectRepositoryID,
+		&i.ProjectID,
+		&i.Repository,
+		&i.Tracker,
+		&i.ExternalID,
+	)
+	return i, err
+}
+
+const getProjectRepository = `-- name: GetProjectRepository :one
+SELECT id, project_id, repository, is_default, created_at, provider_connection_id FROM project_repositories
+WHERE id = $1 AND project_id = $2
+`
+
+type GetProjectRepositoryParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetProjectRepository(ctx context.Context, arg GetProjectRepositoryParams) (ProjectRepository, error) {
+	row := q.db.QueryRow(ctx, getProjectRepository, arg.ID, arg.ProjectID)
 	var i ProjectRepository
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
-		&i.Tracker,
 		&i.Repository,
 		&i.IsDefault,
 		&i.CreatedAt,
+		&i.ProviderConnectionID,
 	)
 	return i, err
 }
 
 const linkProjectRepository = `-- name: LinkProjectRepository :one
-INSERT INTO project_repositories (project_id, tracker, repository, is_default)
+INSERT INTO project_repositories (project_id, provider_connection_id, repository, is_default)
 VALUES ($1, $2, $3, $4)
-RETURNING id, project_id, tracker, repository, is_default, created_at
+RETURNING id, project_id, repository, is_default, created_at, provider_connection_id
 `
 
 type LinkProjectRepositoryParams struct {
-	ProjectID  pgtype.UUID `json:"project_id"`
-	Tracker    Tracker     `json:"tracker"`
-	Repository string      `json:"repository"`
-	IsDefault  bool        `json:"is_default"`
+	ProjectID            uuid.UUID `json:"project_id"`
+	ProviderConnectionID uuid.UUID `json:"provider_connection_id"`
+	Repository           string    `json:"repository"`
+	IsDefault            bool      `json:"is_default"`
 }
 
 func (q *Queries) LinkProjectRepository(ctx context.Context, arg LinkProjectRepositoryParams) (ProjectRepository, error) {
 	row := q.db.QueryRow(ctx, linkProjectRepository,
 		arg.ProjectID,
-		arg.Tracker,
+		arg.ProviderConnectionID,
 		arg.Repository,
 		arg.IsDefault,
 	)
@@ -54,36 +105,52 @@ func (q *Queries) LinkProjectRepository(ctx context.Context, arg LinkProjectRepo
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
-		&i.Tracker,
 		&i.Repository,
 		&i.IsDefault,
 		&i.CreatedAt,
+		&i.ProviderConnectionID,
 	)
 	return i, err
 }
 
-const listProjectRepositories = `-- name: ListProjectRepositories :many
-SELECT id, project_id, tracker, repository, is_default, created_at FROM project_repositories
-WHERE project_id = $1
-ORDER BY created_at
+const listIssueTargetsForApp = `-- name: ListIssueTargetsForApp :many
+SELECT
+    pr.id AS project_repository_id,
+    pr.project_id,
+    pr.repository,
+    pc.tracker,
+    pc.external_id
+FROM app_projects ap
+JOIN project_repositories pr ON pr.project_id = ap.project_id AND pr.is_default
+JOIN provider_connections pc ON pc.id = pr.provider_connection_id
+WHERE ap.app_id = $1 AND pc.suspended_at IS NULL
+ORDER BY ap.created_at
 `
 
-func (q *Queries) ListProjectRepositories(ctx context.Context, projectID pgtype.UUID) ([]ProjectRepository, error) {
-	rows, err := q.db.Query(ctx, listProjectRepositories, projectID)
+type ListIssueTargetsForAppRow struct {
+	ProjectRepositoryID uuid.UUID `json:"project_repository_id"`
+	ProjectID           uuid.UUID `json:"project_id"`
+	Repository          string    `json:"repository"`
+	Tracker             Tracker   `json:"tracker"`
+	ExternalID          string    `json:"external_id"`
+}
+
+// The default repository of every project linked to the app.
+func (q *Queries) ListIssueTargetsForApp(ctx context.Context, appID uuid.UUID) ([]ListIssueTargetsForAppRow, error) {
+	rows, err := q.db.Query(ctx, listIssueTargetsForApp, appID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ProjectRepository
+	var items []ListIssueTargetsForAppRow
 	for rows.Next() {
-		var i ProjectRepository
+		var i ListIssueTargetsForAppRow
 		if err := rows.Scan(
-			&i.ID,
+			&i.ProjectRepositoryID,
 			&i.ProjectID,
-			&i.Tracker,
 			&i.Repository,
-			&i.IsDefault,
-			&i.CreatedAt,
+			&i.Tracker,
+			&i.ExternalID,
 		); err != nil {
 			return nil, err
 		}
@@ -95,12 +162,90 @@ func (q *Queries) ListProjectRepositories(ctx context.Context, projectID pgtype.
 	return items, nil
 }
 
-const unlinkProjectRepository = `-- name: UnlinkProjectRepository :exec
-DELETE FROM project_repositories
-WHERE id = $1
+const listProjectRepositories = `-- name: ListProjectRepositories :many
+SELECT
+    pr.id, pr.project_id, pr.repository, pr.is_default, pr.created_at, pr.provider_connection_id,
+    pc.tracker,
+    pc.account_login
+FROM project_repositories pr
+JOIN provider_connections pc ON pc.id = pr.provider_connection_id
+WHERE pr.project_id = $1
+ORDER BY pr.created_at
 `
 
-func (q *Queries) UnlinkProjectRepository(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, unlinkProjectRepository, id)
-	return err
+type ListProjectRepositoriesRow struct {
+	ID                   uuid.UUID `json:"id"`
+	ProjectID            uuid.UUID `json:"project_id"`
+	Repository           string    `json:"repository"`
+	IsDefault            bool      `json:"is_default"`
+	CreatedAt            time.Time `json:"created_at"`
+	ProviderConnectionID uuid.UUID `json:"provider_connection_id"`
+	Tracker              Tracker   `json:"tracker"`
+	AccountLogin         string    `json:"account_login"`
+}
+
+func (q *Queries) ListProjectRepositories(ctx context.Context, projectID uuid.UUID) ([]ListProjectRepositoriesRow, error) {
+	rows, err := q.db.Query(ctx, listProjectRepositories, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProjectRepositoriesRow
+	for rows.Next() {
+		var i ListProjectRepositoriesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Repository,
+			&i.IsDefault,
+			&i.CreatedAt,
+			&i.ProviderConnectionID,
+			&i.Tracker,
+			&i.AccountLogin,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setDefaultProjectRepository = `-- name: SetDefaultProjectRepository :execrows
+UPDATE project_repositories
+SET is_default = true
+WHERE id = $1 AND project_id = $2
+`
+
+type SetDefaultProjectRepositoryParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) SetDefaultProjectRepository(ctx context.Context, arg SetDefaultProjectRepositoryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setDefaultProjectRepository, arg.ID, arg.ProjectID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const unlinkProjectRepository = `-- name: UnlinkProjectRepository :execrows
+DELETE FROM project_repositories
+WHERE id = $1 AND project_id = $2
+`
+
+type UnlinkProjectRepositoryParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) UnlinkProjectRepository(ctx context.Context, arg UnlinkProjectRepositoryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, unlinkProjectRepository, arg.ID, arg.ProjectID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

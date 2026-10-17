@@ -50,7 +50,45 @@ func Load(configPath string) (*Config, error) {
 		NATS: NATSConfig{
 			URL: v.GetString("nats.url"),
 		},
+		Auth: AuthConfig{
+			JWTSecret: v.GetString("auth.jwt_secret"),
+			JWTTTL:    v.GetDuration("auth.jwt_ttl"),
+		},
+		GitHub: GitHubConfig{
+			AppID:          v.GetInt64("github.app_id"),
+			AppSlug:        v.GetString("github.app_slug"),
+			ClientID:       v.GetString("github.client_id"),
+			ClientSecret:   v.GetString("github.client_secret"),
+			PrivateKey:     v.GetString("github.private_key"),
+			PrivateKeyPath: v.GetString("github.private_key_path"),
+			APIURL:         v.GetString("github.api_url"),
+			WebURL:         v.GetString("github.web_url"),
+		},
+	}
+
+	cfg.Server.PublicURL = v.GetString("server.public_url")
+	cfg.Server.FrontendURL = v.GetString("server.frontend_url")
+
+	if err := cfg.validate(); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
 	}
 
 	return cfg, nil
+}
+
+// devJWTSecret is used only when env is "development" and no secret is set,
+// so a fresh checkout runs without extra setup.
+const devJWTSecret = "m-seismo-development-only-secret"
+
+func (c *Config) validate() error {
+	if c.Auth.JWTSecret == "" {
+		if c.Env != "development" {
+			return fmt.Errorf("auth.jwt_secret is required when env is %q", c.Env)
+		}
+		c.Auth.JWTSecret = devJWTSecret
+	}
+	if c.Auth.JWTTTL <= 0 {
+		return fmt.Errorf("auth.jwt_ttl must be positive")
+	}
+	return nil
 }

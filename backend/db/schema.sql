@@ -29,6 +29,18 @@ COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
 
 
 --
+-- Name: app_platform; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.app_platform AS ENUM (
+    'ios',
+    'android',
+    'flutter',
+    'react_native'
+);
+
+
+--
 -- Name: tracker; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -44,15 +56,75 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
--- Name: project_keys; Type: TABLE; Schema: public; Owner: -
+-- Name: app_keys; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.project_keys (
+CREATE TABLE public.app_keys (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    project_id uuid NOT NULL,
-    key text NOT NULL,
+    app_id uuid NOT NULL,
+    key_hash bytea NOT NULL,
+    key_prefix text NOT NULL,
     revoked_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: app_projects; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_projects (
+    app_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: apps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.apps (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    owner_id uuid NOT NULL,
+    name text NOT NULL,
+    platform public.app_platform NOT NULL,
+    bundle_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: issues; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issues (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    project_repository_id uuid NOT NULL,
+    app_id uuid,
+    external_id text NOT NULL,
+    url text NOT NULL,
+    title text NOT NULL,
+    state text DEFAULT 'open'::text NOT NULL,
+    fingerprint text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT issues_state_check CHECK ((state = ANY (ARRAY['open'::text, 'closed'::text])))
+);
+
+
+--
+-- Name: owners; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.owners (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    email text NOT NULL,
+    password_hash text NOT NULL,
+    name text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -63,10 +135,10 @@ CREATE TABLE public.project_keys (
 CREATE TABLE public.project_repositories (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     project_id uuid NOT NULL,
-    tracker public.tracker NOT NULL,
     repository text NOT NULL,
     is_default boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    provider_connection_id uuid NOT NULL
 );
 
 
@@ -78,7 +150,24 @@ CREATE TABLE public.projects (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     name text NOT NULL,
     slug text NOT NULL,
-    default_repository text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    owner_id uuid NOT NULL
+);
+
+
+--
+-- Name: provider_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.provider_connections (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    owner_id uuid NOT NULL,
+    tracker public.tracker NOT NULL,
+    external_id text NOT NULL,
+    account_login text NOT NULL,
+    account_type text NOT NULL,
+    suspended_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -94,19 +183,51 @@ CREATE TABLE public.schema_migrations (
 
 
 --
--- Name: project_keys project_keys_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: app_keys app_keys_key_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.project_keys
-    ADD CONSTRAINT project_keys_key_key UNIQUE (key);
+ALTER TABLE ONLY public.app_keys
+    ADD CONSTRAINT app_keys_key_hash_key UNIQUE (key_hash);
 
 
 --
--- Name: project_keys project_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: app_keys app_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.project_keys
-    ADD CONSTRAINT project_keys_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.app_keys
+    ADD CONSTRAINT app_keys_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_projects app_projects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_projects
+    ADD CONSTRAINT app_projects_pkey PRIMARY KEY (app_id, project_id);
+
+
+--
+-- Name: apps apps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.apps
+    ADD CONSTRAINT apps_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issues issues_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issues
+    ADD CONSTRAINT issues_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: owners owners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.owners
+    ADD CONSTRAINT owners_pkey PRIMARY KEY (id);
 
 
 --
@@ -118,6 +239,22 @@ ALTER TABLE ONLY public.project_repositories
 
 
 --
+-- Name: project_repositories project_repositories_target_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_repositories
+    ADD CONSTRAINT project_repositories_target_key UNIQUE (project_id, provider_connection_id, repository);
+
+
+--
+-- Name: projects projects_owner_id_slug_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.projects
+    ADD CONSTRAINT projects_owner_id_slug_key UNIQUE (owner_id, slug);
+
+
+--
 -- Name: projects projects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -126,11 +263,19 @@ ALTER TABLE ONLY public.projects
 
 
 --
--- Name: projects projects_slug_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: provider_connections provider_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.projects
-    ADD CONSTRAINT projects_slug_key UNIQUE (slug);
+ALTER TABLE ONLY public.provider_connections
+    ADD CONSTRAINT provider_connections_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: provider_connections provider_connections_tracker_external_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.provider_connections
+    ADD CONSTRAINT provider_connections_tracker_external_id_key UNIQUE (tracker, external_id);
 
 
 --
@@ -142,10 +287,38 @@ ALTER TABLE ONLY public.schema_migrations
 
 
 --
--- Name: project_keys_project_id_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: app_keys_app_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX project_keys_project_id_idx ON public.project_keys USING btree (project_id);
+CREATE INDEX app_keys_app_id_idx ON public.app_keys USING btree (app_id);
+
+
+--
+-- Name: app_projects_project_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_projects_project_id_idx ON public.app_projects USING btree (project_id);
+
+
+--
+-- Name: apps_owner_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX apps_owner_id_idx ON public.apps USING btree (owner_id);
+
+
+--
+-- Name: issues_project_repository_id_fingerprint_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issues_project_repository_id_fingerprint_idx ON public.issues USING btree (project_repository_id, fingerprint);
+
+
+--
+-- Name: owners_email_lower_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX owners_email_lower_key ON public.owners USING btree (lower(email));
 
 
 --
@@ -163,11 +336,65 @@ CREATE INDEX project_repositories_project_id_idx ON public.project_repositories 
 
 
 --
--- Name: project_keys project_keys_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: project_repositories_provider_connection_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.project_keys
-    ADD CONSTRAINT project_keys_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+CREATE INDEX project_repositories_provider_connection_id_idx ON public.project_repositories USING btree (provider_connection_id);
+
+
+--
+-- Name: provider_connections_owner_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX provider_connections_owner_id_idx ON public.provider_connections USING btree (owner_id);
+
+
+--
+-- Name: app_keys app_keys_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_keys
+    ADD CONSTRAINT app_keys_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_projects app_projects_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_projects
+    ADD CONSTRAINT app_projects_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_projects app_projects_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_projects
+    ADD CONSTRAINT app_projects_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: apps apps_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.apps
+    ADD CONSTRAINT apps_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.owners(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issues issues_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issues
+    ADD CONSTRAINT issues_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE SET NULL;
+
+
+--
+-- Name: issues issues_project_repository_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issues
+    ADD CONSTRAINT issues_project_repository_id_fkey FOREIGN KEY (project_repository_id) REFERENCES public.project_repositories(id) ON DELETE CASCADE;
 
 
 --
@@ -176,6 +403,30 @@ ALTER TABLE ONLY public.project_keys
 
 ALTER TABLE ONLY public.project_repositories
     ADD CONSTRAINT project_repositories_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_repositories project_repositories_provider_connection_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_repositories
+    ADD CONSTRAINT project_repositories_provider_connection_id_fkey FOREIGN KEY (provider_connection_id) REFERENCES public.provider_connections(id) ON DELETE CASCADE;
+
+
+--
+-- Name: projects projects_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.projects
+    ADD CONSTRAINT projects_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.owners(id) ON DELETE CASCADE;
+
+
+--
+-- Name: provider_connections provider_connections_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.provider_connections
+    ADD CONSTRAINT provider_connections_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.owners(id) ON DELETE CASCADE;
 
 
 --
@@ -190,4 +441,5 @@ ALTER TABLE ONLY public.project_repositories
 
 INSERT INTO public.schema_migrations (version) VALUES
     ('20261016190043'),
-    ('20261016192420');
+    ('20261016192420'),
+    ('20261017120000');
