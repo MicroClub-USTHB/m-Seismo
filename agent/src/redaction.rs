@@ -348,7 +348,7 @@ fn is_luhn_card(digits: &str) -> bool {
             }
             digit
         })
-             git diff --cached -- agent/src/model.rs   .sum();
+        .sum();
     sum.is_multiple_of(10)
 }
 
