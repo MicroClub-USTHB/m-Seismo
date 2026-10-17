@@ -1,17 +1,18 @@
 // Package issue opens, updates and closes issues on an external tracker on
 // behalf of m-Seismo (PRD section 12).
 //
-// This package holds only the Opener interface and the types it speaks in.
-// Each tracker gets its own subpackage that implements Opener:
+// This package holds the Opener interface, the types it speaks in, and the
+// Service that opens issues for apps. Each tracker gets its own provider
+// subpackage, which implements Opener next to the tracker's connect flow:
 //
-//	internal/issue/github/     - v1
-//	internal/issue/gitlab/
-//	internal/issue/bitbucket/
+//	internal/provider/github/     - v1
+//	internal/provider/gitlab/
+//	internal/provider/bitbucket/
 //
 // Nothing outside those subpackages should import a vendor's API client
-// directly. Domain code (dedup, routing, ...) depends only on Opener, so
-// adding or swapping a tracker never touches code outside its own
-// subpackage.
+// directly. Domain code (dedup, routing, ...) depends only on Opener and
+// OpenerSource, so adding or swapping a tracker never touches code outside
+// its own subpackage.
 package issue
 
 import "context"
