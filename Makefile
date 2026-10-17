@@ -1,6 +1,7 @@
 .PHONY: check backend-check agent-check fmt lint \
         backend-build backend-test backend-fmt backend-fmt-check \
-        agent-build agent-test agent-fmt agent-fmt-check backend-lint agent-lint
+        agent-build agent-test agent-fmt agent-fmt-check backend-lint agent-lint \
+        agent-integration
 
 check: backend-check agent-check
 
@@ -30,6 +31,9 @@ agent-build:
 
 agent-test:
 	cd agent && cargo test --locked
+
+agent-integration:
+	cd agent && cargo test --locked --test docker_integration -- --ignored --nocapture
 
 agent-fmt:
 	cd agent && cargo fmt
