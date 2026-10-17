@@ -4,6 +4,10 @@ Go service: ingestion, enrichment, deduplication, GitHub publishing. Status:
 owner accounts, projects, apps, GitHub connections and the issue service are
 in place. There is no ingestion endpoint yet.
 
+**In-depth documentation:** [docs/](docs/README.md). It covers the
+architecture, data model, GitHub integration, issue service, API reference,
+file-by-file reference, extension recipes and testing.
+
 ## Domain
 
 ```
