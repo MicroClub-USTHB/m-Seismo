@@ -121,3 +121,17 @@ kbd {
 .event-log li {
   margin-bottom: 0.25rem;
 }
+
+.diagnostics-buffer {
+  margin-top: 0.75rem;
+  max-height: 18rem;
+  overflow: auto;
+  padding: 0.5rem;
+  border: 1px solid var(--border, currentColor);
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.06);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

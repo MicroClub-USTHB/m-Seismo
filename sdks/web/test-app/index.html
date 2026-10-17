@@ -80,6 +80,69 @@
       </section>
 
       <section class="panel">
+        <h2>Diagnostics lab (Phase 5.2)</h2>
+        <p>
+          Exercise automatic error collection and <code>captureException()</code>.
+          Uncaught errors and unhandled rejections are captured into a bounded
+          in-memory buffer; resource-load failures are ignored.
+        </p>
+        <div class="grid">
+          <button type="button" data-testid="diag-uncaught-typeerror">
+            Uncaught TypeError
+          </button>
+          <button type="button" data-testid="diag-uncaught-undefined-fn">
+            Call undefined function
+          </button>
+          <button type="button" data-testid="diag-throw-string">Throw a string</button>
+          <button type="button" data-testid="diag-throw-object">Throw an object</button>
+          <button type="button" data-testid="diag-reject-error">
+            Reject with Error
+          </button>
+          <button type="button" data-testid="diag-reject-string">
+            Reject with string
+          </button>
+          <button type="button" data-testid="diag-reject-object">
+            Reject with object
+          </button>
+          <button type="button" data-testid="diag-reject-undefined">
+            Reject with undefined
+          </button>
+          <button type="button" data-testid="diag-capture-exception">
+            captureException(Error, ctx)
+          </button>
+          <button type="button" data-testid="diag-capture-exception-no-context">
+            captureException(Error)
+          </button>
+          <button type="button" data-testid="diag-capture-non-error">
+            captureException(string)
+          </button>
+          <button type="button" data-testid="diag-broken-image">
+            Broken image (should NOT be captured)
+          </button>
+          <button type="button" data-testid="diag-broken-script">
+            Broken script (should NOT be captured)
+          </button>
+          <button type="button" data-testid="diag-cross-origin">
+            Cross-origin script throw
+          </button>
+          <button type="button" data-testid="diag-flood">Flood 100 errors</button>
+          <button type="button" data-testid="diag-show-buffer">
+            Show diagnostics buffer
+          </button>
+          <button type="button" data-testid="diag-clear-buffer">
+            Clear diagnostics buffer
+          </button>
+          <button type="button" data-testid="diag-reinit-small">
+            Re-init (maxEvents = 5)
+          </button>
+          <button type="button" data-testid="diag-reinit-disabled">
+            Re-init (capture disabled)
+          </button>
+        </div>
+        <pre data-testid="diagnostics-buffer" class="diagnostics-buffer">[]</pre>
+      </section>
+
+      <section class="panel">
         <h2>Event log</h2>
         <ol data-testid="event-log" class="event-log"></ol>
       </section>

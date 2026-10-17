@@ -14,6 +14,13 @@ import { matchesShortcut } from './shortcut';
 import { createFormController } from '../form/formController';
 import type { FormController } from '../form/formController';
 import { createLauncher } from '../form/launcher';
+import { installErrorCollector } from '../collectors/errorCollector';
+import { installRejectionCollector } from '../collectors/rejectionCollector';
+import {
+  activateDiagnostics,
+  deactivateDiagnostics,
+  recordDiagnostic,
+} from '../diagnostics/store';
 
 let lifecycle: Lifecycle | null = null;
 let form: FormController | null = null;
@@ -76,6 +83,13 @@ function setupDom(): void {
       if (launcherEl === button) launcherEl = null;
     });
   }
+
+  if (config.diagnostics.captureUncaughtErrors) {
+    next.add(installErrorCollector(window, recordDiagnostic));
+  }
+  if (config.diagnostics.captureUnhandledRejections) {
+    next.add(installRejectionCollector(window, recordDiagnostic));
+  }
 }
 
 /**
@@ -85,7 +99,11 @@ function setupDom(): void {
 export function initSdk(options: InitOptions): boolean {
   const ok = configure(options);
   teardownDom();
-  if (ok) setupDom();
+  if (ok) {
+    const config = getConfig();
+    if (config !== null) activateDiagnostics(config.diagnostics.maxEvents);
+    setupDom();
+  }
   return ok;
 }
 
@@ -101,5 +119,6 @@ export function openForm(): void {
 /** Remove all DOM side effects and disable the SDK (config is cleared). */
 export function destroySdk(): void {
   teardownDom();
+  deactivateDiagnostics(true);
   resetConfig();
 }

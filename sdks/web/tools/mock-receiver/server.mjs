@@ -21,6 +21,10 @@
  *                          the default)
  *   POST /api/reports      validate + store a report (201 {id})
  *                          Other methods => 405 (Allow: POST, OPTIONS)
+ *   GET  /cross-origin-script.js
+ *                          JS that throws on load, served WITHOUT CORS headers so
+ *                          a cross-origin <script> load yields only a generic
+ *                          "Script error." in the host page (Phase 5.2 test)
  *
  * Config via env:
  *   PORT            (default 4010)
@@ -303,6 +307,18 @@ const server = http.createServer((req, res) => {
 
   if (method === 'GET' && pathname === '/__health') {
     sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  // Deliberately served WITHOUT any CORS headers so that a cross-origin
+  // <script src> load that throws produces only a generic "Script error."
+  // message in the host page. Used by the Phase 5.2 diagnostics test.
+  if (method === 'GET' && pathname === '/cross-origin-script.js') {
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/javascript');
+    res.end(
+      'throw new Error("m-seismo cross-origin script failure");\n',
+    );
     return;
   }
 

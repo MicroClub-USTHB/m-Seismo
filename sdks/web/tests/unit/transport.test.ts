@@ -12,12 +12,22 @@ function makeConfig(
     shortcut: false;
     launcher: { enabled: false };
     screenshot: boolean;
+    diagnostics: {
+      maxEvents: number;
+      captureUncaughtErrors: boolean;
+      captureUnhandledRejections: boolean;
+    };
   } = {
     endpoint: overrides.endpoint ?? 'https://receiver.test/api/reports',
     timeoutMs: overrides.timeoutMs ?? 10_000,
     shortcut: false,
     launcher: { enabled: false },
     screenshot: true,
+    diagnostics: {
+      maxEvents: 50,
+      captureUncaughtErrors: true,
+      captureUnhandledRejections: true,
+    },
   };
   if (overrides.projectKey !== undefined) config.projectKey = overrides.projectKey;
   return config;

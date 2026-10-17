@@ -42,6 +42,11 @@ describe('configure / init validation', () => {
       shortcut: { key: 'enter', alt: false, ctrl: true, meta: false, shift: false },
       launcher: { enabled: false },
       screenshot: true,
+      diagnostics: {
+        maxEvents: 50,
+        captureUncaughtErrors: true,
+        captureUnhandledRejections: true,
+      },
     });
   });
 
@@ -64,6 +69,11 @@ describe('configure / init validation', () => {
       shortcut: { key: 'enter', alt: false, ctrl: true, meta: false, shift: false },
       launcher: { enabled: false },
       screenshot: true,
+      diagnostics: {
+        maxEvents: 50,
+        captureUncaughtErrors: true,
+        captureUnhandledRejections: true,
+      },
     });
   });
 
@@ -189,5 +199,63 @@ describe('configure / init validation', () => {
     });
     expect(getConfig()?.sensitiveQueryParams).toBeUndefined();
     expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  describe('diagnostics options', () => {
+    it('defaults when omitted', () => {
+      configure({ endpoint: 'https://a.test/reports' });
+      expect(getConfig()?.diagnostics).toEqual({
+        maxEvents: 50,
+        captureUncaughtErrors: true,
+        captureUnhandledRejections: true,
+      });
+    });
+
+    it('accepts valid values', () => {
+      configure({
+        endpoint: 'https://a.test/reports',
+        diagnostics: {
+          maxEvents: 10,
+          captureUncaughtErrors: false,
+          captureUnhandledRejections: false,
+        },
+      });
+      expect(getConfig()?.diagnostics).toEqual({
+        maxEvents: 10,
+        captureUncaughtErrors: false,
+        captureUnhandledRejections: false,
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('clamps maxEvents to the ceiling', () => {
+      configure({
+        endpoint: 'https://a.test/reports',
+        diagnostics: { maxEvents: 10_000 },
+      });
+      expect(getConfig()?.diagnostics.maxEvents).toBe(200);
+    });
+
+    it('warns once and falls back for invalid maxEvents', () => {
+      configure({
+        endpoint: 'https://a.test/reports',
+        diagnostics: { maxEvents: -1, captureUncaughtErrors: 'yes' as unknown as boolean },
+      });
+      expect(getConfig()?.diagnostics).toEqual({
+        maxEvents: 50,
+        captureUncaughtErrors: true,
+        captureUnhandledRejections: true,
+      });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('warns once for a non-object diagnostics option', () => {
+      configure({
+        endpoint: 'https://a.test/reports',
+        diagnostics: 'nope' as unknown as Record<string, never>,
+      });
+      expect(getConfig()?.diagnostics.maxEvents).toBe(50);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    });
   });
 });

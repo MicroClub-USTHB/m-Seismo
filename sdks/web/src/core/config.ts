@@ -12,6 +12,7 @@ import { warn } from './log';
 import { detectMac, parseShortcut } from './shortcut';
 import type { ShortcutSpec } from './shortcut';
 import type { SdkEvent, SdkEventListener } from './events';
+import { DEFAULT_MAX_EVENTS, MAX_EVENTS_CEILING } from '../diagnostics/types';
 
 /** Default request timeout, in milliseconds. */
 export const DEFAULT_TIMEOUT_MS = 10_000;
@@ -54,6 +55,27 @@ export interface PrivacyOptions {
   readonly sensitiveQueryParams?: readonly string[];
 }
 
+/** Automatic diagnostics controls. Phase 5.2 introduces these. */
+export interface DiagnosticsOptions {
+  /**
+   * Maximum number of buffered diagnostic events. Must be a positive integer;
+   * larger values are clamped to {@link MAX_EVENTS_CEILING}. Defaults to
+   * {@link DEFAULT_MAX_EVENTS}. Invalid values warn once and fall back.
+   */
+  readonly maxEvents?: number;
+  /** Capture uncaught runtime errors. Defaults to `true`. */
+  readonly captureUncaughtErrors?: boolean;
+  /** Capture unhandled promise rejections. Defaults to `true`. */
+  readonly captureUnhandledRejections?: boolean;
+}
+
+/** Normalised diagnostics config stored on {@link SdkConfig}. */
+export interface DiagnosticsConfig {
+  readonly maxEvents: number;
+  readonly captureUncaughtErrors: boolean;
+  readonly captureUnhandledRejections: boolean;
+}
+
 export interface InitOptions {
   /** Full URL of the ingest endpoint, e.g. `https://example.com/api/reports`. */
   readonly endpoint: string;
@@ -83,6 +105,8 @@ export interface InitOptions {
   readonly screenshot?: boolean;
   /** Optional additional privacy controls (Phase 5.1). */
   readonly privacy?: PrivacyOptions;
+  /** Optional automatic-diagnostics controls (Phase 5.2). */
+  readonly diagnostics?: DiagnosticsOptions;
   /** Optional listener for SDK lifecycle events. */
   readonly onEvent?: SdkEventListener;
 }
@@ -98,6 +122,8 @@ export interface SdkConfig {
   readonly screenshot: boolean;
   /** Extra sensitive query params for URL sanitizing; omitted when empty. */
   readonly sensitiveQueryParams?: readonly string[];
+  /** Normalised automatic-diagnostics config. Always present. */
+  readonly diagnostics: DiagnosticsConfig;
   readonly onEvent?: SdkEventListener;
 }
 
@@ -207,6 +233,57 @@ function normaliseSensitiveQueryParams(
 }
 
 /**
+ * Normalises `diagnostics` options. Every field falls back to a safe default;
+ * at most one warning is logged for the whole block.
+ */
+function normaliseDiagnostics(value: unknown): DiagnosticsConfig {
+  const defaults: DiagnosticsConfig = {
+    maxEvents: DEFAULT_MAX_EVENTS,
+    captureUncaughtErrors: true,
+    captureUnhandledRejections: true,
+  };
+  if (value === undefined) return defaults;
+  if (value === null || typeof value !== 'object') {
+    warn('init() option "diagnostics" must be an object; using defaults.');
+    return defaults;
+  }
+
+  const options = value as DiagnosticsOptions;
+  const config: {
+    maxEvents: number;
+    captureUncaughtErrors: boolean;
+    captureUnhandledRejections: boolean;
+  } = { ...defaults };
+  let warned = false;
+
+  if (options.maxEvents !== undefined) {
+    if (typeof options.maxEvents === 'number' && Number.isInteger(options.maxEvents) && options.maxEvents > 0) {
+      config.maxEvents = Math.min(options.maxEvents, MAX_EVENTS_CEILING);
+    } else {
+      warn('init() option "diagnostics.maxEvents" must be a positive integer; using default.');
+      warned = true;
+    }
+  }
+  if (options.captureUncaughtErrors !== undefined) {
+    if (typeof options.captureUncaughtErrors === 'boolean') {
+      config.captureUncaughtErrors = options.captureUncaughtErrors;
+    } else if (!warned) {
+      warn('init() option "diagnostics.captureUncaughtErrors" must be a boolean; using default.');
+      warned = true;
+    }
+  }
+  if (options.captureUnhandledRejections !== undefined) {
+    if (typeof options.captureUnhandledRejections === 'boolean') {
+      config.captureUnhandledRejections = options.captureUnhandledRejections;
+    } else if (!warned) {
+      warn('init() option "diagnostics.captureUnhandledRejections" must be a boolean; using default.');
+      warned = true;
+    }
+  }
+  return config;
+}
+
+/**
  * Validate and store configuration.
  *
  * Calling this again with a valid config fully replaces the previous one (no
@@ -233,6 +310,7 @@ export function configure(options: InitOptions): boolean {
     launcher: LauncherConfig;
     screenshot: boolean;
     sensitiveQueryParams?: readonly string[];
+    diagnostics: DiagnosticsConfig;
     onEvent?: SdkEventListener;
   } = {
     endpoint: options.endpoint,
@@ -240,6 +318,7 @@ export function configure(options: InitOptions): boolean {
     shortcut: normaliseShortcut(options.shortcut, detectMac()),
     launcher: normaliseLauncher(options.launcher),
     screenshot: normaliseScreenshot(options.screenshot),
+    diagnostics: normaliseDiagnostics(options.diagnostics),
   };
   if (options.appVersion !== undefined) next.appVersion = options.appVersion;
   if (options.environment !== undefined) next.environment = options.environment;

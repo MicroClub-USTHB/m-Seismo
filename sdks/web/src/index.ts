@@ -13,6 +13,7 @@
  */
 import { initSdk, openForm, destroySdk } from './core/sdk';
 import type { InitOptions } from './core/config';
+import { captureException as captureExceptionImpl } from './diagnostics/captureException';
 
 export { SDK_VERSION } from './core/version';
 export {
@@ -40,6 +41,7 @@ export type {
   InitOptions,
   SdkConfig,
   PrivacyOptions,
+  DiagnosticsOptions,
   LauncherOptions,
   LauncherPosition,
   ShortcutSpec,
@@ -97,13 +99,19 @@ export function destroy(): void {
 }
 
 /**
- * Capture an exception. Phase 3: no-op stub.
+ * Capture an exception that the host application caught itself. Accepts any
+ * value; it is normalized into the same shape as automatically captured
+ * errors. No-op (with one warning) before a successful {@link init}, while the
+ * SDK is disabled, or after {@link destroy}. Never throws.
+ *
+ * @param error the caught value (usually an `Error`).
+ * @param context optional structured context; structurally sanitized, never mutated.
  */
 export function captureException(
-  _error: unknown,
-  _context?: CaptureContext,
+  error: unknown,
+  context?: CaptureContext,
 ): void {
-  // no-op until the collectors phase
+  captureExceptionImpl(error, context);
 }
 
 /**

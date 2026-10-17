@@ -23,6 +23,8 @@ export type {
   InitOptions,
   SdkConfig,
   PrivacyOptions,
+  DiagnosticsOptions,
+  DiagnosticsConfig,
   LauncherOptions,
   LauncherPosition,
   LauncherConfig,

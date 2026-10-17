@@ -1,5 +1,6 @@
 import {
   buildReport,
+  captureException,
   destroy,
   getConfig,
   getContext,
@@ -9,7 +10,8 @@ import {
   SDK_VERSION,
   sendReport,
 } from '@m-seismo/web';
-import type { ContextInput, SdkEvent } from '@m-seismo/web';
+import type { ContextInput, InitOptions, SdkEvent } from '@m-seismo/web';
+import { clearDiagnostics, getDiagnosticsCount, getDiagnosticsSnapshot } from '@sdk/internal';
 import './styles.css';
 
 /**
@@ -68,7 +70,10 @@ function describeEvent(event: SdkEvent): string {
 
 const onEvent = (event: SdkEvent): void => record(describeEvent(event));
 
-function initSdk(label: string, extra: { shortcut?: string | false } = {}): void {
+function initSdk(
+  label: string,
+  extra: Partial<Pick<InitOptions, 'shortcut' | 'diagnostics'>> = {},
+): void {
   const enabled = init({
     endpoint: ENDPOINT,
     appVersion: '0.0.0',
@@ -278,3 +283,136 @@ document
       record(`send test report: failed kind=${result.kind}${status} (${result.message})`);
     }
   });
+
+// --- Phase 5.2 diagnostics lab ---------------------------------------------
+const diagnosticsView = document.querySelector<HTMLElement>(
+  '[data-testid="diagnostics-buffer"]',
+);
+
+function renderDiagnostics(): void {
+  if (!diagnosticsView) return;
+  diagnosticsView.textContent = JSON.stringify(getDiagnosticsSnapshot(), null, 2);
+}
+
+function onClick(testid: string, handler: () => void): void {
+  document.querySelector(`[data-testid="${testid}"]`)?.addEventListener('click', handler);
+}
+
+onClick('diag-uncaught-typeerror', () => {
+  record('diagnostics: throwing uncaught TypeError');
+  setTimeout(() => {
+    throw new TypeError('m-Seismo test app: diagnostics TypeError');
+  }, 0);
+});
+
+onClick('diag-uncaught-undefined-fn', () => {
+  record('diagnostics: calling undefined function');
+  setTimeout(() => {
+    const fn = undefined as unknown as () => void;
+    fn();
+  }, 0);
+});
+
+onClick('diag-throw-string', () => {
+  record('diagnostics: throwing a string');
+  setTimeout(() => {
+    throw 'm-Seismo test app: thrown string';
+  }, 0);
+});
+
+onClick('diag-throw-object', () => {
+  record('diagnostics: throwing an object');
+  setTimeout(() => {
+    throw { message: 'thrown object', code: 42 };
+  }, 0);
+});
+
+onClick('diag-reject-error', () => {
+  record('diagnostics: rejecting with Error');
+  void Promise.reject(new Error('m-Seismo test app: diagnostics rejection'));
+});
+
+onClick('diag-reject-string', () => {
+  record('diagnostics: rejecting with string');
+  void Promise.reject('m-Seismo test app: rejected string');
+});
+
+onClick('diag-reject-object', () => {
+  record('diagnostics: rejecting with object');
+  void Promise.reject({ message: 'rejected object', code: 7 });
+});
+
+onClick('diag-reject-undefined', () => {
+  record('diagnostics: rejecting with undefined');
+  void Promise.reject(undefined);
+});
+
+onClick('diag-capture-exception', () => {
+  captureException(new Error('m-Seismo test app: captured exception'), {
+    feature: 'checkout',
+    userId: 'user-42',
+    nested: { step: 3, retries: 1 },
+  });
+  record('diagnostics: captureException(Error, context) called');
+});
+
+onClick('diag-capture-exception-no-context', () => {
+  captureException(new Error('captured without context'));
+  record('diagnostics: captureException(Error) called');
+});
+
+onClick('diag-capture-non-error', () => {
+  captureException('m-Seismo test app: captured string');
+  record('diagnostics: captureException(string) called');
+});
+
+onClick('diag-broken-image', () => {
+  const img = document.createElement('img');
+  img.src = `/definitely-missing-${Date.now()}.png`;
+  document.body.append(img);
+  record('diagnostics: broken image requested (resource error)');
+});
+
+onClick('diag-broken-script', () => {
+  const script = document.createElement('script');
+  script.src = `/definitely-missing-${Date.now()}.js`;
+  document.body.append(script);
+  record('diagnostics: broken script requested (resource error)');
+});
+
+onClick('diag-cross-origin', () => {
+  const script = document.createElement('script');
+  script.src = `${RECEIVER_BASE}/cross-origin-script.js`;
+  document.body.append(script);
+  record('diagnostics: cross-origin script requested');
+});
+
+onClick('diag-flood', () => {
+  record('diagnostics: flooding 100 uncaught errors');
+  for (let i = 0; i < 100; i += 1) {
+    setTimeout(() => {
+      throw new Error(`flood ${i}`);
+    }, 0);
+  }
+});
+
+onClick('diag-show-buffer', () => {
+  renderDiagnostics();
+  record(`diagnostics: buffer count = ${getDiagnosticsCount()}`);
+});
+
+onClick('diag-clear-buffer', () => {
+  clearDiagnostics();
+  renderDiagnostics();
+  record('diagnostics: buffer cleared');
+});
+
+onClick('diag-reinit-small', () => {
+  initSdk('diagnostics: re-init maxEvents=5', { diagnostics: { maxEvents: 5 } });
+});
+
+onClick('diag-reinit-disabled', () => {
+  initSdk('diagnostics: re-init capture disabled', {
+    diagnostics: { captureUncaughtErrors: false, captureUnhandledRejections: false },
+  });
+});
