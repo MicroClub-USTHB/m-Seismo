@@ -81,46 +81,6 @@ fn validate_filter(label: &str, value: &str, max_bytes: usize) -> Result<(), Str
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum QueryStatus {
-    Complete,
-    Partial,
-    Failed,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkloadStatus {
-    Complete,
-    Partial,
-    Unavailable,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct LogEntry {
-    pub timestamp: DateTime<Utc>,
-    pub message: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct WorkloadResult {
-    pub name: String,
-    pub status: WorkloadStatus,
-    pub logs: Vec<LogEntry>,
-    pub detail: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct QueryResult {
-    pub source: Source,
-    pub status: QueryStatus,
-    pub requested_from: DateTime<Utc>,
-    pub requested_to: DateTime<Utc>,
-    pub workloads: Vec<WorkloadResult>,
-    pub truncated: bool,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

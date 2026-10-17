@@ -7,9 +7,9 @@ use crate::{
     model::{RawLogs, ReadLimits, SourceError, TimeWindow, Workload},
 };
 
+pub mod docker;
 #[cfg(test)]
 pub mod fake;
-pub mod docker;
 
 pub trait LogSource: Send + Sync {
     fn list_workloads(
