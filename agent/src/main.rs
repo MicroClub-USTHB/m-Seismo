@@ -2,6 +2,7 @@ mod cli;
 pub mod config;
 pub mod model;
 pub mod query;
+pub mod redaction;
 pub mod source;
 
 fn main() {
