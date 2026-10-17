@@ -246,7 +246,7 @@ func (p *Provider) ListRepositories(ctx context.Context, externalID string) ([]p
 		return nil, err
 	}
 
-	var out []provider.Repository
+	out := []provider.Repository{}
 	opts := &gh.ListOptions{PerPage: 100}
 	for {
 		page, resp, err := c.Apps.ListRepos(ctx, opts)
