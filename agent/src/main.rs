@@ -2,6 +2,7 @@ mod cli;
 pub mod config;
 pub mod model;
 pub mod query;
+pub mod source;
 
 fn main() {
     if let Err(error) = cli::run(std::env::args().skip(1)) {
