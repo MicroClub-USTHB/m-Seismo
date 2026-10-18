@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MicroClub-USTHB/m-Seismo/spec/report.schema.json",
+  "title": "m-Seismo report",
+  "description": "One bug or crash report sent by an SDK, version 1. See ingestion.md for how it is sent and how the backend answers.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "installation_id",
+    "session_id",
+    "occurred_at",
+    "platform",
+    "sdk",
+    "environment",
+    "release",
+    "mode",
+    "trigger",
+    "consent",
+    "device"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "Version of this schema. The backend rejects versions it does not know.",
+      "const": 1
+    },
+    "id": {
+      "description": "Report ID, generated on the device when the report is created and kept across retries. It is the idempotency key: the same ID sent twice is stored once. UUIDv7 recommended.",
+      "$ref": "#/$defs/uuid"
+    },
+    "installation_id": {
+      "description": "Anonymous ID of this app installation, generated on first launch and stored on the device. Never derived from a person or a device identifier.",
+      "$ref": "#/$defs/uuid"
+    },
+    "session_id": {
+      "description": "Session the report belongs to; the same value is sent on every request the app makes to our servers. For a crash report, the session that crashed, not the one that sends the report.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "occurred_at": {
+      "description": "When the report was triggered on the device. For a crash, when the crash happened. The backend also records when it received the report.",
+      "$ref": "#/$defs/timestamp"
+    },
+    "platform": {
+      "enum": ["ios", "android", "flutter", "react_native"]
+    },
+    "sdk": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "version": { "type": "string", "minLength": 1, "maxLength": 64 }
+      }
+    },
+    "environment": {
+      "description": "Set by the app integrator, e.g. production or staging.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "release": {
+      "description": "App version and build.",
+      "type": "object",
+      "required": ["version", "build"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "build": { "type": "string", "minLength": 1, "maxLength": 64 }
+      }
+    },
+    "mode": {
+      "description": "Mode the app runs in.",
+      "enum": ["internal", "qa", "production"]
+    },
+    "trigger": {
+      "description": "What started the report.",
+      "enum": ["shake", "screenshot", "long_press", "manual", "crash", "non_fatal"]
+    },
+    "auto_submitted": {
+      "description": "True when the report was sent without showing the report sheet.",
+      "type": "boolean",
+      "default": false
+    },
+    "consent": {
+      "description": "Why the SDK was allowed to send: the reporter consented, or the mode does not require consent. Without consent the SDK sends nothing.",
+      "enum": ["given", "not_required"]
+    },
+    "user_input": {
+      "description": "What the reporter typed in the report sheet. Every field is optional.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 10000 },
+        "category": { "enum": ["bug", "crash", "ui", "other"] },
+        "severity": { "enum": ["low", "medium", "high", "critical"] }
+      }
+    },
+    "device": {
+      "description": "Device and app state at the trigger. A field the integrator masked is left out.",
+      "type": "object",
+      "required": ["os_name", "os_version", "model"],
+      "properties": {
+        "os_name": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "os_version": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "model": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "locale": { "description": "BCP 47 tag, e.g. fr-DZ.", "type": "string", "maxLength": 35 },
+        "battery_level": { "description": "0 to 1, null when unknown.", "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "available_memory_bytes": { "type": "integer", "minimum": 0 },
+        "network_type": { "enum": ["wifi", "cellular", "ethernet", "none", "unknown"] },
+        "orientation": { "enum": ["portrait", "landscape", "unknown"] }
+      }
+    },
+    "feature_flags": {
+      "description": "Feature flags active at the trigger.",
+      "type": "object",
+      "maxProperties": 200,
+      "additionalProperties": { "type": ["string", "number", "boolean"] }
+    },
+    "experiments": {
+      "description": "Experiment name to variant the user is in.",
+      "type": "object",
+      "maxProperties": 100,
+      "additionalProperties": { "type": "string", "maxLength": 128 }
+    },
+    "logs": {
+      "description": "Most recent app log lines, oldest first, already redacted on the device.",
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "required": ["timestamp", "message"],
+        "properties": {
+          "timestamp": { "$ref": "#/$defs/timestamp" },
+          "level": { "enum": ["debug", "info", "warning", "error"] },
+          "message": { "type": "string", "maxLength": 4000 }
+        }
+      }
+    },
+    "breadcrumbs": {
+      "description": "The user's recent actions, oldest first, already redacted.",
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": ["timestamp", "kind", "message"],
+        "properties": {
+          "timestamp": { "$ref": "#/$defs/timestamp" },
+          "kind": { "enum": ["navigation", "tap", "network", "lifecycle", "custom"] },
+          "message": { "type": "string", "maxLength": 1000 }
+        }
+      }
+    },
+    "crash": {
+      "description": "Required when trigger is crash or non_fatal.",
+      "type": "object",
+      "required": ["type", "stack_trace"],
+      "properties": {
+        "type": { "description": "Exception or signal name, e.g. NSInvalidArgumentException or SIGSEGV.", "type": "string", "minLength": 1, "maxLength": 256 },
+        "reason": { "type": "string", "maxLength": 4000 },
+        "stack_trace": {
+          "description": "Frames of the crashing thread, innermost first, one per item.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 512,
+          "items": { "type": "string", "maxLength": 1000 }
+        }
+      }
+    },
+    "network_requests": {
+      "description": "Recent network requests, oldest first (v1.x). Bodies are present only when bodies_captured is true.",
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "required": ["timestamp", "url", "method", "duration_ms"],
+        "properties": {
+          "timestamp": { "$ref": "#/$defs/timestamp" },
+          "url": { "type": "string", "maxLength": 2048 },
+          "method": { "type": "string", "minLength": 1, "maxLength": 16 },
+          "status_code": { "type": ["integer", "null"], "minimum": 100, "maximum": 599 },
+          "duration_ms": { "type": "integer", "minimum": 0 },
+          "request_body": { "type": "string", "maxLength": 16000 },
+          "response_body": { "type": "string", "maxLength": 16000 }
+        }
+      }
+    },
+    "bodies_captured": {
+      "description": "True only when the app integrator turned on request and response bodies. When false, the backend drops any body it receives.",
+      "type": "boolean",
+      "default": false
+    },
+    "crashlytics": {
+      "description": "Pending decision: the ID that lets the backend find the matching Crashlytics crash.",
+      "type": "object",
+      "properties": {
+        "installation_id": { "type": "string", "maxLength": 128 }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "trigger": { "enum": ["crash", "non_fatal"] } } },
+      "then": { "required": ["crash"] }
+    }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "timestamp": {
+      "description": "RFC 3339 in UTC with milliseconds, e.g. 2026-10-18T14:03:12.123Z.",
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    }
+  }
+}
