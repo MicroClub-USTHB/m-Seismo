@@ -690,8 +690,9 @@ The end-to-end API test suite: `lib.sh` plus one script per area and
 ### `internal/app/testissue.go` (new) and `handler.go` / `service.go` (changed)
 
 - `SendTestIssue` loads the app (owner-scoped) and applies the per-app
-  throttle (`ratelimit.Limiter`, key `test_issue:<appID>`,
-  `limits.test_issues_per_minute` per minute). It then calls
+  throttle (`app.Limiter`, backed by `*ratelimit.Limiter`, key
+  `test_issue:<appID>`, a bucket of `limits.test_issues_per_minute` refilled
+  at that rate per minute). It then calls
   `issue.Service.OpenForApp` with a draft labelled `m-seismo-test`, and maps
   the results to `TestIssueResult`. Rate-limited targets get
   `retry_after_seconds`.
@@ -699,17 +700,19 @@ The end-to-end API test suite: `lib.sh` plus one script per area and
   was rate-limited, the shortest wait.
 - `POST /apps/{appID}/test-issue` answers `201`, `429` with `Retry-After`,
   or `502`.
-- `app.Service` now takes `*issue.Service`, `ratelimit.Limiter` and
-  `*config.Config`. A nil limiter disables the throttle, which is how the
-  unit tests use it.
+- `app.Service` now takes `*issue.Service`, an `app.Limiter` and
+  `*config.Config`. A nil limiter or a limit of `0` disables the throttle;
+  the unit tests use a nil limiter.
 
 ### `internal/ratelimit/ratelimit.go` (new)
 
-The `Limiter` interface (`Allow(ctx, key, limit, window)`) and its Redis
-implementation. It is a fixed window, run as one Lua script (`INCR`, then
-`PEXPIRE` on the first hit, then `PTTL`), so it is atomic and holds across
-instances. When over the limit, the remaining TTL is the retry delay.
-`Module` provides it.
+`*Limiter`, a token bucket per key stored in Redis: `Allow(ctx, key,
+Limit{PerMinute, Burst})` refills the bucket for the time elapsed and takes
+one token, in one Lua script using the Redis clock, so it is atomic and
+holds across instances. When the bucket is empty, `Result.RetryAfter` is the
+time until the next token. `Module` provides it with the key prefix
+`seismo:ratelimit:`. The test-issue throttle and the ingestion endpoint
+both use it.
 
 ### `internal/provider/github/ratelimit.go` (new)
 

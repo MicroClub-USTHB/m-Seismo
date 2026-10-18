@@ -176,6 +176,27 @@ type ProviderConnection struct {
 	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
+type Report struct {
+	ID             uuid.UUID  `json:"id"`
+	AppID          uuid.UUID  `json:"app_id"`
+	ReportID       uuid.UUID  `json:"report_id"`
+	InstallationID uuid.UUID  `json:"installation_id"`
+	SessionID      string     `json:"session_id"`
+	Trigger        string     `json:"trigger"`
+	OccurredAt     time.Time  `json:"occurred_at"`
+	ReceivedAt     time.Time  `json:"received_at"`
+	QueuedAt       *time.Time `json:"queued_at"`
+	Payload        []byte     `json:"payload"`
+}
+
+type ReportAttachment struct {
+	ReportID    uuid.UUID `json:"report_id"`
+	Name        string    `json:"name"`
+	ContentType string    `json:"content_type"`
+	Data        []byte    `json:"data"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 type SchemaMigration struct {
 	Version string `json:"version"`
 }

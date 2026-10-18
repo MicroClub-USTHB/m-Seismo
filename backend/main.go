@@ -8,6 +8,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/infra"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/owner"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/project"
@@ -34,5 +35,6 @@ func Options() fx.Option {
 		github.Module,
 		issue.Module,
 		ratelimit.Module,
+		ingest.Module,
 	)
 }

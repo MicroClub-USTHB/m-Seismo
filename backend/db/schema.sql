@@ -174,6 +174,37 @@ CREATE TABLE public.provider_connections (
 
 
 --
+-- Name: report_attachments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.report_attachments (
+    report_id uuid NOT NULL,
+    name text NOT NULL,
+    content_type text NOT NULL,
+    data bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: reports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.reports (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    report_id uuid NOT NULL,
+    installation_id uuid NOT NULL,
+    session_id text NOT NULL,
+    trigger text NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    queued_at timestamp with time zone,
+    payload jsonb NOT NULL
+);
+
+
+--
 -- Name: schema_migrations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -279,6 +310,30 @@ ALTER TABLE ONLY public.provider_connections
 
 
 --
+-- Name: report_attachments report_attachments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_attachments
+    ADD CONSTRAINT report_attachments_pkey PRIMARY KEY (report_id, name);
+
+
+--
+-- Name: reports reports_app_id_report_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reports
+    ADD CONSTRAINT reports_app_id_report_id_key UNIQUE (app_id, report_id);
+
+
+--
+-- Name: reports reports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reports
+    ADD CONSTRAINT reports_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -347,6 +402,20 @@ CREATE INDEX project_repositories_provider_connection_id_idx ON public.project_r
 --
 
 CREATE INDEX provider_connections_owner_id_idx ON public.provider_connections USING btree (owner_id);
+
+
+--
+-- Name: reports_app_id_installation_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX reports_app_id_installation_id_idx ON public.reports USING btree (app_id, installation_id);
+
+
+--
+-- Name: reports_not_queued_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX reports_not_queued_idx ON public.reports USING btree (received_at) WHERE (queued_at IS NULL);
 
 
 --
@@ -430,6 +499,22 @@ ALTER TABLE ONLY public.provider_connections
 
 
 --
+-- Name: report_attachments report_attachments_report_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_attachments
+    ADD CONSTRAINT report_attachments_report_id_fkey FOREIGN KEY (report_id) REFERENCES public.reports(id) ON DELETE CASCADE;
+
+
+--
+-- Name: reports reports_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reports
+    ADD CONSTRAINT reports_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- PostgreSQL database dump complete
 --
 
@@ -442,4 +527,5 @@ ALTER TABLE ONLY public.provider_connections
 INSERT INTO public.schema_migrations (version) VALUES
     ('20261016190043'),
     ('20261016192420'),
-    ('20261017120000');
+    ('20261017120000'),
+    ('20261018120000');

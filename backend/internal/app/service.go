@@ -66,12 +66,17 @@ type Service struct {
 	q      db.Querier
 	issues *issue.Service
 	// limiter and testIssuesPerMinute throttle SendTestIssue per app; a nil
-	// limiter disables the throttle.
-	limiter             ratelimit.Limiter
+	// limiter or a limit <= 0 disables the throttle.
+	limiter             Limiter
 	testIssuesPerMinute int
 }
 
-func NewService(q db.Querier, issues *issue.Service, limiter ratelimit.Limiter, cfg *config.Config) *Service {
+// Limiter checks a rate limit. Implemented by *ratelimit.Limiter.
+type Limiter interface {
+	Allow(ctx context.Context, key string, lim ratelimit.Limit) (ratelimit.Result, error)
+}
+
+func NewService(q db.Querier, issues *issue.Service, limiter Limiter, cfg *config.Config) *Service {
 	return &Service{q: q, issues: issues, limiter: limiter, testIssuesPerMinute: cfg.Limits.TestIssuesPerMinute}
 }
 

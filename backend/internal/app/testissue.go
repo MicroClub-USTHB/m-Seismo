@@ -11,6 +11,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ratelimit"
 )
 
 // TestIssueInput customises the test issue. Both fields are optional.
@@ -56,13 +57,14 @@ func (s *Service) SendTestIssue(ctx context.Context, ownerID, appID uuid.UUID, i
 		return TestIssueOutcome{}, err
 	}
 
-	if s.limiter != nil {
-		ok, wait, err := s.limiter.Allow(ctx, "test_issue:"+appID.String(), s.testIssuesPerMinute, time.Minute)
+	if s.limiter != nil && s.testIssuesPerMinute > 0 {
+		n := s.testIssuesPerMinute
+		res, err := s.limiter.Allow(ctx, "test_issue:"+appID.String(), ratelimit.Limit{PerMinute: float64(n), Burst: n})
 		if err != nil {
 			return TestIssueOutcome{}, err
 		}
-		if !ok {
-			return TestIssueOutcome{}, apperr.RateLimited("too many test issues for this app; retry later", wait)
+		if !res.Allowed {
+			return TestIssueOutcome{}, apperr.RateLimited("too many test issues for this app; retry later", res.RetryAfter)
 		}
 	}
 

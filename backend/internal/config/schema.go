@@ -62,6 +62,17 @@ type LimitsConfig struct {
 	TestIssuesPerMinute int
 }
 
+// IngestConfig holds the rate limits on reports sent by the SDKs.
+type IngestConfig struct {
+	// AppPerMinute and AppBurst limit all reports of one app.
+	AppPerMinute float64
+	AppBurst     int
+	// InstallationPerMinute and InstallationBurst limit the reports of one
+	// installation of an app.
+	InstallationPerMinute float64
+	InstallationBurst     int
+}
+
 type Config struct {
 	Env      string
 	LogLevel string
@@ -72,4 +83,5 @@ type Config struct {
 	Auth     AuthConfig
 	GitHub   GitHubConfig
 	Limits   LimitsConfig
+	Ingest   IngestConfig
 }

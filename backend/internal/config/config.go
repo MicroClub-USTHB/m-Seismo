@@ -70,6 +70,12 @@ func Load(configPath string) (*Config, error) {
 		Limits: LimitsConfig{
 			TestIssuesPerMinute: v.GetInt("limits.test_issues_per_minute"),
 		},
+		Ingest: IngestConfig{
+			AppPerMinute:          v.GetFloat64("ingest.app_per_minute"),
+			AppBurst:              v.GetInt("ingest.app_burst"),
+			InstallationPerMinute: v.GetFloat64("ingest.installation_per_minute"),
+			InstallationBurst:     v.GetInt("ingest.installation_burst"),
+		},
 	}
 
 	cfg.Server.PublicURL = v.GetString("server.public_url")
@@ -98,6 +104,10 @@ func (c *Config) validate() error {
 	}
 	if _, err := c.SlogLevel(); err != nil {
 		return err
+	}
+	if c.Ingest.AppPerMinute <= 0 || c.Ingest.AppBurst < 1 ||
+		c.Ingest.InstallationPerMinute <= 0 || c.Ingest.InstallationBurst < 1 {
+		return fmt.Errorf("ingest rate limits must be positive")
 	}
 	return nil
 }

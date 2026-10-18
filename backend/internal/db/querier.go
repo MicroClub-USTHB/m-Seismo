@@ -31,6 +31,10 @@ type Querier interface {
 	GetProject(ctx context.Context, arg GetProjectParams) (Project, error)
 	GetProjectRepository(ctx context.Context, arg GetProjectRepositoryParams) (ProjectRepository, error)
 	GetProviderConnection(ctx context.Context, arg GetProviderConnectionParams) (ProviderConnection, error)
+	GetReportByReportID(ctx context.Context, arg GetReportByReportIDParams) (Report, error)
+	// Returns no row when the app already sent a report with this report_id.
+	InsertReport(ctx context.Context, arg InsertReportParams) (Report, error)
+	InsertReportAttachment(ctx context.Context, arg InsertReportAttachmentParams) error
 	LinkAppProject(ctx context.Context, arg LinkAppProjectParams) error
 	LinkProjectRepository(ctx context.Context, arg LinkProjectRepositoryParams) (ProjectRepository, error)
 	ListAppKeys(ctx context.Context, appID uuid.UUID) ([]AppKey, error)
@@ -41,6 +45,7 @@ type Querier interface {
 	ListProjectRepositories(ctx context.Context, projectID uuid.UUID) ([]ListProjectRepositoriesRow, error)
 	ListProjects(ctx context.Context, ownerID uuid.UUID) ([]Project, error)
 	ListProviderConnections(ctx context.Context, ownerID uuid.UUID) ([]ProviderConnection, error)
+	MarkReportQueued(ctx context.Context, id uuid.UUID) error
 	RevokeAppKey(ctx context.Context, arg RevokeAppKeyParams) (int64, error)
 	SetDefaultProjectRepository(ctx context.Context, arg SetDefaultProjectRepositoryParams) (int64, error)
 	SetIssueState(ctx context.Context, arg SetIssueStateParams) error
