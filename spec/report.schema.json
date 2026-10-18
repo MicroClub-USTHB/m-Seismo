@@ -14,9 +14,7 @@
     "sdk",
     "environment",
     "release",
-    "mode",
     "trigger",
-    "consent",
     "device"
   ],
   "properties": {
@@ -69,7 +67,7 @@
       }
     },
     "mode": {
-      "description": "Mode the app runs in.",
+      "description": "Mode the app runs in. Optional in schema version 1 until every SDK supports modes; absent means unknown.",
       "enum": ["internal", "qa", "production"]
     },
     "trigger": {
@@ -82,7 +80,7 @@
       "default": false
     },
     "consent": {
-      "description": "Why the SDK was allowed to send: the reporter consented, or the mode does not require consent. Without consent the SDK sends nothing.",
+      "description": "Why the SDK was allowed to send: the reporter consented, or the mode does not require consent. Without consent the SDK sends nothing. Optional in schema version 1 until every SDK asks for consent; absent means unknown.",
       "enum": ["given", "not_required"]
     },
     "user_input": {
