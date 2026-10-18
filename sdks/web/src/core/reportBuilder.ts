@@ -12,8 +12,10 @@
 import { SDK_VERSION } from './version';
 import { SCHEMA_VERSION } from './types';
 import type {
+  ReportBreadcrumb,
   ReportContext,
   ReportError,
+  ReportNetworkFailure,
   ReportPayload,
   ScreenshotAttachment,
 } from './types';
@@ -25,6 +27,10 @@ export interface BuildReportInput {
   readonly context: ReportContext;
   /** Captured error, or `null` for a manual report. */
   readonly error?: ReportError | null;
+  /** Recent breadcrumbs (Phase 5.3); defaults to empty. */
+  readonly breadcrumbs?: readonly ReportBreadcrumb[];
+  /** Recent network failures (Phase 5.3); defaults to empty. */
+  readonly networkFailures?: readonly ReportNetworkFailure[];
   /** Optional screenshot attachment; omitted/`null` when none. */
   readonly screenshot?: ScreenshotAttachment | null;
 }
@@ -78,8 +84,8 @@ export function buildReport(
     description: input.description,
     error: input.error ?? null,
     context: input.context,
-    breadcrumbs: [],
-    networkFailures: [],
+    breadcrumbs: input.breadcrumbs ?? [],
+    networkFailures: input.networkFailures ?? [],
     screenshot: input.screenshot ?? null,
   };
 }

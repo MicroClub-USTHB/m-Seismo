@@ -8,6 +8,9 @@ export type {
   ReportViewport,
   ReportContext,
   ReportPayload,
+  ReportBreadcrumb,
+  ReportBreadcrumbCategory,
+  ReportNetworkFailure,
   ScreenshotAttachment,
 } from './types';
 export {

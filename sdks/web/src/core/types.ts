@@ -5,16 +5,32 @@
  * in `docs/backend-contract.md`. It has NOT been verified against the real Go
  * backend; field names and nesting may change.
  */
+import type {
+  DiagnosticSource,
+  JsonValue,
+  NetworkCategory,
+} from '../diagnostics/types';
 
 /** Schema version carried on every report. Bumped only on breaking changes. */
 export const SCHEMA_VERSION = 1;
 
 export type SchemaVersion = typeof SCHEMA_VERSION;
 
+/**
+ * The most recent error attached to a report. `type`/`message` are required;
+ * every other field is optional and additive over the Phase 5.1 shape.
+ */
 export interface ReportError {
   readonly type: string;
   readonly message: string;
   readonly stack?: string;
+  /** `false` for automatic capture, `true` for `captureException()`. */
+  readonly handled?: boolean;
+  /** ISO 8601 timestamp of when the error was captured. */
+  readonly timestamp?: string;
+  readonly source?: DiagnosticSource;
+  readonly flags?: readonly string[];
+  readonly context?: Record<string, JsonValue>;
 }
 
 export interface ReportApplication {
@@ -73,6 +89,37 @@ export interface ScreenshotAttachment {
   readonly dataBase64: string;
 }
 
+/** Category of a report breadcrumb (mirrors the diagnostic `kind`). */
+export type ReportBreadcrumbCategory =
+  | 'error'
+  | 'unhandledrejection'
+  | 'captured'
+  | 'navigation'
+  | 'interaction'
+  | 'sdk';
+
+/**
+ * A single breadcrumb attached to a report (Phase 5.3). Older-first order.
+ * `level` is `'error'` for error-like breadcrumbs and `'info'` otherwise.
+ */
+export interface ReportBreadcrumb {
+  readonly timestamp: string;
+  readonly category: ReportBreadcrumbCategory;
+  readonly message: string;
+  readonly level?: 'error' | 'info';
+  readonly data?: Record<string, JsonValue>;
+}
+
+/** A failed (or opaque) network call attached to a report (Phase 5.3). */
+export interface ReportNetworkFailure {
+  readonly timestamp: string;
+  readonly method: string;
+  readonly url: string;
+  readonly status?: number;
+  readonly durationMs: number;
+  readonly category: NetworkCategory;
+}
+
 export interface ReportPayload {
   readonly schemaVersion: SchemaVersion;
   readonly sdkVersion: string;
@@ -81,10 +128,10 @@ export interface ReportPayload {
   /** `null` is valid and required for manual reports. */
   readonly error: ReportError | null;
   readonly context: ReportContext;
-  /** Empty in this version; shape TBD. */
-  readonly breadcrumbs: readonly unknown[];
-  /** Empty in this version; shape TBD. */
-  readonly networkFailures: readonly unknown[];
+  /** Recent breadcrumbs, oldest first (empty when diagnostics are disabled). */
+  readonly breadcrumbs: readonly ReportBreadcrumb[];
+  /** Recent network failures, oldest first (empty when disabled). */
+  readonly networkFailures: readonly ReportNetworkFailure[];
   /** Optional screenshot attachment, or `null` when none was provided. */
   readonly screenshot: ScreenshotAttachment | null;
 }

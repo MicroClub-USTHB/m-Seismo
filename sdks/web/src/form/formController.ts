@@ -21,6 +21,9 @@ import { emitEvent } from '../core/emit';
 import { buildReport, createReportId } from '../core/reportBuilder';
 import { matchesShortcut } from '../core/shortcut';
 import type { ReportContext, ScreenshotAttachment } from '../core/types';
+import { createSdkDiagnosticEvent } from '../diagnostics/event';
+import { selectDiagnostics } from '../diagnostics/select';
+import { getDiagnosticsBuffer, recordDiagnostic } from '../diagnostics/store';
 import { getContext } from '../context/getContext';
 import { sanitize } from '../privacy/sanitize';
 import type { SanitizedReport } from '../privacy/sanitize';
@@ -301,8 +304,26 @@ export function createFormController(
       context = { timestamp: new Date().toISOString(), application };
     }
 
+    // Select the diagnostics to attach. Re-running on retry re-reads the buffer
+    // (fresh events) while preserving the same reportId for idempotency.
+    const selection = selectDiagnostics(
+      getDiagnosticsBuffer()?.snapshot() ?? [],
+      Date.now(),
+      {
+        includeInReports: current.diagnostics.includeInReports,
+        maxAgeMs: current.diagnostics.maxAgeMs,
+      },
+    );
+
     const payload = buildReport(
-      { description: validation.value, screenshot, context },
+      {
+        description: validation.value,
+        screenshot,
+        context,
+        error: selection.error,
+        breadcrumbs: selection.breadcrumbs,
+        networkFailures: selection.networkFailures,
+      },
       { reportId: id },
     );
 
@@ -383,6 +404,7 @@ export function createFormController(
     reset();
     document.body.appendChild(host);
     emitEvent({ type: 'form:open' });
+    recordDiagnostic(createSdkDiagnosticEvent('report-form-opened'));
     const elements = focusable();
     (elements.find((el) => el === textarea) ?? elements[0] ?? dialog).focus();
   }

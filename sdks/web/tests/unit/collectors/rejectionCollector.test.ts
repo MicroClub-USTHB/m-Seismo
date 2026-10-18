@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { installRejectionCollector } from '@sdk/collectors/rejectionCollector';
 import { FLAG_NON_ERROR_REJECTION } from '@sdk/diagnostics/types';
-import type { DiagnosticEvent } from '@sdk/diagnostics/types';
+import type { DiagnosticEvent, ErrorDiagnosticEvent } from '@sdk/diagnostics/types';
 
 function record(): { events: DiagnosticEvent[]; fn: (e: DiagnosticEvent) => void } {
   const events: DiagnosticEvent[] = [];
@@ -21,7 +21,7 @@ describe('installRejectionCollector', () => {
     const dispose = installRejectionCollector(window, fn);
     window.dispatchEvent(reject(new Error('async boom')));
     expect(events).toHaveLength(1);
-    const event = events[0]!;
+    const event = events[0]! as ErrorDiagnosticEvent;
     expect(event.kind).toBe('unhandledrejection');
     expect(event.handled).toBe(false);
     expect(event.error.type).toBe('Error');

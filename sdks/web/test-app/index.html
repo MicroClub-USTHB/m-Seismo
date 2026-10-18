@@ -79,7 +79,7 @@
         </div>
       </section>
 
-      <section class="panel">
+      <section class="panel" data-mseismo-form>
         <h2>Diagnostics lab (Phase 5.2)</h2>
         <p>
           Exercise automatic error collection and <code>captureException()</code>.
@@ -140,6 +140,43 @@
           </button>
         </div>
         <pre data-testid="diagnostics-buffer" class="diagnostics-buffer">[]</pre>
+      </section>
+
+      <section class="panel">
+        <h2>Breadcrumbs &amp; network lab (Phase 5.3)</h2>
+        <p>
+          Drive navigation, interaction and <code>fetch</code> breadcrumbs, then
+          inspect what would be attached to a report. Successful calls are never
+          recorded; only failures and (as info) <code>opaque</code> responses.
+        </p>
+        <div class="grid">
+          <button type="button" data-testid="bc-nav-push">
+            Navigate (pushState + fake secret)
+          </button>
+          <button type="button" data-testid="bc-nav-back">history.back()</button>
+          <button type="button" data-testid="bc-click" data-feature="checkout">
+            Boop the button
+          </button>
+          <button type="button" data-testid="bc-network-success">
+            Fetch success (/api/echo)
+          </button>
+          <button type="button" data-testid="bc-network-http-error">
+            Fetch HTTP 500
+          </button>
+          <button type="button" data-testid="bc-network-network-error">
+            Fetch network error (/api/drop)
+          </button>
+          <button type="button" data-testid="bc-network-opaque">
+            Fetch opaque (/api/no-cors, no-cors)
+          </button>
+          <button type="button" data-testid="bc-network-slow">
+            Fetch slow (/api/slow?ms=1500)
+          </button>
+          <button type="button" data-testid="bc-show-selection">
+            Show report selection
+          </button>
+        </div>
+        <pre data-testid="selection-buffer" class="diagnostics-buffer">null</pre>
       </section>
 
       <section class="panel">

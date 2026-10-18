@@ -12,7 +12,12 @@ import { warn } from './log';
 import { detectMac, parseShortcut } from './shortcut';
 import type { ShortcutSpec } from './shortcut';
 import type { SdkEvent, SdkEventListener } from './events';
-import { DEFAULT_MAX_EVENTS, MAX_EVENTS_CEILING } from '../diagnostics/types';
+import { clampMaxAgeMs } from '../diagnostics/buffer';
+import {
+  DEFAULT_MAX_AGE_MS,
+  DEFAULT_MAX_EVENTS,
+  MAX_EVENTS_CEILING,
+} from '../diagnostics/types';
 
 /** Default request timeout, in milliseconds. */
 export const DEFAULT_TIMEOUT_MS = 10_000;
@@ -55,7 +60,7 @@ export interface PrivacyOptions {
   readonly sensitiveQueryParams?: readonly string[];
 }
 
-/** Automatic diagnostics controls. Phase 5.2 introduces these. */
+/** Automatic diagnostics controls. Phase 5.2 introduces these; 5.3 extends them. */
 export interface DiagnosticsOptions {
   /**
    * Maximum number of buffered diagnostic events. Must be a positive integer;
@@ -63,17 +68,46 @@ export interface DiagnosticsOptions {
    * {@link DEFAULT_MAX_EVENTS}. Invalid values warn once and fall back.
    */
   readonly maxEvents?: number;
+  /**
+   * Maximum age of a buffered event, in milliseconds. Clamped to the
+   * [10s, 1h] range. Defaults to {@link DEFAULT_MAX_AGE_MS} (10 minutes).
+   */
+  readonly maxAgeMs?: number;
   /** Capture uncaught runtime errors. Defaults to `true`. */
   readonly captureUncaughtErrors?: boolean;
   /** Capture unhandled promise rejections. Defaults to `true`. */
   readonly captureUnhandledRejections?: boolean;
+  /** Capture navigation breadcrumbs. Defaults to `true`. */
+  readonly captureNavigation?: boolean;
+  /** Capture allow-listed interaction breadcrumbs. Defaults to `true`. */
+  readonly captureInteractions?: boolean;
+  /** Capture failed `fetch` calls. Defaults to `true`. */
+  readonly captureNetwork?: boolean;
+  /** Include visible element text in interaction breadcrumbs. Defaults to `false`. */
+  readonly captureElementText?: boolean;
+  /** Attach recent diagnostics to submitted reports. Defaults to `true`. */
+  readonly includeInReports?: boolean;
+  /**
+   * URLs (exact strings or RegExps matched against the resolved absolute URL)
+   * whose `fetch` calls are never recorded. Invalid entries are ignored with a
+   * single warning.
+   */
+  readonly ignoreUrls?: readonly (string | RegExp)[];
 }
 
 /** Normalised diagnostics config stored on {@link SdkConfig}. */
 export interface DiagnosticsConfig {
   readonly maxEvents: number;
+  readonly maxAgeMs: number;
   readonly captureUncaughtErrors: boolean;
   readonly captureUnhandledRejections: boolean;
+  readonly captureNavigation: boolean;
+  readonly captureInteractions: boolean;
+  readonly captureNetwork: boolean;
+  readonly captureElementText: boolean;
+  readonly includeInReports: boolean;
+  /** Omitted when empty. */
+  readonly ignoreUrls?: readonly (string | RegExp)[];
 }
 
 export interface InitOptions {
@@ -233,14 +267,36 @@ function normaliseSensitiveQueryParams(
 }
 
 /**
+ * Normalises `diagnostics.ignoreUrls`. String and RegExp entries are kept;
+ * anything else is ignored with at most one warning.
+ */
+function normaliseIgnoreUrls(
+  value: unknown,
+): readonly (string | RegExp)[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return undefined;
+  const valid: (string | RegExp)[] = [];
+  for (const entry of value) {
+    if (typeof entry === 'string' || entry instanceof RegExp) valid.push(entry);
+  }
+  return valid.length > 0 ? valid : undefined;
+}
+
+/**
  * Normalises `diagnostics` options. Every field falls back to a safe default;
  * at most one warning is logged for the whole block.
  */
 function normaliseDiagnostics(value: unknown): DiagnosticsConfig {
   const defaults: DiagnosticsConfig = {
     maxEvents: DEFAULT_MAX_EVENTS,
+    maxAgeMs: DEFAULT_MAX_AGE_MS,
     captureUncaughtErrors: true,
     captureUnhandledRejections: true,
+    captureNavigation: true,
+    captureInteractions: true,
+    captureNetwork: true,
+    captureElementText: false,
+    includeInReports: true,
   };
   if (value === undefined) return defaults;
   if (value === null || typeof value !== 'object') {
@@ -251,8 +307,15 @@ function normaliseDiagnostics(value: unknown): DiagnosticsConfig {
   const options = value as DiagnosticsOptions;
   const config: {
     maxEvents: number;
+    maxAgeMs: number;
     captureUncaughtErrors: boolean;
     captureUnhandledRejections: boolean;
+    captureNavigation: boolean;
+    captureInteractions: boolean;
+    captureNetwork: boolean;
+    captureElementText: boolean;
+    includeInReports: boolean;
+    ignoreUrls?: readonly (string | RegExp)[];
   } = { ...defaults };
   let warned = false;
 
@@ -264,22 +327,45 @@ function normaliseDiagnostics(value: unknown): DiagnosticsConfig {
       warned = true;
     }
   }
-  if (options.captureUncaughtErrors !== undefined) {
-    if (typeof options.captureUncaughtErrors === 'boolean') {
-      config.captureUncaughtErrors = options.captureUncaughtErrors;
-    } else if (!warned) {
-      warn('init() option "diagnostics.captureUncaughtErrors" must be a boolean; using default.');
+  if (options.maxAgeMs !== undefined) {
+    if (typeof options.maxAgeMs === 'number' && Number.isFinite(options.maxAgeMs) && options.maxAgeMs > 0) {
+      config.maxAgeMs = clampMaxAgeMs(options.maxAgeMs);
+    } else {
+      warn('init() option "diagnostics.maxAgeMs" must be a positive number; using default.');
       warned = true;
     }
   }
-  if (options.captureUnhandledRejections !== undefined) {
-    if (typeof options.captureUnhandledRejections === 'boolean') {
-      config.captureUnhandledRejections = options.captureUnhandledRejections;
+
+  const booleans: readonly (keyof DiagnosticsOptions & keyof typeof config)[] = [
+    'captureUncaughtErrors',
+    'captureUnhandledRejections',
+    'captureNavigation',
+    'captureInteractions',
+    'captureNetwork',
+    'captureElementText',
+    'includeInReports',
+  ];
+  for (const key of booleans) {
+    const optionValue = options[key];
+    if (optionValue === undefined) continue;
+    if (typeof optionValue === 'boolean') {
+      (config as Record<string, unknown>)[key] = optionValue;
     } else if (!warned) {
-      warn('init() option "diagnostics.captureUnhandledRejections" must be a boolean; using default.');
+      warn(`init() option "diagnostics.${String(key)}" must be a boolean; using default.`);
       warned = true;
     }
   }
+
+  if (options.ignoreUrls !== undefined) {
+    if (!Array.isArray(options.ignoreUrls)) {
+      warn('init() option "diagnostics.ignoreUrls" must be an array; ignored.');
+      warned = true;
+    } else {
+      const ignoreUrls = normaliseIgnoreUrls(options.ignoreUrls);
+      if (ignoreUrls !== undefined) config.ignoreUrls = ignoreUrls;
+    }
+  }
+
   return config;
 }
 

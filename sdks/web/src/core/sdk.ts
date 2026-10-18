@@ -16,6 +16,9 @@ import type { FormController } from '../form/formController';
 import { createLauncher } from '../form/launcher';
 import { installErrorCollector } from '../collectors/errorCollector';
 import { installRejectionCollector } from '../collectors/rejectionCollector';
+import { installNavigationCollector } from '../collectors/navigationCollector';
+import { installInteractionCollector } from '../collectors/interactionCollector';
+import { instrumentFetch } from '../network/instrumentFetch';
 import {
   activateDiagnostics,
   deactivateDiagnostics,
@@ -90,6 +93,38 @@ function setupDom(): void {
   if (config.diagnostics.captureUnhandledRejections) {
     next.add(installRejectionCollector(window, recordDiagnostic));
   }
+  if (config.diagnostics.captureNavigation) {
+    next.add(
+      installNavigationCollector(window, recordDiagnostic, {
+        ...(config.sensitiveQueryParams !== undefined
+          ? { sensitiveQueryParams: config.sensitiveQueryParams }
+          : {}),
+      }),
+    );
+  }
+  if (config.diagnostics.captureInteractions) {
+    next.add(
+      installInteractionCollector(document, recordDiagnostic, {
+        captureElementText: config.diagnostics.captureElementText,
+      }),
+    );
+  }
+  if (config.diagnostics.captureNetwork) {
+    next.add(
+      instrumentFetch(
+        {
+          endpoint: config.endpoint,
+          ...(config.sensitiveQueryParams !== undefined
+            ? { sensitiveQueryParams: config.sensitiveQueryParams }
+            : {}),
+          ...(config.diagnostics.ignoreUrls !== undefined
+            ? { ignoreUrls: config.diagnostics.ignoreUrls }
+            : {}),
+        },
+        recordDiagnostic,
+      ),
+    );
+  }
 }
 
 /**
@@ -101,7 +136,9 @@ export function initSdk(options: InitOptions): boolean {
   teardownDom();
   if (ok) {
     const config = getConfig();
-    if (config !== null) activateDiagnostics(config.diagnostics.maxEvents);
+    if (config !== null) {
+      activateDiagnostics(config.diagnostics.maxEvents, config.diagnostics.maxAgeMs);
+    }
     setupDom();
   }
   return ok;

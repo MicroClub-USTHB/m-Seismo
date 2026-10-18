@@ -1,6 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildReport, sanitize, sendReport } from '@m-seismo/web';
-import type { SdkConfig } from '@m-seismo/web';
+import type { DiagnosticsConfig, SdkConfig } from '@m-seismo/web';
+
+function makeDiagnostics(): DiagnosticsConfig {
+  return {
+    maxEvents: 100,
+    maxAgeMs: 600_000,
+    captureUncaughtErrors: true,
+    captureUnhandledRejections: true,
+    captureNavigation: true,
+    captureInteractions: true,
+    captureNetwork: true,
+    captureElementText: false,
+    includeInReports: true,
+  };
+}
 
 function makeConfig(
   overrides: { endpoint?: string; projectKey?: string; timeoutMs?: number } = {},
@@ -12,22 +26,14 @@ function makeConfig(
     shortcut: false;
     launcher: { enabled: false };
     screenshot: boolean;
-    diagnostics: {
-      maxEvents: number;
-      captureUncaughtErrors: boolean;
-      captureUnhandledRejections: boolean;
-    };
+    diagnostics: DiagnosticsConfig;
   } = {
     endpoint: overrides.endpoint ?? 'https://receiver.test/api/reports',
     timeoutMs: overrides.timeoutMs ?? 10_000,
     shortcut: false,
     launcher: { enabled: false },
     screenshot: true,
-    diagnostics: {
-      maxEvents: 50,
-      captureUncaughtErrors: true,
-      captureUnhandledRejections: true,
-    },
+    diagnostics: makeDiagnostics(),
   };
   if (overrides.projectKey !== undefined) config.projectKey = overrides.projectKey;
   return config;

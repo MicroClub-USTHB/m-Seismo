@@ -26,6 +26,14 @@
  *                          a cross-origin <script> load yields only a generic
  *                          "Script error." in the host page (Phase 5.2 test)
  *
+ * Phase 5.3 network-diagnostics helper routes (all CORS-enabled unless noted):
+ *   GET  /api/status/:code  respond with the given HTTP status (e.g. /api/status/500)
+ *   GET|POST /api/echo      echo the request method + JSON body back (200)
+ *   GET  /api/slow          delay `?ms=` ms (default 1200), then 200 {ok:true}
+ *   GET  /api/no-cors       served WITHOUT CORS headers (triggers a fetch
+ *                           network_error, or an opaque_response with mode:'no-cors')
+ *   GET  /api/drop          destroy the socket with no response (network_error)
+ *
  * Config via env:
  *   PORT            (default 4010)
  *   ALLOWED_ORIGIN  (default http://localhost:5173)
@@ -385,6 +393,64 @@ const server = http.createServer((req, res) => {
     void handleIngest(req, res);
     return;
   }
+
+  // --- Phase 5.3 network-diagnostics helper routes ------------------------
+
+  // /api/status/:code — reply with the requested status code.
+  const statusMatch = /^\/api\/status\/(\d{3})$/.exec(pathname);
+  if (statusMatch && (method === 'GET' || method === 'POST')) {
+    const code = Number(statusMatch[1]);
+    sendJson(res, code, { requestedStatus: code, ok: code < 400 });
+    return;
+  }
+
+  // /api/echo — reflect the request back (used to prove a successful call is
+  // NOT recorded as a failure).
+  if ((method === 'GET' || method === 'POST') && pathname === '/api/echo') {
+    void readBody(req)
+      .then((raw) => {
+        let body = null;
+        if (raw.length > 0) {
+          try {
+            body = JSON.parse(raw);
+          } catch {
+            body = raw;
+          }
+        }
+        sendJson(res, 200, { ok: true, method, body });
+      })
+      .catch(() => sendJson(res, 200, { ok: true, method, body: null }));
+    return;
+  }
+
+  // /api/slow — delay, then succeed. `?ms=` overrides the default delay.
+  if (method === 'GET' && pathname === '/api/slow') {
+    const requested = Number(url.searchParams.get('ms'));
+    const delay = Number.isFinite(requested) && requested >= 0 ? requested : 1_200;
+    void new Promise((resolve) => setTimeout(resolve, delay)).then(() => {
+      sendJson(res, 200, { ok: true, delayedMs: delay });
+    });
+    return;
+  }
+
+  // /api/no-cors — success status, but deliberately NO CORS headers. A normal
+  // cross-origin fetch rejects with a TypeError (network_error); a
+  // mode:'no-cors' fetch yields an opaque response (status 0).
+  if (method === 'GET' && pathname === '/api/no-cors') {
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // /api/drop — accept the connection then destroy it with no response, so the
+  // browser surfaces a network error (TypeError).
+  if (method === 'GET' && pathname === '/api/drop') {
+    req.socket.destroy();
+    return;
+  }
+
+  // ------------------------------------------------------------------------
 
   if (pathname === '/api/reports') {
     // The report endpoint is POST-only. Answer a wrong method explicitly so a

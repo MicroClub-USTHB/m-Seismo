@@ -11,7 +11,7 @@ import {
   sendReport,
 } from '@m-seismo/web';
 import type { ContextInput, InitOptions, SdkEvent } from '@m-seismo/web';
-import { clearDiagnostics, getDiagnosticsCount, getDiagnosticsSnapshot } from '@sdk/internal';
+import { clearDiagnostics, getDiagnosticsCount, getDiagnosticsSelection, getDiagnosticsSnapshot } from '@sdk/internal';
 import './styles.css';
 
 /**
@@ -415,4 +415,75 @@ onClick('diag-reinit-disabled', () => {
   initSdk('diagnostics: re-init capture disabled', {
     diagnostics: { captureUncaughtErrors: false, captureUnhandledRejections: false },
   });
+});
+
+// --- Phase 5.3 breadcrumbs & network lab -----------------------------------
+const selectionView = document.querySelector<HTMLElement>(
+  '[data-testid="selection-buffer"]',
+);
+
+function renderSelection(): void {
+  if (!selectionView) return;
+  selectionView.textContent = JSON.stringify(getDiagnosticsSelection(), null, 2);
+}
+
+onClick('bc-nav-push', () => {
+  const url = `${location.pathname}?access_token=fake-secret-nav&page=2`;
+  history.pushState(null, '', url);
+  record(`breadcrumbs: pushState to ${location.href}`);
+});
+
+onClick('bc-nav-back', () => {
+  history.back();
+  record('breadcrumbs: history.back() called');
+});
+
+onClick('bc-click', () => {
+  record('breadcrumbs: clicked the lab button');
+});
+
+onClick('bc-network-success', () => {
+  void fetch(`${RECEIVER_BASE}/api/echo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hello: 'world' }),
+  })
+    .then((response) => record(`breadcrumbs: /api/echo -> HTTP ${response.status} (not recorded)`))
+    .catch((error) => record(`breadcrumbs: /api/echo failed: ${String(error)}`));
+});
+
+onClick('bc-network-http-error', () => {
+  void fetch(`${RECEIVER_BASE}/api/status/500`)
+    .then((response) => record(`breadcrumbs: /api/status/500 -> HTTP ${response.status}`))
+    .catch((error) => record(`breadcrumbs: /api/status/500 failed: ${String(error)}`));
+});
+
+onClick('bc-network-network-error', () => {
+  void fetch(`${RECEIVER_BASE}/api/drop`)
+    .then((response) => record(`breadcrumbs: /api/drop -> HTTP ${response.status}`))
+    .catch((error) => record(`breadcrumbs: /api/drop failed (expected): ${String(error)}`));
+});
+
+onClick('bc-network-opaque', () => {
+  void fetch(`${RECEIVER_BASE}/api/no-cors`, { mode: 'no-cors' })
+    .then((response) => record(`breadcrumbs: /api/no-cors -> opaque status=${response.status}`))
+    .catch((error) => record(`breadcrumbs: /api/no-cors failed: ${String(error)}`));
+});
+
+onClick('bc-network-slow', () => {
+  const started = Date.now();
+  void fetch(`${RECEIVER_BASE}/api/slow?ms=1500`)
+    .then((response) =>
+      record(`breadcrumbs: /api/slow -> HTTP ${response.status} in ${Date.now() - started}ms (not recorded)`),
+    )
+    .catch((error) => record(`breadcrumbs: /api/slow failed: ${String(error)}`));
+});
+
+onClick('bc-show-selection', () => {
+  renderSelection();
+  const selection = getDiagnosticsSelection();
+  record(
+    `breadcrumbs: selection = ${selection.breadcrumbs.length} breadcrumbs, ` +
+      `${selection.networkFailures.length} network failures, error=${selection.error ? 'yes' : 'no'}`,
+  );
 });

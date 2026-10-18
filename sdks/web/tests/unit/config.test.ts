@@ -3,6 +3,20 @@ import { configure, getConfig, isEnabled, resetConfig } from '@sdk/core/config';
 
 let warnSpy: ReturnType<typeof vi.spyOn>;
 
+function defaultDiagnostics() {
+  return {
+    maxEvents: 100,
+    maxAgeMs: 600_000,
+    captureUncaughtErrors: true,
+    captureUnhandledRejections: true,
+    captureNavigation: true,
+    captureInteractions: true,
+    captureNetwork: true,
+    captureElementText: false,
+    includeInReports: true,
+  };
+}
+
 beforeEach(() => {
   resetConfig();
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -42,11 +56,7 @@ describe('configure / init validation', () => {
       shortcut: { key: 'enter', alt: false, ctrl: true, meta: false, shift: false },
       launcher: { enabled: false },
       screenshot: true,
-      diagnostics: {
-        maxEvents: 50,
-        captureUncaughtErrors: true,
-        captureUnhandledRejections: true,
-      },
+      diagnostics: defaultDiagnostics(),
     });
   });
 
@@ -69,11 +79,7 @@ describe('configure / init validation', () => {
       shortcut: { key: 'enter', alt: false, ctrl: true, meta: false, shift: false },
       launcher: { enabled: false },
       screenshot: true,
-      diagnostics: {
-        maxEvents: 50,
-        captureUncaughtErrors: true,
-        captureUnhandledRejections: true,
-      },
+      diagnostics: defaultDiagnostics(),
     });
   });
 
@@ -204,11 +210,7 @@ describe('configure / init validation', () => {
   describe('diagnostics options', () => {
     it('defaults when omitted', () => {
       configure({ endpoint: 'https://a.test/reports' });
-      expect(getConfig()?.diagnostics).toEqual({
-        maxEvents: 50,
-        captureUncaughtErrors: true,
-        captureUnhandledRejections: true,
-      });
+      expect(getConfig()?.diagnostics).toEqual(defaultDiagnostics());
     });
 
     it('accepts valid values', () => {
@@ -221,6 +223,7 @@ describe('configure / init validation', () => {
         },
       });
       expect(getConfig()?.diagnostics).toEqual({
+        ...defaultDiagnostics(),
         maxEvents: 10,
         captureUncaughtErrors: false,
         captureUnhandledRejections: false,
@@ -241,11 +244,7 @@ describe('configure / init validation', () => {
         endpoint: 'https://a.test/reports',
         diagnostics: { maxEvents: -1, captureUncaughtErrors: 'yes' as unknown as boolean },
       });
-      expect(getConfig()?.diagnostics).toEqual({
-        maxEvents: 50,
-        captureUncaughtErrors: true,
-        captureUnhandledRejections: true,
-      });
+      expect(getConfig()?.diagnostics).toEqual(defaultDiagnostics());
       expect(warnSpy).toHaveBeenCalledTimes(1);
     });
 
@@ -254,7 +253,7 @@ describe('configure / init validation', () => {
         endpoint: 'https://a.test/reports',
         diagnostics: 'nope' as unknown as Record<string, never>,
       });
-      expect(getConfig()?.diagnostics.maxEvents).toBe(50);
+      expect(getConfig()?.diagnostics.maxEvents).toBe(100);
       expect(warnSpy).toHaveBeenCalledTimes(1);
     });
   });

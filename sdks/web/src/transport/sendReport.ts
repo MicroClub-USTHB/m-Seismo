@@ -16,6 +16,7 @@
  */
 import type { SdkConfig } from '../core/config';
 import type { SanitizedReport } from '../privacy/sanitize';
+import { getOriginalFetch } from '../network/originalFetch';
 import type { SendResult } from './types';
 
 /** Extracts a string `id` from an unknown parsed JSON body, if present. */
@@ -51,9 +52,17 @@ export async function sendReport(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.timeoutMs);
 
+  // Use the captured original fetch so the SDK's own upload is never observed
+  // by its own fetch instrumentation (Phase 5.3).
+  const fetchImpl = getOriginalFetch();
+  if (typeof fetchImpl !== 'function') {
+    clearTimeout(timer);
+    return { ok: false, kind: 'network', message: 'fetch is not available in this environment' };
+  }
+
   let response: Response;
   try {
-    response = await fetch(config.endpoint, {
+    response = await fetchImpl.call(globalThis, config.endpoint, {
       method: 'POST',
       headers,
       body: JSON.stringify(report),

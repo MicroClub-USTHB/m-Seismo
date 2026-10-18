@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { installErrorCollector } from '@sdk/collectors/errorCollector';
 import { FLAG_CROSS_ORIGIN_SCRIPT_ERROR } from '@sdk/diagnostics/types';
-import type { DiagnosticEvent } from '@sdk/diagnostics/types';
+import type { DiagnosticEvent, ErrorDiagnosticEvent } from '@sdk/diagnostics/types';
 
 function record(): { events: DiagnosticEvent[]; fn: (e: DiagnosticEvent) => void } {
   const events: DiagnosticEvent[] = [];
@@ -26,7 +26,7 @@ describe('installErrorCollector', () => {
     );
 
     expect(events).toHaveLength(1);
-    const event = events[0]!;
+    const event = events[0]! as ErrorDiagnosticEvent;
     expect(event.kind).toBe('error');
     expect(event.handled).toBe(false);
     expect(event.error.type).toBe('TypeError');

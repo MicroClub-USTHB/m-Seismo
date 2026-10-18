@@ -6,11 +6,26 @@ import {
   getDiagnosticsSnapshot,
   resetDiagnostics,
 } from '@sdk/internal';
+import type { ErrorDiagnosticEvent } from '@sdk/diagnostics/types';
+
+function firstError(): ErrorDiagnosticEvent {
+  const event = getDiagnosticsSnapshot().find((e) => e.kind === 'captured');
+  return event as ErrorDiagnosticEvent;
+}
 
 const ENDPOINT = 'https://receiver.test/api/reports';
 
 beforeEach(() => {
-  init({ endpoint: ENDPOINT, shortcut: false, launcher: false });
+  init({
+    endpoint: ENDPOINT,
+    shortcut: false,
+    launcher: false,
+    diagnostics: {
+      captureNavigation: false,
+      captureInteractions: false,
+      captureNetwork: false,
+    },
+  });
 });
 
 afterEach(() => {
@@ -24,17 +39,18 @@ describe('captureException', () => {
     captureException(new TypeError('caught'));
     const events = getDiagnosticsSnapshot();
     expect(events).toHaveLength(1);
-    expect(events[0]!.kind).toBe('captured');
-    expect(events[0]!.handled).toBe(true);
-    expect(events[0]!.error.type).toBe('TypeError');
-    expect(events[0]!.error.message).toBe('caught');
+    const event = firstError();
+    expect(event.kind).toBe('captured');
+    expect(event.handled).toBe(true);
+    expect(event.error.type).toBe('TypeError');
+    expect(event.error.message).toBe('caught');
   });
 
   it('records non-Error values without throwing', () => {
     expect(() => captureException('just a string')).not.toThrow();
-    const events = getDiagnosticsSnapshot();
-    expect(events[0]!.error.type).toBe('string');
-    expect(events[0]!.error.message).toBe('just a string');
+    const event = firstError();
+    expect(event.error.type).toBe('string');
+    expect(event.error.message).toBe('just a string');
   });
 
   it('sanitizes context and never mutates the caller object', () => {
@@ -43,7 +59,7 @@ describe('captureException', () => {
       nested: { ok: true, fn: () => undefined, sym: Symbol('s') },
     };
     captureException(new Error('with context'), context);
-    const event = getDiagnosticsSnapshot()[0]!;
+    const event = firstError();
     expect(event.context).toEqual({ userId: 'u-1', nested: { ok: true } });
     expect(typeof (context.nested as { fn: unknown }).fn).toBe('function');
   });

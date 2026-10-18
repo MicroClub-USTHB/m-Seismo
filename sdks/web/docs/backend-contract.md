@@ -78,8 +78,8 @@ Field notes (ASSUMED):
 | `context.platform` | string | no | e.g. `Windows`, `macOS`, `Linux`, `Android`, `iOS`, `ChromeOS`. Omitted when unknown. |
 | `context.viewport` | object | no | `{ width, height }`, positive integers. Omitted when unavailable. |
 | `context.application` | object | yes | May be `{}`. `version`/`environment` optional. |
-| `breadcrumbs` | array | yes | Empty in this version; shape TBD in a later phase. |
-| `networkFailures` | array | yes | Empty in this version; shape TBD in a later phase. |
+| `breadcrumbs` | array | yes | Phase 5.3: array of breadcrumbs (oldest→newest retained). Each entry: `{timestamp, category, message, level?, data?}`. Categories: `error`, `unhandledrejection`, `captured`, `navigation`, `interaction`, `sdk`. Messages may include `[REDACTED]` placeholders. `data` is a shallow JSON object. Cap ~50 most recent; age-filtered. |
+| `networkFailures` | array | yes | Phase 5.3: array of failed/opaque network calls (oldest→newest retained). Shape: `{timestamp, method, url, status?, durationMs, category}`. `category` in {`http_error`,`network_error`,`aborted`,`other_error`,`opaque_response`}. `url` is sanitized (sensitive query values redacted, `[REDACTED]`, truncated to 1024). Cap ~20 most recent. Opaque responses go to breadcrumbs, not here. |
 | `screenshot` | `null` or object | yes | Optional inline attachment; see §3.1. Always `null` unless the reporter attached a file. |
 
 ### 3.1 Screenshot attachment (ASSUMED — Phase 3)
@@ -209,6 +209,7 @@ again.)
    stored value, or should redacted params be dropped entirely? Are the
    `browser.name` / `platform` vocabularies above acceptable, or is a fixed
    enum expected?
+10. **Breadcrumbs & network diagnostics (Phase 5.3):** Do the `breadcrumbs` and `networkFailures` shapes above match the backend’s expected schema? Are the category vocabularies, limits (≤50 breadcrumbs, ≤20 network failures), and the “[REDACTED]” placeholder acceptable? Does the backend expect `opaque_response` to appear here (no) or only as breadcrumbs? Can `data` objects in breadcrumbs include only JSON-safe primitives/objects/arrays?
 
 ---
 
