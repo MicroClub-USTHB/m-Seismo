@@ -10,7 +10,7 @@ Status: v1 draft. Changes need review from the SDK and backend owners.
 ## 1. Endpoint
 
 ```
-POST /v1/reports
+POST /api/v1/reports
 Authorization: Bearer msk_…
 Content-Type: multipart/form-data; boundary=…
 ```
@@ -133,7 +133,7 @@ breadcrumbs, …).
 
 ## 7. Versioning
 
-- The path carries the API version (`/v1/`), the report carries
+- The path carries the API version (`/api/v1/`), the report carries
   `schema_version`.
 - Adding an optional field does not change the version: older backends
   ignore it.
