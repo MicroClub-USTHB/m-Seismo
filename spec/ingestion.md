@@ -37,21 +37,27 @@ Other parts are ignored.
 ## 3. What the backend does, in order
 
 1. **Key** — resolve the app key; reject with `401` if it is not active.
-2. **Rate limit** — per key and per installation (section 6); reject with
-   `429`. This runs before the body is parsed, so abuse costs little.
+2. **Rate limit for the app** — all keys of the app share one limit
+   (section 6); reject with `429`. This runs before the body is read, so
+   abuse costs little.
 3. **Size** — reject bodies over the limits with `413`.
 4. **Validate** — parse the `report` part and validate it against the
    schema; reject with `400`.
-5. **Idempotency** — if a report with the same `id` was already accepted
+5. **Rate limit for the installation** — it needs `installation_id`, so it
+   runs once the report is read; reject with `429`.
+6. **Idempotency** — if a report with the same `id` was already accepted
    for this app, answer as the first time and stop.
-6. **Store** — save the report and the screenshot, privately.
-7. **Queue** — publish a "report accepted" message for the pipeline
+7. **Store** — save the report and the screenshot, privately.
+8. **Queue** — publish a "report accepted" message for the pipeline
    (server context, crash link, grouping, routing, GitHub issue).
-8. **Acknowledge** — answer `202`, within 0.5 s of receiving the request. Nothing after this point makes the SDK wait.
+9. **Acknowledge** — answer `202`, within 0.5 s of receiving the request.
+   Nothing after this point makes the SDK wait.
 
-Steps 6 and 7 are atomic from the SDK's point of view: if either fails, the
+Steps 7 and 8 are atomic from the SDK's point of view: if either fails, the
 backend answers `503` and the SDK retries; a retry never creates a second
 report.
+
+A retried report counts against the rate limits like any other request.
 
 ## 4. Field rules
 
@@ -126,7 +132,7 @@ Starting values, to tune after the pilot.
 | `report` part | 1 MB |
 | `screenshot` part | 8 MB |
 | Reports per installation | 10 per minute, bursts of 5 |
-| Requests per app key | 600 per minute |
+| Reports per app (all its keys together) | 600 per minute |
 
 Array and string lengths are capped in the schema (500 log lines, 200
 breadcrumbs, …).
