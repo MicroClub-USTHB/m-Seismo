@@ -11,6 +11,7 @@ JSON (`Content-Type: application/json`).
 - [Apps](#apps)
 - [App keys](#app-keys)
 - [App ↔ project links](#app--project-links)
+- [Test issue](#test-issue)
 - [Providers](#providers)
 - [Health](#health)
 
@@ -40,7 +41,9 @@ A missing, malformed, expired or wrongly signed token returns `401`.
 | 404 | not found. This also covers *belongs to another owner* and *malformed UUID in the path*, which look the same on purpose. |
 | 409 | conflict with existing data (duplicate) |
 | 422 | invalid input: validation, malformed JSON, unknown JSON fields, trailing data, body > 1 MiB |
+| 429 | rate limited, either by m-Seismo's own throttle or by the tracker (GitHub). Always has a **`Retry-After`** header in seconds. Wait that long, then retry. |
 | 500 | `{"error":"internal error"}`; the details are only in the server log |
+| 502 | only from `POST /apps/{id}/test-issue`: every target failed for a reason other than a rate limit |
 
 **Requests.** Unknown fields are rejected (`422`). In `PATCH` bodies, a field
 you leave out is left unchanged.
@@ -273,6 +276,60 @@ one.
 
 An app's issues go to the **default repository of every linked project**
 (see [issue-service.md](issue-service.md)).
+
+## Test issue
+
+### `POST /apps/{appID}/test-issue`
+
+Opens a test issue through `issue.Service.OpenForApp`, exactly as a real
+report would, so an owner can check that an app is wired up end to end. The
+body is optional:
+
+```json
+{ "title": "Custom title", "body": "Custom body" }
+```
+
+Defaults: title `m-Seismo test issue from <app name>`, a body with the
+timestamp, and the label `m-seismo-test`.
+
+→ `201` when at least one issue was opened. When nothing was opened, the
+response is `429` with `Retry-After` if every target was rate-limited by its
+tracker, and `502` otherwise. All three include one result per target
+repository:
+
+```json
+{
+  "results": [
+    {
+      "project_id": "…", "project_repository_id": "…",
+      "repository": "octo-org/shop-ios", "tracker": "github",
+      "issue_id": "…", "ref": "octo-org/shop-ios#12",
+      "url": "https://github.com/octo-org/shop-ios/issues/12"
+    },
+    {
+      "project_id": "…", "project_repository_id": "…",
+      "repository": "octo-org/broken", "tracker": "github",
+      "error": "issue: open on github octo-org/broken: …"
+    }
+  ]
+}
+```
+
+A rate-limited target also has `"retry_after_seconds": 3600`. On `502` the
+body has `"error": "no issue could be opened"`, and on a tracker `429` it has
+`"error": "rate limited by the issue tracker; retry later"`. A per-target
+`error` contains the tracker's error message, which is useful for diagnosing
+App permissions. The caller is the owner, so this is safe to show.
+
+| Failure | Error |
+|---|---|
+| app not yours / missing | 404 |
+| no linked project with a default repository | 422 `app has no linked project with a default repository` |
+| unknown field in the body | 422 |
+| more than `limits.test_issues_per_minute` calls for this app in the current minute (default 10, counted before the target check) | 429 `too many test issues for this app; retry later` + `Retry-After` |
+
+While GitHub is being waited out (secondary limits under 30 s), the call
+just takes longer. See [github.md → Rate limits](github.md#rate-limits).
 
 ---
 

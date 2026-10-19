@@ -2,8 +2,12 @@
 
 `internal/issue` defines what "opening an issue" means for any tracker, and
 `issue.Service` decides **where** an app's issue goes, opens it, and records
-it. It is a Go service with no HTTP route. The future ingestion pipeline is
-expected to call it after a report is accepted and enriched.
+it. It is a Go service with no route of its own. The future ingestion
+pipeline is expected to call it after a report is accepted and enriched.
+Today its only HTTP entry point is the owner's
+[`POST /apps/{appID}/test-issue`](api.md#test-issue), which calls
+`OpenForApp` with a test draft. The API scripts use it to exercise the
+service end to end (`backend/scripts/api/issues.sh`).
 
 - [Types](#types)
 - [Where an issue goes](#where-an-issue-goes)
@@ -148,13 +152,19 @@ sequenceDiagram
 Details:
 
 1. **Validation.** An empty `Title` returns an error before any I/O.
-2. **Targets are processed one at a time**, in link order. With few targets
-   per app this is simple and stays well under the PRD's 10 s goal. Running
-   them in parallel is an easy change if needed.
-3. **Opener lookup failures** are per target. A tracker that isn't
+2. **Targets are processed one at a time**, in link order. This is
+   deliberate: GitHub's secondary rate limits penalise concurrent writes
+   (see [github.md → Rate limits](github.md#rate-limits)), and the provider
+   paces writes per installation anyway.
+3. **Rate limits are per connection.** When a target fails with
+   `*issue.RateLimitError`, every later target **on the same connection**
+   (same tracker and external ID) is skipped without calling the tracker. Its
+   `Result.Err` wraps the same `*RateLimitError`. Targets on other
+   connections are still tried.
+4. **Opener lookup failures** are per target. A tracker that isn't
    configured on this deployment (such as GitLab today) fails only its own
    targets.
-4. **Recording.** After a successful `Open`, the service inserts an `issues`
+5. **Recording.** After a successful `Open`, the service inserts an `issues`
    row with `app_id`, `external_id = Ref.ID`, `url`, `title` and the optional
    `fingerprint`. If that **insert fails**, the issue still exists on the
    tracker. The service logs `issue opened but not recorded` at error level
@@ -173,6 +183,16 @@ Details:
 | App has no targets | `nil` | `ErrNoTargets` (use `errors.Is`) |
 | Some targets fail | every result; failed ones have `Err` set | **`nil`** |
 | Every target fails | every result | `"issue: every target failed: …"` (an `errors.Join` of every target's error) |
+
+To tell a retryable rate limit from other failures:
+
+```go
+var rl *issue.RateLimitError
+if errors.As(res.Err, &rl) {
+    // not processed by the tracker; safe to retry after rl.Wait
+    // (rl.Secondary distinguishes burst limits from the hourly quota)
+}
+```
 
 The caller should **always look at each `Result.Err`**, even when the
 returned error is nil. Partial delivery is normal, for example when one

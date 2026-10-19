@@ -22,6 +22,7 @@ them**. Change the SQL and regenerate.
 - [`internal/provider/github`](#internalprovidergithub)
 - [`internal/project`](#internalproject)
 - [`internal/app`](#internalapp)
+- [Dev stack, test-issue action and rate limits](#dev-stack-test-issue-action-and-rate-limits)
 
 ---
 
@@ -627,3 +628,140 @@ GET /{appID}/projects   PUT /{appID}/projects/{projectID}   DELETE /{appID}/proj
 value is a 32-byte hash, not the secret; that the key authenticates; that
 empty, unknown and wrong-prefix keys are rejected; and that another owner
 can't create keys. `TestCreateValidation` rejects an unknown platform.
+
+---
+
+## Dev stack, test-issue action and rate limits
+
+These files came in a second round. That round added the Docker dev stack,
+the fake GitHub, the bash API test suite, the "send test issue" action, and
+handling of GitHub rate limits.
+
+### `backend/Dockerfile` (new)
+
+A multi-stage build. The `golang:1.27-alpine` build stage compiles both
+binaries with module and build caches mounted. The shared `alpine:3.22`
+runtime runs as non-root user `seismo` (uid 10001), owns `/shared` (the
+volume through which the fake GitHub hands over its key), and has a
+`wget`-based `HEALTHCHECK`. The two final targets are `backend` (default)
+and `fakegithub`.
+
+### `backend/.dockerignore` (new)
+
+Keeps `bin/`, `docs/`, `scripts/`, env files, keys and test outputs out of
+the build context.
+
+### `deploy/compose.dev.yml`, `deploy/.env.example`, `deploy/README.md` (new / rewritten)
+
+The local stack: Postgres, Redis, NATS (JetStream), a one-shot dbmate
+`migrate`, `fakegithub` and `backend`. Health checks enforce the startup
+order. Every `SEISMO_*` setting has a `${VAR:-default}` that deploy/.env
+can override; the GitHub defaults point at the fake. See
+[deploy/README.md](../../deploy/README.md).
+
+### `Makefile` (changed), `.gitattributes` (new)
+
+New targets: `dev-up` (`up --build -d --wait`), `dev-down`, `dev-reset`
+(also removes volumes), `dev-logs`, `api-test`, `api-test-fresh`.
+`.gitattributes` forces LF for `*.sh` and `Dockerfile`, because bash on
+Windows fails on CRLF.
+
+### `backend/cmd/fakegithub/main.go` (new)
+
+A development-only stand-in for github.com and api.github.com. It
+implements the endpoints the provider calls, plus `/_fake/issues` and
+`/_fake/stats`. OAuth code `fake-code-N` grants installation `N`, so every
+test run can use a fresh installation. It has special repositories for
+failure (`broken`), secondary limits (`slow-down`) and an exhausted primary
+quota (`exhausted`), and sends GitHub's `X-RateLimit-*` headers. The full
+contract is in
+[test-scripts.md → The fake GitHub contract](test-scripts.md#the-fake-github-contract).
+
+### `backend/scripts/api/*.sh` (new)
+
+The end-to-end API test suite: `lib.sh` plus one script per area and
+`all.sh`. Every function and script is documented in
+[test-scripts.md](test-scripts.md).
+
+### `internal/app/testissue.go` (new) and `handler.go` / `service.go` (changed)
+
+- `SendTestIssue` loads the app (owner-scoped) and applies the per-app
+  throttle (`ratelimit.Limiter`, key `test_issue:<appID>`,
+  `limits.test_issues_per_minute` per minute). It then calls
+  `issue.Service.OpenForApp` with a draft labelled `m-seismo-test`, and maps
+  the results to `TestIssueResult`. Rate-limited targets get
+  `retry_after_seconds`.
+- `TestIssueOutcome` says whether anything was opened, and, if every target
+  was rate-limited, the shortest wait.
+- `POST /apps/{appID}/test-issue` answers `201`, `429` with `Retry-After`,
+  or `502`.
+- `app.Service` now takes `*issue.Service`, `ratelimit.Limiter` and
+  `*config.Config`. A nil limiter disables the throttle, which is how the
+  unit tests use it.
+
+### `internal/ratelimit/ratelimit.go` (new)
+
+The `Limiter` interface (`Allow(ctx, key, limit, window)`) and its Redis
+implementation. It is a fixed window, run as one Lua script (`INCR`, then
+`PEXPIRE` on the first hit, then `PTTL`), so it is atomic and holds across
+instances. When over the limit, the remaining TTL is the retry delay.
+`Module` provides it.
+
+### `internal/provider/github/ratelimit.go` (new)
+
+GitHub rate-limit handling (explained in
+[github.md → Rate limits](github.md#rate-limits)):
+
+- `pacer`: reservation-based spacing of writes per installation.
+- `Provider.call`: runs one API operation. Writes wait on the pacer first.
+  If the result is a GitHub rate limit, it either waits (`Retry-After`, or
+  until reset + 1 s; ≤ `MaxRateLimitWait`; within the context deadline; at
+  most 3 attempts) or returns `*issue.RateLimitError`.
+- `rateLimitWait`: turns go-github's `*AbuseRateLimitError` /
+  `*RateLimitError` into a wait. Without `Retry-After` it uses 60 s, as
+  GitHub asks.
+- `quotaWatcher`: an `http.RoundTripper` that warns once per reset window
+  below 10% of the quota.
+
+### `internal/provider/github/github.go`, `opener.go` (changed)
+
+- `Options` gains `MinWriteInterval` and `MaxRateLimitWait`.
+- `installation` bundles each installation's client, behind a
+  `quotaWatcher` transport, with its write `pacer`.
+- `installationClient` became `installation()`.
+- Every GitHub call goes through `call`: user installations, repositories,
+  repository lookup, milestones, create, comment, get.
+- Open milestones are cached per repository for 5 minutes
+  (`milestoneEntry`).
+
+### `internal/issue/issue.go`, `service.go` (changed)
+
+- `RateLimitError{Tracker, Wait, Secondary, Err}`: the tracker-neutral "not
+  processed, retry after Wait" error, with `RetryAfter()`.
+- `OpenForApp` remembers which connections hit a rate limit and skips their
+  remaining targets with the same error.
+
+### `internal/apperr/apperr.go`, `internal/httpx/respond.go` (changed)
+
+- `KindRateLimited`, `RateLimited(msg, wait)`, the `RetryAfterer` interface
+  and `RetryAfterOf(err)`. `Classify` maps any error carrying a retry delay
+  to `KindRateLimited`.
+- `httpx.Error` answers `429` with `Retry-After`, and `SetRetryAfter`
+  rounds up to whole seconds.
+
+### `internal/config/*` (changed)
+
+New keys: `github.min_write_interval` (1s), `github.max_rate_limit_wait`
+(30s), and the new `limits` section with `limits.test_issues_per_minute`
+(10).
+
+### Tests (new / extended)
+
+| File | Adds |
+|---|---|
+| `internal/provider/github/ratelimit_test.go` | secondary limit retried after `Retry-After` · gives up when the deadline is too short · primary exhaustion fails fast, and go-github then blocks without calling GitHub · concurrent writes paced, reads not · milestone cache · quota warning once per window |
+| `internal/provider/github/github_test.go` | `slow` and `exhausted` repositories in the fake; option overrides for `newTestProvider` |
+| `internal/issue/service_test.go` | rate-limited connection skipped; other connections still tried |
+| `internal/httpx/httpx_test.go` | 429 + rounded `Retry-After`; upstream `RetryAfter()` errors classified |
+| `internal/app/service_test.go` | test-issue throttle gives `KindRateLimited` with the limiter's wait |
+

@@ -268,6 +268,7 @@ it, and `httpx.Error` *maps* it.
 | `KindConflict` | `apperr.Conflict(msg)` | 409 | duplicate email, slug, repository link or installation |
 | `KindInvalid` | `apperr.Invalid(msg)` | 422 | validation failure, bad JSON, unreachable repository |
 | `KindUnauthorized` | `apperr.Unauthorized(msg)` | 401 | missing or invalid token, wrong password, bad app key |
+| `KindRateLimited` | `apperr.RateLimited(msg, wait)`, or any error with a `RetryAfter() time.Duration` method such as `*issue.RateLimitError` | 429 + `Retry-After` | m-Seismo throttle, GitHub rate limit |
 | `KindInternal` | any other error | 500 | everything else; logged, and the details are hidden |
 
 `apperr.Classify` also recognises raw database errors, so a service can

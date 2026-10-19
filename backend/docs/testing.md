@@ -9,7 +9,24 @@ go vet ./...
 go test -tags e2e -run TestOpenForAppE2E .   # full stack; see below
 ```
 
-## What is covered
+## API tests against the running stack
+
+`backend/scripts/api/` holds bash and curl scripts that exercise every
+endpoint over HTTP: CRUD, validation, owner isolation, bearer-token handling,
+the GitHub connect flow and the issue service. They run against the dev
+stack, whose fake GitHub makes the GitHub parts fully automatic:
+
+```sh
+make dev-up     # deploy/compose.dev.yml
+make api-test   # backend/scripts/api/all.sh
+```
+
+These scripts cover the SQL behaviour that the unit tests fake out: owner
+scoping, cascades, the one-default index, and the upsert guard. See
+[scripts/api/README.md](../scripts/api/README.md) for the list of checks,
+token handling and real-GitHub mode.
+
+## What is covered by unit tests
 
 | Package | Test | Approach |
 |---|---|---|
@@ -46,15 +63,12 @@ token path, including JWT signing with a generated RSA key.
 
 ## Not covered yet
 
-- **SQL and owner isolation.** Unit tests fake the database, so the
-  `WHERE … AND owner_id = $2` clauses, the cascades, the partial unique index
-  and the upsert guard aren't tested. The next step is an integration suite
-  against a real Postgres (testcontainers-go or a CI service container) that
-  applies the migrations and runs the services.
-- **Handlers of the resource packages** (`owner`, `project`, `app`,
-  `provider`) beyond the shared middleware. They are thin, but request
-  decoding and status codes per route are only checked by hand.
-- **Redis state store.** Only the in-memory fake is tested.
+- **Go-level DB tests.** The SQL behaviour (owner scoping, cascades, the
+  one-default index, the upsert guard) is only covered by the API scripts.
+  Those need the compose stack and don't run in `go test ./...`. A
+  testcontainers-based Go suite would also bring it into CI.
+- **A real GitHub App** is only exercised manually (`GITHUB_MODE=real`) or
+  by the `e2e` Go test.
 
 ## The e2e test
 

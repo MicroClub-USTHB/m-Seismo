@@ -35,6 +35,17 @@ later.
 
 ## Running
 
+The quickest way is the Docker dev stack, which includes Postgres, Redis,
+NATS, migrations, a fake GitHub and the backend. From the repository root:
+
+```sh
+make dev-up      # http://localhost:8080
+make api-test    # end-to-end API tests (backend/scripts/api)
+```
+
+See [deploy/README.md](../deploy/README.md). To run the backend directly
+instead:
+
 ```sh
 cp .env.example .env    # then fill in the values
 make db-up              # apply migrations (needs dbmate) and dump db/schema.sql
