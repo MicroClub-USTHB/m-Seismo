@@ -15,7 +15,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ratelimit"
 )
 
 const (
@@ -60,11 +63,16 @@ type LinkedProject struct {
 }
 
 type Service struct {
-	q db.Querier
+	q      db.Querier
+	issues *issue.Service
+	// limiter and testIssuesPerMinute throttle SendTestIssue per app; a nil
+	// limiter disables the throttle.
+	limiter             ratelimit.Limiter
+	testIssuesPerMinute int
 }
 
-func NewService(q db.Querier) *Service {
-	return &Service{q: q}
+func NewService(q db.Querier, issues *issue.Service, limiter ratelimit.Limiter, cfg *config.Config) *Service {
+	return &Service{q: q, issues: issues, limiter: limiter, testIssuesPerMinute: cfg.Limits.TestIssuesPerMinute}
 }
 
 type CreateInput struct {

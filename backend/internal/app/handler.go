@@ -42,8 +42,46 @@ func (h *Handler) Mount(r chi.Router) {
 			r.Get("/projects", h.listProjects)
 			r.Put("/projects/{projectID}", h.linkProject)
 			r.Delete("/projects/{projectID}", h.unlinkProject)
+
+			r.Post("/test-issue", h.sendTestIssue)
 		})
 	})
+}
+
+type testIssueResponse struct {
+	Error   string            `json:"error,omitempty"`
+	Results []TestIssueResult `json:"results"`
+}
+
+// sendTestIssue answers 201 when at least one issue was opened, 429 (with
+// Retry-After) when every target was rate-limited by its tracker, and 502
+// when every target failed otherwise; all three include per-target results.
+func (h *Handler) sendTestIssue(w http.ResponseWriter, r *http.Request) {
+	id, ok := uuidParam(w, r, "appID")
+	if !ok {
+		return
+	}
+	var in TestIssueInput
+	if r.ContentLength != 0 {
+		if err := httpx.Decode(w, r, &in); err != nil {
+			httpx.Error(w, r, err)
+			return
+		}
+	}
+	out, err := h.svc.SendTestIssue(r.Context(), httpx.OwnerID(r.Context()), id, in)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	switch {
+	case out.Opened:
+		httpx.JSON(w, http.StatusCreated, testIssueResponse{Results: out.Results})
+	case out.RetryAfter > 0:
+		httpx.SetRetryAfter(w, out.RetryAfter)
+		httpx.JSON(w, http.StatusTooManyRequests, testIssueResponse{Error: "rate limited by the issue tracker; retry later", Results: out.Results})
+	default:
+		httpx.JSON(w, http.StatusBadGateway, testIssueResponse{Error: "no issue could be opened", Results: out.Results})
+	}
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {

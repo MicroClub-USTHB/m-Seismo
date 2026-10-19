@@ -5,11 +5,13 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 )
 
@@ -44,7 +46,7 @@ func (f *fakeQuerier) GetActiveAppKeyByHash(_ context.Context, hash []byte) (db.
 func TestKeyLifecycle(t *testing.T) {
 	owner := uuid.New()
 	q := &fakeQuerier{app: db.App{ID: uuid.New(), OwnerID: owner}}
-	svc := NewService(q)
+	svc := NewService(q, nil, nil, &config.Config{})
 	ctx := context.Background()
 
 	k, err := svc.CreateKey(ctx, owner, q.app.ID)
@@ -75,7 +77,7 @@ func TestKeyLifecycle(t *testing.T) {
 }
 
 func TestCreateValidation(t *testing.T) {
-	svc := NewService(&fakeQuerier{})
+	svc := NewService(&fakeQuerier{}, nil, nil, &config.Config{})
 	_, err := svc.Create(context.Background(), uuid.New(), CreateInput{Name: "App", Platform: "windows", BundleID: "x"})
 	if kind(err) != apperr.KindInvalid {
 		t.Errorf("err = %v", err)
@@ -85,4 +87,24 @@ func TestCreateValidation(t *testing.T) {
 func kind(err error) apperr.Kind {
 	k, _ := apperr.Classify(err)
 	return k
+}
+
+type denyLimiter struct{ wait time.Duration }
+
+func (d denyLimiter) Allow(context.Context, string, int, time.Duration) (bool, time.Duration, error) {
+	return false, d.wait, nil
+}
+
+func TestTestIssueIsThrottled(t *testing.T) {
+	owner := uuid.New()
+	q := &fakeQuerier{app: db.App{ID: uuid.New(), OwnerID: owner}}
+	svc := NewService(q, nil, denyLimiter{wait: 20 * time.Second}, &config.Config{Limits: config.LimitsConfig{TestIssuesPerMinute: 1}})
+
+	_, err := svc.SendTestIssue(context.Background(), owner, q.app.ID, TestIssueInput{})
+	if kind(err) != apperr.KindRateLimited {
+		t.Fatalf("err = %v, want rate limited", err)
+	}
+	if wait, ok := apperr.RetryAfterOf(err); !ok || wait != 20*time.Second {
+		t.Errorf("retry after = %v, %v", wait, ok)
+	}
 }

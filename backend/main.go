@@ -13,6 +13,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/project"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider/github"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ratelimit"
 )
 
 func main() {
@@ -32,5 +33,6 @@ func Options() fx.Option {
 		provider.Module,
 		github.Module,
 		issue.Module,
+		ratelimit.Module,
 	)
 }
