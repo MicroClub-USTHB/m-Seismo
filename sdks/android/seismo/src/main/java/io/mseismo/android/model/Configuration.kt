@@ -7,6 +7,6 @@ data class Configuration(
  val projectKey:String,
  val environment:String="production",
  val release :String?=null,
- val shakeEnabled:boolean = true,
- val screenShotEnabled:boolean = false,
+ val shakeEnabled:Boolean = true,
+ val screenShotEnabled: Boolean = false,
  )
