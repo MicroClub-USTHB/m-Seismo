@@ -13,13 +13,19 @@
  *                          Add ?full=1 to include screenshot base64 data;
  *                          by default screenshot.dataBase64 is replaced with
  *                          screenshot.dataBase64Length to keep responses small.
- *   GET  /__stats          {preflightCount, requestCount, storedCount, mode}
+ *                          Add ?type=manual_with_error to filter by report type.
+ *   GET  /__stats          {preflightCount, requestCount, storedCount, mode,
+ *                           byType, byFingerprint}
  *   POST /__reset          clear reports + counters, mode -> "ok"
  *   POST /__mode           {mode, delayMs?} where mode is
  *                          ok|fail500|slow|offline|rateLimited; delayMs overrides
  *                          the slow-mode delay for this session (reset restores
  *                          the default)
  *   POST /api/reports      validate + store a report (201 {id})
+ *                          schemaVersion 2 is validated against
+ *                          docs/report.schema.json (single source of truth, via
+ *                          ajv, a devDependency). schemaVersion 1 is still
+ *                          accepted and validated with the legacy checker.
  *                          Other methods => 405 (Allow: POST, OPTIONS)
  *   GET  /cross-origin-script.js
  *                          JS that throws on load, served WITHOUT CORS headers so
@@ -44,6 +50,9 @@
  *                    delayMs to /__mode to exercise the timeout path)
  */
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import Ajv from 'ajv';
 
 const PORT = Number(process.env.PORT ?? 4010);
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN ?? 'http://localhost:5173';
@@ -203,10 +212,46 @@ function validateContext(context) {
   return null;
 }
 
-/** Validates against the ASSUMED draft contract. Returns an error string or null. */
-function validateReport(report) {
-  if (typeof report !== 'object' || report === null) return 'body must be a JSON object';
-  if (report.schemaVersion !== 1) return 'schemaVersion must be 1';
+// --- Schema validation (schemaVersion 2) ------------------------------------
+// docs/report.schema.json is the single source of truth. ajv is a devDependency
+// of the SDK workspace; the receiver is a dev tool, never shipped.
+const SCHEMA_PATH = new URL('../../docs/report.schema.json', import.meta.url);
+let validateV2 = null;
+try {
+  const schema = JSON.parse(readFileSync(fileURLToPath(SCHEMA_PATH), 'utf8'));
+  validateV2 = new Ajv({ allErrors: true, strict: false }).compile(schema);
+} catch (error) {
+  // eslint-disable-next-line no-console -- startup problem must be visible.
+  console.warn(
+    `[mock-receiver] WARNING: could not load docs/report.schema.json (${error?.message ?? error}); schemaVersion 2 will use the legacy checks only.`,
+  );
+}
+
+/** Top-level keys the SDK sends; anything else is logged as unknown. */
+const KNOWN_TOP_LEVEL_KEYS = new Set([
+  'schemaVersion',
+  'sdkVersion',
+  'reportId',
+  'type',
+  'trigger',
+  'description',
+  'error',
+  'context',
+  'breadcrumbs',
+  'networkFailures',
+  'screenshot',
+]);
+
+function logUnknownFields(report) {
+  const unknown = Object.keys(report).filter((key) => !KNOWN_TOP_LEVEL_KEYS.has(key));
+  if (unknown.length > 0) {
+    // eslint-disable-next-line no-console -- tolerated-but-logged per contract.
+    console.warn(`[mock-receiver] report ${report.reportId} carried unknown fields: ${unknown.join(', ')}`);
+  }
+}
+
+/** Legacy validation for schemaVersion 1 payloads (kept for compatibility). */
+function validateV1(report) {
   if (!isNonEmptyString(report.sdkVersion)) return 'sdkVersion must be a non-empty string';
   if (!isNonEmptyString(report.reportId)) return 'reportId must be a non-empty string';
   if (!isNonEmptyString(report.description)) return 'description must be a non-empty string';
@@ -226,6 +271,15 @@ function validateReport(report) {
     const screenshotError = validateScreenshot(report.screenshot);
     if (screenshotError) return screenshotError;
   }
+  return null;
+}
+
+/**
+ * Validates a report. schemaVersion 2 is checked against docs/report.schema.json;
+ * schemaVersion 1 uses the legacy checker. Returns an error string or null.
+ */
+function validateReport(report) {
+  if (typeof report !== 'object' || report === null) return 'body must be a JSON object';
 
   // A raw userAgent field is never sent by the SDK. Store it if it arrives, but
   // flag it so an accidental leak is obvious in the receiver log.
@@ -235,7 +289,25 @@ function validateReport(report) {
       '[mock-receiver] WARNING: report carried a raw "userAgent" field; the SDK must not send this.',
     );
   }
-  return null;
+
+  if (report.schemaVersion === 1) {
+    return validateV1(report);
+  }
+
+  if (report.schemaVersion === 2) {
+    // docs/report.schema.json is the single source of truth for v2. The legacy
+    // checker is only a fallback when the schema could not be compiled.
+    if (validateV2 === null) return validateV1(report);
+    if (!validateV2(report)) {
+      const first = validateV2.errors?.[0];
+      const where = first?.instancePath && first.instancePath.length > 0 ? first.instancePath : '/';
+      return `schema: ${where} ${first?.message ?? 'is invalid'}`;
+    }
+    logUnknownFields(report);
+    return null;
+  }
+
+  return `schemaVersion must be 1 or 2 (got ${JSON.stringify(report.schemaVersion)})`;
 }
 
 async function handleIngest(req, res) {
@@ -332,19 +404,34 @@ const server = http.createServer((req, res) => {
 
   if (method === 'GET' && pathname === '/__reports') {
     const full = url.searchParams.get('full') === '1';
-    const stored = Array.from(reports.values()).map((report) =>
-      full ? report : redactScreenshot(report),
-    );
-    sendJson(res, 200, { count: reports.size, reports: stored });
+    const typeFilter = url.searchParams.get('type');
+    let stored = Array.from(reports.values());
+    if (typeFilter !== null) {
+      stored = stored.filter((report) => report.type === typeFilter);
+    }
+    stored = stored.map((report) => (full ? report : redactScreenshot(report)));
+    sendJson(res, 200, { count: stored.length, reports: stored });
     return;
   }
 
   if (method === 'GET' && pathname === '/__stats') {
+    const byType = {};
+    const byFingerprint = {};
+    for (const report of reports.values()) {
+      const type = typeof report.type === 'string' ? report.type : `v${report.schemaVersion ?? '?'}`;
+      byType[type] = (byType[type] ?? 0) + 1;
+      const fingerprint = report?.error?.fingerprint;
+      if (typeof fingerprint === 'string') {
+        byFingerprint[fingerprint] = (byFingerprint[fingerprint] ?? 0) + 1;
+      }
+    }
     sendJson(res, 200, {
       mode,
       preflightCount,
       requestCount,
       storedCount: reports.size,
+      byType,
+      byFingerprint,
     });
     return;
   }

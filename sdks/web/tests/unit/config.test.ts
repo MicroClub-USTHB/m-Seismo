@@ -17,6 +17,16 @@ function defaultDiagnostics() {
   };
 }
 
+function defaultReporting() {
+  return {
+    autoReport: 'off',
+    sendCapturedExceptions: true,
+    dedupWindowMs: 60_000,
+    maxAutoReportsPerMinute: 5,
+    maxAutoReportsPerSession: 50,
+  };
+}
+
 beforeEach(() => {
   resetConfig();
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -57,6 +67,7 @@ describe('configure / init validation', () => {
       launcher: { enabled: false },
       screenshot: true,
       diagnostics: defaultDiagnostics(),
+      reporting: defaultReporting(),
     });
   });
 
@@ -80,6 +91,7 @@ describe('configure / init validation', () => {
       launcher: { enabled: false },
       screenshot: true,
       diagnostics: defaultDiagnostics(),
+      reporting: defaultReporting(),
     });
   });
 
@@ -255,6 +267,76 @@ describe('configure / init validation', () => {
       });
       expect(getConfig()?.diagnostics.maxEvents).toBe(100);
       expect(warnSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('reporting normalization', () => {
+    it('defaults reporting when omitted', () => {
+      configure({ endpoint: 'https://a.test/reports' });
+      expect(getConfig()?.reporting).toEqual(defaultReporting());
+    });
+
+    it('stores a valid reporting block', () => {
+      configure({
+        endpoint: 'https://a.test/reports',
+        reporting: {
+          autoReport: 'errors',
+          sendCapturedExceptions: false,
+          dedupWindowMs: 2_000,
+          maxAutoReportsPerMinute: 10,
+          maxAutoReportsPerSession: 20,
+        },
+      });
+      expect(getConfig()?.reporting).toEqual({
+        autoReport: 'errors',
+        sendCapturedExceptions: false,
+        dedupWindowMs: 5_000,
+        maxAutoReportsPerMinute: 10,
+        maxAutoReportsPerSession: 20,
+      });
+    });
+
+    it('clamps dedup window and report caps to their ceilings', () => {
+      configure({
+        endpoint: 'https://a.test/reports',
+        reporting: {
+          dedupWindowMs: 10_000_000,
+          maxAutoReportsPerMinute: 1_000,
+          maxAutoReportsPerSession: 1_000,
+        },
+      });
+      const reporting = getConfig()?.reporting;
+      expect(reporting?.dedupWindowMs).toBe(3_600_000);
+      expect(reporting?.maxAutoReportsPerMinute).toBe(30);
+      expect(reporting?.maxAutoReportsPerSession).toBe(200);
+    });
+
+    it('warns once and falls back for invalid reporting fields', () => {
+      configure({
+        endpoint: 'https://a.test/reports',
+        reporting: {
+          autoReport: 'sometimes' as unknown as 'off',
+          sendCapturedExceptions: 'yes' as unknown as boolean,
+          dedupWindowMs: -1,
+        },
+      });
+      expect(getConfig()?.reporting).toEqual(defaultReporting());
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps a valid beforeSend hook and ignores an invalid one', () => {
+      const hook = (report: unknown) => report as never;
+      configure({
+        endpoint: 'https://a.test/reports',
+        reporting: { beforeSend: hook },
+      });
+      expect(getConfig()?.reporting.beforeSend).toBe(hook);
+
+      configure({
+        endpoint: 'https://a.test/reports',
+        reporting: { beforeSend: 'nope' as unknown as never },
+      });
+      expect(getConfig()?.reporting.beforeSend).toBeUndefined();
     });
   });
 });

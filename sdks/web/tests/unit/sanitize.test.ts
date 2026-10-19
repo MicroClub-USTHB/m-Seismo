@@ -9,7 +9,7 @@ const context: ReportContext = {
 
 describe('sanitize (privacy boundary + baseline scrubber)', () => {
   it('returns a structurally identical copy when there is nothing to scrub', () => {
-    const report = buildReport({ description: 'x', context });
+    const report = buildReport({ type: 'manual', trigger: 'form', description: 'x', context });
     const sanitized = sanitize(report);
     expect(sanitized).toEqual(report);
   });
@@ -17,7 +17,7 @@ describe('sanitize (privacy boundary + baseline scrubber)', () => {
   it('returns the branded SanitizedReport type', () => {
     // Compile-time assertion: only sanitize() may produce a SanitizedReport.
     const sanitized: SanitizedReport = sanitize(
-      buildReport({ description: 'x', context }),
+      buildReport({ type: 'manual', trigger: 'form', description: 'x', context }),
     );
     expect(sanitized.description).toBe('x');
   });
@@ -29,7 +29,13 @@ describe('sanitize (privacy boundary + baseline scrubber)', () => {
       message: 'Authorization: Bearer fake-secret-token-value',
       level: 'info',
     };
-    const report = buildReport({ description: 'x', context, breadcrumbs: [breadcrumb] });
+    const report = buildReport({
+      type: 'manual',
+      trigger: 'form',
+      description: 'x',
+      context,
+      breadcrumbs: [breadcrumb],
+    });
     const sanitized = sanitize(report);
     expect(sanitized.breadcrumbs[0]!.message).toContain('[REDACTED]');
     expect(sanitized.breadcrumbs[0]!.message).not.toContain('fake-secret-token-value');
@@ -37,6 +43,8 @@ describe('sanitize (privacy boundary + baseline scrubber)', () => {
 
   it('redacts a JWT-shaped string in an error message', () => {
     const report = buildReport({
+      type: 'manual_with_error',
+      trigger: 'form',
       description: 'x',
       context,
       error: {
@@ -51,6 +59,8 @@ describe('sanitize (privacy boundary + baseline scrubber)', () => {
 
   it('never mutates the input report', () => {
     const report = buildReport({
+      type: 'manual_with_error',
+      trigger: 'form',
       description: 'x',
       context,
       error: { type: 'Error', message: 'token=supersecretvalue' },

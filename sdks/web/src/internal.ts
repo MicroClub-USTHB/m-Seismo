@@ -14,6 +14,8 @@ import {
   isRecordingDiagnostic,
 } from './diagnostics/store';
 import type { DiagnosticEvent } from './diagnostics/types';
+import { getReportingStats } from './reporting/runtime';
+import type { LimiterStats } from './reporting/limiter';
 
 /** Snapshot of buffered diagnostics, or `[]` when the SDK is not enabled. */
 export function getDiagnosticsSnapshot(): DiagnosticEvent[] {
@@ -52,4 +54,9 @@ export function isRecordingDiagnostics(): boolean {
 /** Fully detaches (and clears) the diagnostics store (test-only). */
 export function resetDiagnostics(): void {
   deactivateDiagnostics(true);
+}
+
+/** Processor dedup/limit stats (test-only). */
+export function getReportProcessorStats(): LimiterStats & { readonly processing: boolean } {
+  return getReportingStats();
 }

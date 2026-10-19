@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { captureException, destroy, init } from '@m-seismo/web';
+import { captureException, captureMessage, destroy, init } from '@m-seismo/web';
 import {
   getDiagnosticsCount,
   getDiagnosticsSnapshot,
@@ -25,6 +25,7 @@ beforeEach(() => {
       captureInteractions: false,
       captureNetwork: false,
     },
+    reporting: { sendCapturedExceptions: false },
   });
 });
 
@@ -87,5 +88,31 @@ describe('captureException', () => {
       },
     });
     expect(() => captureException(hostile)).not.toThrow();
+  });
+});
+
+describe('captureMessage', () => {
+  it('records a captured Message event with handled:true', () => {
+    captureMessage('checkout stalled');
+    const event = firstError();
+    expect(event.kind).toBe('captured');
+    expect(event.handled).toBe(true);
+    expect(event.error.type).toBe('Message');
+    expect(event.error.message).toBe('checkout stalled');
+  });
+
+  it('ignores a non-string message with a warning', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    captureMessage(42 as unknown as string);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(getDiagnosticsCount()).toBe(0);
+  });
+
+  it('is a no-op with a warning before init', () => {
+    destroy();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    captureMessage('too early');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(getDiagnosticsCount()).toBe(0);
   });
 });

@@ -25,7 +25,9 @@ test('A: sending a test report stores a valid report on the receiver', async ({
   const stored = await (await request.get(`${RECEIVER}/__reports`)).json();
   expect(stored.count).toBe(1);
   const report = stored.reports[0];
-  expect(report.schemaVersion).toBe(1);
+  expect(report.schemaVersion).toBe(2);
+  expect(report.type).toBe('manual');
+  expect(report.trigger).toBe('form');
   expect(typeof report.sdkVersion).toBe('string');
   expect(typeof report.reportId).toBe('string');
   expect(report.description).toContain('m-Seismo test app');

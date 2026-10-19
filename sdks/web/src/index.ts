@@ -13,7 +13,10 @@
  */
 import { initSdk, openForm, destroySdk } from './core/sdk';
 import type { InitOptions } from './core/config';
-import { captureException as captureExceptionImpl } from './diagnostics/captureException';
+import {
+  captureException as captureExceptionImpl,
+  captureMessage as captureMessageImpl,
+} from './diagnostics/captureException';
 
 export { SDK_VERSION } from './core/version';
 export {
@@ -31,6 +34,8 @@ export {
 } from './core/index';
 export type {
   SchemaVersion,
+  ReportType,
+  ReportTrigger,
   ReportError,
   ReportApplication,
   ReportBrowser,
@@ -46,6 +51,10 @@ export type {
   PrivacyOptions,
   DiagnosticsOptions,
   DiagnosticsConfig,
+  ReportingOptions,
+  ReportingConfig,
+  AutoReportMode,
+  BeforeSendHook,
   LauncherOptions,
   LauncherPosition,
   ShortcutSpec,
@@ -57,6 +66,21 @@ export type {
   ContextInput,
   ContextEnvironment,
 } from './core/index';
+
+export type {
+  ProcessResult,
+  ProcessReportInput,
+  SentResult,
+  SuppressedResult,
+  FailedResult,
+  SuppressReason,
+} from './reporting/processor';
+export { ReportLimiter } from './reporting/limiter';
+export {
+  computeFingerprint,
+  normalizeMessage,
+  FLAG_WEAK_FINGERPRINT,
+} from './reporting/fingerprint';
 
 export { sanitizeUrl } from './context/sanitizeUrl';
 export { DEFAULT_SENSITIVE_QUERY_PARAMS, MAX_URL_LENGTH } from './context/sanitizeUrl';
@@ -119,11 +143,15 @@ export function captureException(
 }
 
 /**
- * Capture a free-form message. Phase 3: no-op stub.
+ * Capture a free-form message. Recorded as a `captured_message` diagnostic and
+ * (by default) sent as a report. Never throws.
+ *
+ * @param message the message text.
+ * @param context optional structured context; structurally sanitized, never mutated.
  */
 export function captureMessage(
-  _message: string,
-  _context?: CaptureContext,
+  message: string,
+  context?: CaptureContext,
 ): void {
-  // no-op until the collectors phase
+  captureMessageImpl(message, context);
 }

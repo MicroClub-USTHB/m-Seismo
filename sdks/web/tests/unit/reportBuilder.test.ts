@@ -21,9 +21,11 @@ afterEach(() => {
 
 describe('report builder (assembly only)', () => {
   it('builds a minimal manual report with error: null', () => {
-    const report = buildReport({ description: 'manual report', context: makeContext() });
-    expect(report.schemaVersion).toBe(1);
+    const report = buildReport({ type: 'manual', trigger: 'form', description: 'manual report', context: makeContext() });
+    expect(report.schemaVersion).toBe(2);
     expect(report.sdkVersion).toBe(SDK_VERSION);
+    expect(report.type).toBe('manual');
+    expect(report.trigger).toBe('form');
     expect(report.description).toBe('manual report');
     expect(report.error).toBeNull();
     expect(report.screenshot).toBeNull();
@@ -39,7 +41,7 @@ describe('report builder (assembly only)', () => {
       viewport: { width: 800, height: 600 },
       application: { version: '1.2.3', environment: 'prod' },
     });
-    const report = buildReport({ description: 'x', context });
+    const report = buildReport({ type: 'manual', trigger: 'form', description: 'x', context });
     expect(report.reportId).toMatch(UUID_RE);
     expect(report.context).toBe(context);
     expect(Number.isNaN(Date.parse(report.context.timestamp))).toBe(false);
@@ -47,6 +49,8 @@ describe('report builder (assembly only)', () => {
 
   it('keeps a captured error object', () => {
     const report = buildReport({
+      type: 'manual_with_error',
+      trigger: 'form',
       description: 'boom',
       context: makeContext(),
       error: { type: 'TypeError', message: 'bad', stack: 'at x' },
@@ -56,14 +60,14 @@ describe('report builder (assembly only)', () => {
 
   it('honours the reportId override (idempotency)', () => {
     const report = buildReport(
-      { description: 'x', context: makeContext() },
+      { type: 'manual', trigger: 'form', description: 'x', context: makeContext() },
       { reportId: 'fixed-id' },
     );
     expect(report.reportId).toBe('fixed-id');
   });
 
   it('is SSR-safe: importing and building touches no globals', () => {
-    const report = buildReport({ description: 'x', context: makeContext() });
+    const report = buildReport({ type: 'manual', trigger: 'form', description: 'x', context: makeContext() });
     expect(typeof globalThis.window).toBe('undefined');
     expect(report.context.application).toEqual({});
   });

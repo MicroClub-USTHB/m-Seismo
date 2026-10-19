@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildReport, sanitize, sendReport } from '@m-seismo/web';
-import type { DiagnosticsConfig, SdkConfig } from '@m-seismo/web';
+import type { DiagnosticsConfig, ReportingConfig, SdkConfig } from '@m-seismo/web';
 
 function makeDiagnostics(): DiagnosticsConfig {
   return {
@@ -16,6 +16,16 @@ function makeDiagnostics(): DiagnosticsConfig {
   };
 }
 
+function makeReporting(): ReportingConfig {
+  return {
+    autoReport: 'off',
+    sendCapturedExceptions: true,
+    dedupWindowMs: 60_000,
+    maxAutoReportsPerMinute: 5,
+    maxAutoReportsPerSession: 50,
+  };
+}
+
 function makeConfig(
   overrides: { endpoint?: string; projectKey?: string; timeoutMs?: number } = {},
 ): SdkConfig {
@@ -27,6 +37,7 @@ function makeConfig(
     launcher: { enabled: false };
     screenshot: boolean;
     diagnostics: DiagnosticsConfig;
+    reporting: ReportingConfig;
   } = {
     endpoint: overrides.endpoint ?? 'https://receiver.test/api/reports',
     timeoutMs: overrides.timeoutMs ?? 10_000,
@@ -34,6 +45,7 @@ function makeConfig(
     launcher: { enabled: false },
     screenshot: true,
     diagnostics: makeDiagnostics(),
+    reporting: makeReporting(),
   };
   if (overrides.projectKey !== undefined) config.projectKey = overrides.projectKey;
   return config;
@@ -43,6 +55,8 @@ function makeReport() {
   return sanitize(
     buildReport(
       {
+        type: 'manual',
+        trigger: 'form',
         description: 'transport test',
         context: {
           url: 'https://app.test/',

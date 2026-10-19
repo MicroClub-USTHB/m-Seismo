@@ -17,12 +17,18 @@ import type {
   ReportError,
   ReportNetworkFailure,
   ReportPayload,
+  ReportTrigger,
+  ReportType,
   ScreenshotAttachment,
 } from './types';
 
 export interface BuildReportInput {
-  /** Human description. Must be non-empty by contract. */
-  readonly description: string;
+  /** How the report was produced (Phase 7). */
+  readonly type: ReportType;
+  /** What caused the report (Phase 7). */
+  readonly trigger: ReportTrigger;
+  /** Human description; `null` for automatic/captured reports. */
+  readonly description: string | null;
   /** Context collected by `getContext()` at submit time. */
   readonly context: ReportContext;
   /** Captured error, or `null` for a manual report. */
@@ -81,6 +87,8 @@ export function buildReport(
     schemaVersion: SCHEMA_VERSION,
     sdkVersion: SDK_VERSION,
     reportId: options.reportId ?? createReportId(),
+    type: input.type,
+    trigger: input.trigger,
     description: input.description,
     error: input.error ?? null,
     context: input.context,

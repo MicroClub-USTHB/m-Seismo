@@ -34,11 +34,13 @@ The Web SDK's implementation of this contract lives in `src/core/` (payload),
 
 ```jsonc
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "sdkVersion": "0.0.0",
   "reportId": "6f1c2b9e-3a4d-4c1f-9b2e-2f0a7d5c8e11",
-  "description": "Non-empty human description of the problem",
-  "error": null, // or { "type": "...", "message": "...", "stack": "..." }
+  "type": "manual",        // see §3.3
+  "trigger": "form",       // see §3.3
+  "description": "Non-empty human description of the problem", // null for automatic/captured
+  "error": null, // or { "type", "message", "stack", "fingerprint", "occurrences", ... }
   "context": {
     "url": "https://app.example.com/page?utm_source=docs&token=[REDACTED]",
     "timestamp": "2026-10-16T20:00:00.000Z",
@@ -67,11 +69,13 @@ Field notes (ASSUMED):
 
 | Field | Type | Required | Notes |
 | ----- | ---- | -------- | ----- |
-| `schemaVersion` | literal `1` | yes | Bumped only on breaking payload changes. |
+| `schemaVersion` | literal `2` | yes | Bumped only on breaking payload changes. `1` reports are legacy. |
 | `sdkVersion` | string | yes | Version of the Web SDK that produced the report. |
 | `reportId` | string (UUID v4) | yes | Unique per report; see §7 idempotency. |
-| `description` | string | yes | Must be non-empty. |
-| `error` | `null` or object | yes | `null` for manual reports. Object: `type` (string), `message` (string), optional `stack` (string). |
+| `type` | enum | yes | Phase 7: `manual`, `manual_with_error`, `automatic_error`, `captured_exception`, `captured_message`. See §3.3. |
+| `trigger` | enum | yes | Phase 7: `form`, `automatic`, `api`. How the report was produced. |
+| `description` | string \| `null` | yes | Non-empty string for `manual`/`manual_with_error`; `null` for automatic/captured reports. |
+| `error` | `null` or object | yes | `null` for a `manual` report. Object: `type` (string), `message` (string), optional `stack` (string), `handled` (bool), `timestamp`, `source`, `flags`, `context`, and Phase 7 `fingerprint` (16-char lowercase hex) + `occurrences` (integer ≥ 1). |
 | `context.url` | string | no | Sanitized page URL at capture time. Omitted (not `null`) when unavailable or unparseable. See §3.2. |
 | `context.timestamp` | string (ISO 8601) | yes | Capture time, UTC. |
 | `context.browser` | object | no | `{ name, version }`; both optional. Omitted when it cannot be detected. See §3.2. |
@@ -137,6 +141,59 @@ Collection and privacy rules (implemented in `src/context/`):
 - The whole `context` object is collected fresh at submit time, is read-only
   (nothing is written to `navigator`, `location`, `history`, storage, or
   cookies), and never throws — a failing collector simply omits its field.
+
+### 3.3 Unified report types, fingerprints & dedup (ASSUMED — Phase 7)
+
+Phase 7 makes **every** report flow through one processor
+(`src/reporting/processor.ts`) with one shape. The breaking additions are
+`type`, `trigger`, a nullable `description`, and `error.fingerprint` /
+`error.occurrences`, so `schemaVersion` becomes `2` (see
+`docs/report.schema.json`, which is the machine-readable single source of
+truth the mock receiver validates against).
+
+`type` and `trigger`:
+
+| `type` | `trigger` | Meaning | `description` | `error` |
+| ------ | --------- | ------- | ------------- | ------- |
+| `manual` | `form` | User submitted the form; no recent error attached. | non-empty | `null` |
+| `manual_with_error` | `form` | User submitted the form with a recent error attached. | non-empty | present |
+| `automatic_error` | `automatic` | SDK auto-reported an uncaught error / unhandled rejection. | `null` | present |
+| `captured_exception` | `api` | Host called `captureException()`. | `null` | present |
+| `captured_message` | `api` | Host called `captureMessage()`. | `null` | present |
+
+Optional `reporting` controls (`init({ reporting })`) — all client-side, never
+sent:
+
+- `autoReport`: `'off'` (default) or `'errors'`. `'all'` is accepted as an alias
+  of `'errors'` (the SDK has no non-error automatic reports).
+- `sendCapturedExceptions`: send `captured_exception` / `captured_message`
+  reports (default `true`).
+- `dedupWindowMs` (default 60000, clamped 5000–3600000),
+  `maxAutoReportsPerMinute` (default 5, ceiling 30),
+  `maxAutoReportsPerSession` (default 50, ceiling 200).
+- `beforeSend(report)`: last-chance hook after sanitization; return the report or
+  `null` to drop it.
+
+**Fingerprint** (`error.fingerprint`): a stable, non-cryptographic 16-char
+lowercase-hex FNV-1a hash of `type` + normalized `message` (whitespace
+collapsed, volatile tokens like UUIDs/hex ids/4+-digit numbers/timestamps
+replaced, secrets scrubbed, truncated to 200), + the **top application stack
+frame** (`fn@path`, line/column/query stripped). A missing/unusable stack, or a
+cross-origin script error, yields a **weak** fingerprint and adds the flag
+`weak-fingerprint` to `error.flags`. Cross-origin weak fingerprints fold the
+page path in so the same bare `"Script error."` on two pages does not merge.
+
+**Dedup / rate limiting** (client-side only): automatic and captured reports are
+keyed by fingerprint. The first occurrence in the window is sent; repeats are
+counted but not resent. `error.occurrences` is the number of times the
+fingerprint occurred **since the last report sent for it** (≥ 1) — it stays `1`
+on the first report and grows only when a later report is actually sent.
+Manual reports are **never** deduplicated; they carry the current occurrence
+count read-only. The limit table is in-memory (bounded to 100 fingerprints), no
+storage/cookies, and is cleared by `destroy()`.
+
+The SDK also drops optional parts if the serialized report would exceed ~5 MiB
+(screenshot first, then breadcrumbs/network failures).
 
 ## 4. Responses (ASSUMED)
 
@@ -210,6 +267,7 @@ again.)
    `browser.name` / `platform` vocabularies above acceptable, or is a fixed
    enum expected?
 10. **Breadcrumbs & network diagnostics (Phase 5.3):** Do the `breadcrumbs` and `networkFailures` shapes above match the backend’s expected schema? Are the category vocabularies, limits (≤50 breadcrumbs, ≤20 network failures), and the “[REDACTED]” placeholder acceptable? Does the backend expect `opaque_response` to appear here (no) or only as breadcrumbs? Can `data` objects in breadcrumbs include only JSON-safe primitives/objects/arrays?
+11. **Report processor (Phase 7):** Are the `type`/`trigger` vocabularies above (and the nullable `description`) acceptable, or does the backend want different names? Does the backend group/roll up by `error.fingerprint`? Is it acceptable that `error.occurrences` reflects only the count at send time (it is not updated for deduped, unsent repeats)? Should the backend key idempotency on `reportId`, or dedupe on `fingerprint` + time window? Does the backend accept `schemaVersion` `2`, or must it also keep accepting `1`? Finally: can a `captured_message` (which has no stack, so a weak `type`+`message` fingerprint) be grouped the same way as errors, or does the backend want a separate key?
 
 ---
 

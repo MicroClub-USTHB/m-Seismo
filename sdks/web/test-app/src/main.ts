@@ -1,6 +1,7 @@
 import {
   buildReport,
   captureException,
+  captureMessage,
   destroy,
   getConfig,
   getContext,
@@ -11,7 +12,13 @@ import {
   sendReport,
 } from '@m-seismo/web';
 import type { ContextInput, InitOptions, SdkEvent } from '@m-seismo/web';
-import { clearDiagnostics, getDiagnosticsCount, getDiagnosticsSelection, getDiagnosticsSnapshot } from '@sdk/internal';
+import {
+  clearDiagnostics,
+  getDiagnosticsCount,
+  getDiagnosticsSelection,
+  getDiagnosticsSnapshot,
+  getReportProcessorStats,
+} from '@sdk/internal';
 import './styles.css';
 
 /**
@@ -72,7 +79,7 @@ const onEvent = (event: SdkEvent): void => record(describeEvent(event));
 
 function initSdk(
   label: string,
-  extra: Partial<Pick<InitOptions, 'shortcut' | 'diagnostics'>> = {},
+  extra: Partial<Pick<InitOptions, 'shortcut' | 'diagnostics' | 'reporting'>> = {},
 ): void {
   const enabled = init({
     endpoint: ENDPOINT,
@@ -271,6 +278,8 @@ document
       return;
     }
     const report = buildReport({
+      type: 'manual',
+      trigger: 'form',
       description: 'Manual test report from the m-Seismo test app',
       context: getContext(contextInput()).context,
     });
@@ -486,4 +495,164 @@ onClick('bc-show-selection', () => {
     `breadcrumbs: selection = ${selection.breadcrumbs.length} breadcrumbs, ` +
       `${selection.networkFailures.length} network failures, error=${selection.error ? 'yes' : 'no'}`,
   );
+});
+
+// --- Phase 7 report processor lab ------------------------------------------
+const statsView = document.querySelector<HTMLElement>('[data-testid="processor-stats"]');
+const lastView = document.querySelector<HTMLElement>('[data-testid="processor-last"]');
+
+/** One stable code path for the "repeat the same error" scenarios. */
+function reportSameError(): void {
+  captureException(new Error('m-Seismo test app: repeated error'));
+}
+
+/** A second, distinct code path with an identical message (different frame). */
+function reportSameErrorViaSecondPath(): void {
+  captureException(new Error('m-Seismo test app: repeated error'));
+}
+
+onClick('rp-open-form', () => {
+  openReportForm();
+  record('report lab: opened manual form');
+});
+
+onClick('rp-seed-error-then-form', () => {
+  captureException(new Error('m-Seismo test app: recent error before manual report'));
+  openReportForm();
+  record('report lab: seeded a recent error, opened form');
+});
+
+onClick('rp-uncaught', () => {
+  record('report lab: throwing uncaught error');
+  setTimeout(() => {
+    throw new Error('m-Seismo test app: automatic uncaught error');
+  }, 0);
+});
+
+onClick('rp-capture-exception', () => {
+  captureException(new Error('m-Seismo test app: captured exception (lab)'), {
+    feature: 'checkout',
+    token: 'super-secret-token-value-1234567890',
+  });
+  record('report lab: captureException() with context');
+});
+
+onClick('rp-capture-message', () => {
+  captureMessage('m-Seismo test app: captured message (lab)', { area: 'lab' });
+  record('report lab: captureMessage()');
+});
+
+for (const count of [1, 10, 100, 500]) {
+  onClick(`rp-repeat-${count}`, () => {
+    for (let i = 0; i < count; i += 1) reportSameError();
+    record(`report lab: repeated same error ×${count}`);
+  });
+}
+
+onClick('rp-two-paths', () => {
+  reportSameError();
+  reportSameErrorViaSecondPath();
+  record('report lab: same message from two code paths');
+});
+
+onClick('rp-different-messages', () => {
+  for (let i = 0; i < 5; i += 1) captureMessage(`m-Seismo test app: message ${i}`);
+  record('report lab: 5 different messages');
+});
+
+onClick('rp-weak-no-stack', () => {
+  captureException({ name: 'Error', message: 'm-Seismo test app: error without a stack' });
+  record('report lab: captureException() with no stack');
+});
+
+onClick('rp-cross-origin', () => {
+  const script = document.createElement('script');
+  script.src = `${RECEIVER_BASE}/cross-origin-script.js?lab=${Date.now()}`;
+  document.body.append(script);
+  record('report lab: cross-origin script (weak fingerprint)');
+});
+
+onClick('rp-reinit-auto-errors', () => {
+  initSdk('report lab: autoReport=errors', { reporting: { autoReport: 'errors' } });
+});
+
+onClick('rp-reinit-auto-off', () => {
+  initSdk('report lab: autoReport=off', { reporting: { autoReport: 'off' } });
+});
+
+onClick('rp-reinit-small-limits', () => {
+  initSdk('report lab: tiny window + caps', {
+    reporting: {
+      autoReport: 'errors',
+      dedupWindowMs: 5_000,
+      maxAutoReportsPerMinute: 2,
+      maxAutoReportsPerSession: 3,
+    },
+  });
+});
+
+onClick('rp-reinit-no-capture', () => {
+  initSdk('report lab: sendCapturedExceptions=false', {
+    reporting: { autoReport: 'errors', sendCapturedExceptions: false },
+  });
+});
+
+onClick('rp-reinit-beforesend-drop', () => {
+  initSdk('report lab: beforeSend drops automatic', {
+    reporting: {
+      autoReport: 'errors',
+      beforeSend: (report) => (report.trigger === 'automatic' ? null : report),
+    },
+  });
+});
+
+onClick('rp-reinit-beforesend-throw', () => {
+  initSdk('report lab: beforeSend throws', {
+    reporting: {
+      autoReport: 'errors',
+      beforeSend: () => {
+        throw new Error('beforeSend boom');
+      },
+    },
+  });
+});
+
+onClick('rp-show-stats', async () => {
+  const local = getReportProcessorStats();
+  if (statsView) statsView.textContent = JSON.stringify(local, null, 2);
+  try {
+    const response = await fetch(`${RECEIVER_BASE}/__stats`);
+    const remote = (await response.json()) as unknown;
+    record(`report lab: local stats = ${JSON.stringify(local)}`);
+    record(`report lab: receiver stats = ${JSON.stringify(remote)}`);
+  } catch (error) {
+    record(`report lab: receiver stats failed: ${String(error)}`);
+  }
+});
+
+onClick('rp-show-last', async () => {
+  try {
+    const response = await fetch(`${RECEIVER_BASE}/__reports?full=1`);
+    const body = (await response.json()) as {
+      count: number;
+      reports: Array<{ type?: string; trigger?: string; error?: unknown }>;
+    };
+    if (body.count === 0) {
+      record('report lab: no reports stored yet');
+      return;
+    }
+    const latest = body.reports[body.reports.length - 1];
+    if (lastView) lastView.textContent = JSON.stringify(latest, null, 2);
+    record(
+      `report lab: last report type=${latest?.type} trigger=${latest?.trigger} ` +
+        `error=${latest?.error ? 'yes' : 'null'}`,
+    );
+  } catch (error) {
+    record(`report lab: show last failed: ${String(error)}`);
+  }
+});
+
+onClick('rp-stats-link', () => {
+  window.open(`${RECEIVER_BASE}/__stats`, '_blank');
+  record('report lab: opened /__stats in a new tab');
 });

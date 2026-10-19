@@ -180,6 +180,67 @@
       </section>
 
       <section class="panel">
+        <h2>Report processor lab (Phase 7)</h2>
+        <p>
+          Every report type flows through one processor. Automatic reporting is
+          <strong>off by default</strong>; enable it below to test dedup and caps.
+          Manual form reports are never deduplicated.
+        </p>
+        <div class="grid">
+          <button type="button" data-testid="rp-open-form">Open form (manual)</button>
+          <button type="button" data-testid="rp-seed-error-then-form">
+            Seed recent error, then open form
+          </button>
+          <button type="button" data-testid="rp-uncaught">Throw uncaught error</button>
+          <button type="button" data-testid="rp-capture-exception">
+            captureException()
+          </button>
+          <button type="button" data-testid="rp-capture-message">
+            captureMessage()
+          </button>
+          <button type="button" data-testid="rp-repeat-1">Repeat error ×1</button>
+          <button type="button" data-testid="rp-repeat-10">Repeat error ×10</button>
+          <button type="button" data-testid="rp-repeat-100">Repeat error ×100</button>
+          <button type="button" data-testid="rp-repeat-500">Repeat error ×500</button>
+          <button type="button" data-testid="rp-two-paths">
+            Same message, two code paths
+          </button>
+          <button type="button" data-testid="rp-different-messages">
+            Different messages in a loop
+          </button>
+          <button type="button" data-testid="rp-weak-no-stack">
+            Weak fingerprint (no stack)
+          </button>
+          <button type="button" data-testid="rp-cross-origin">
+            Cross-origin script (weak)
+          </button>
+          <button type="button" data-testid="rp-reinit-auto-errors">
+            Re-init: autoReport=errors
+          </button>
+          <button type="button" data-testid="rp-reinit-auto-off">
+            Re-init: autoReport=off
+          </button>
+          <button type="button" data-testid="rp-reinit-small-limits">
+            Re-init: tiny window + caps
+          </button>
+          <button type="button" data-testid="rp-reinit-no-capture">
+            Re-init: sendCapturedExceptions=false
+          </button>
+          <button type="button" data-testid="rp-reinit-beforesend-drop">
+            Re-init: beforeSend drops automatic
+          </button>
+          <button type="button" data-testid="rp-reinit-beforesend-throw">
+            Re-init: beforeSend throws
+          </button>
+          <button type="button" data-testid="rp-show-stats">Show processor stats</button>
+          <button type="button" data-testid="rp-show-last">Show last stored report</button>
+          <button type="button" data-testid="rp-stats-link">← link to /__stats</button>
+        </div>
+        <pre data-testid="processor-stats" class="diagnostics-buffer">null</pre>
+        <pre data-testid="processor-last" class="diagnostics-buffer">null</pre>
+      </section>
+
+      <section class="panel">
         <h2>Event log</h2>
         <ol data-testid="event-log" class="event-log"></ol>
       </section>

@@ -12,6 +12,7 @@ import { warn } from './log';
 import { detectMac, parseShortcut } from './shortcut';
 import type { ShortcutSpec } from './shortcut';
 import type { SdkEvent, SdkEventListener } from './events';
+import type { ReportPayload } from './types';
 import { clampMaxAgeMs } from '../diagnostics/buffer';
 import {
   DEFAULT_MAX_AGE_MS,
@@ -110,6 +111,65 @@ export interface DiagnosticsConfig {
   readonly ignoreUrls?: readonly (string | RegExp)[];
 }
 
+/** Automatic-reporting policy for unsolicited (non-form) reports. */
+export type AutoReportMode = 'off' | 'errors' | 'all';
+
+/** Last-chance hook to inspect/edit or drop a report before it is sent. */
+export type BeforeSendHook = (report: ReportPayload) => ReportPayload | null;
+
+/** Default per-fingerprint dedup window (60 s). */
+export const DEFAULT_DEDUP_WINDOW_MS = 60_000;
+/** Lower clamp for `reporting.dedupWindowMs` (5 s). */
+export const MIN_DEDUP_WINDOW_MS = 5_000;
+/** Upper clamp for `reporting.dedupWindowMs` (1 h). */
+export const MAX_DEDUP_WINDOW_MS = 60 * 60 * 1000;
+/** Default automatic/captured sends per minute. */
+export const DEFAULT_MAX_AUTO_PER_MINUTE = 5;
+/** Ceiling for `reporting.maxAutoReportsPerMinute`. */
+export const MAX_AUTO_PER_MINUTE_CEILING = 30;
+/** Default automatic/captured sends per page lifetime. */
+export const DEFAULT_MAX_AUTO_PER_SESSION = 50;
+/** Ceiling for `reporting.maxAutoReportsPerSession`. */
+export const MAX_AUTO_PER_SESSION_CEILING = 200;
+
+/**
+ * Automatic-reporting controls (Phase 7).
+ *
+ * `autoReport` defaults to `'off'`: unsolicited reporting is a privacy- and
+ * quota-sensitive behaviour that a host must opt into explicitly. `'all'` is
+ * accepted and behaves exactly like `'errors'` (only error-like events exist to
+ * report automatically today).
+ */
+export interface ReportingOptions {
+  /** `'off'` (buffer only, default), `'errors'`, or `'all'` (alias of `'errors'`). */
+  readonly autoReport?: AutoReportMode;
+  /** Send a report when `captureException()` is called. Defaults to `true`. */
+  readonly sendCapturedExceptions?: boolean;
+  /** Per-fingerprint dedup window in ms. Clamped to [5 s, 1 h]. Default 60 s. */
+  readonly dedupWindowMs?: number;
+  /** Max automatic/captured sends per minute. Default 5; clamped to ≤ 30. */
+  readonly maxAutoReportsPerMinute?: number;
+  /** Max automatic/captured sends per session. Default 50; clamped to ≤ 200. */
+  readonly maxAutoReportsPerSession?: number;
+  /**
+   * Called after sanitization with a frozen copy of the report. Return the
+   * report to send it, or `null` to drop it. A throwing hook causes the
+   * unmodified report to be sent. The hook's return value is NOT re-sanitized.
+   */
+  readonly beforeSend?: BeforeSendHook;
+}
+
+/** Normalised reporting config stored on {@link SdkConfig}. */
+export interface ReportingConfig {
+  readonly autoReport: AutoReportMode;
+  readonly sendCapturedExceptions: boolean;
+  readonly dedupWindowMs: number;
+  readonly maxAutoReportsPerMinute: number;
+  readonly maxAutoReportsPerSession: number;
+  /** Omitted when no hook was configured. */
+  readonly beforeSend?: BeforeSendHook;
+}
+
 export interface InitOptions {
   /** Full URL of the ingest endpoint, e.g. `https://example.com/api/reports`. */
   readonly endpoint: string;
@@ -141,6 +201,8 @@ export interface InitOptions {
   readonly privacy?: PrivacyOptions;
   /** Optional automatic-diagnostics controls (Phase 5.2). */
   readonly diagnostics?: DiagnosticsOptions;
+  /** Optional automatic-reporting controls (Phase 7). */
+  readonly reporting?: ReportingOptions;
   /** Optional listener for SDK lifecycle events. */
   readonly onEvent?: SdkEventListener;
 }
@@ -158,6 +220,8 @@ export interface SdkConfig {
   readonly sensitiveQueryParams?: readonly string[];
   /** Normalised automatic-diagnostics config. Always present. */
   readonly diagnostics: DiagnosticsConfig;
+  /** Normalised automatic-reporting config. Always present. */
+  readonly reporting: ReportingConfig;
   readonly onEvent?: SdkEventListener;
 }
 
@@ -369,6 +433,102 @@ function normaliseDiagnostics(value: unknown): DiagnosticsConfig {
   return config;
 }
 
+const AUTO_REPORT_MODES: readonly AutoReportMode[] = ['off', 'errors', 'all'];
+
+function isAutoReportMode(value: unknown): value is AutoReportMode {
+  return typeof value === 'string' && (AUTO_REPORT_MODES as readonly string[]).includes(value);
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+/**
+ * Normalises `reporting` options. Every field falls back to a safe default and
+ * at most one warning is logged for the whole block; validation never throws.
+ */
+function normaliseReporting(value: unknown): ReportingConfig {
+  const defaults: ReportingConfig = {
+    autoReport: 'off',
+    sendCapturedExceptions: true,
+    dedupWindowMs: DEFAULT_DEDUP_WINDOW_MS,
+    maxAutoReportsPerMinute: DEFAULT_MAX_AUTO_PER_MINUTE,
+    maxAutoReportsPerSession: DEFAULT_MAX_AUTO_PER_SESSION,
+  };
+  if (value === undefined) return defaults;
+  if (value === null || typeof value !== 'object') {
+    warn('init() option "reporting" must be an object; using defaults.');
+    return defaults;
+  }
+
+  const options = value as ReportingOptions;
+  const config: {
+    autoReport: AutoReportMode;
+    sendCapturedExceptions: boolean;
+    dedupWindowMs: number;
+    maxAutoReportsPerMinute: number;
+    maxAutoReportsPerSession: number;
+    beforeSend?: BeforeSendHook;
+  } = { ...defaults };
+  let warned = false;
+
+  if (options.autoReport !== undefined) {
+    if (isAutoReportMode(options.autoReport)) {
+      config.autoReport = options.autoReport;
+    } else {
+      warn('init() option "reporting.autoReport" must be "off", "errors" or "all"; using "off".');
+      warned = true;
+    }
+  }
+
+  if (options.sendCapturedExceptions !== undefined) {
+    if (typeof options.sendCapturedExceptions === 'boolean') {
+      config.sendCapturedExceptions = options.sendCapturedExceptions;
+    } else if (!warned) {
+      warn('init() option "reporting.sendCapturedExceptions" must be a boolean; using default.');
+      warned = true;
+    }
+  }
+
+  if (options.dedupWindowMs !== undefined) {
+    if (typeof options.dedupWindowMs === 'number' && Number.isFinite(options.dedupWindowMs) && options.dedupWindowMs > 0) {
+      config.dedupWindowMs = clampNumber(options.dedupWindowMs, MIN_DEDUP_WINDOW_MS, MAX_DEDUP_WINDOW_MS);
+    } else if (!warned) {
+      warn('init() option "reporting.dedupWindowMs" must be a positive number; using default.');
+      warned = true;
+    }
+  }
+
+  if (options.maxAutoReportsPerMinute !== undefined) {
+    if (typeof options.maxAutoReportsPerMinute === 'number' && Number.isInteger(options.maxAutoReportsPerMinute) && options.maxAutoReportsPerMinute > 0) {
+      config.maxAutoReportsPerMinute = Math.min(options.maxAutoReportsPerMinute, MAX_AUTO_PER_MINUTE_CEILING);
+    } else if (!warned) {
+      warn('init() option "reporting.maxAutoReportsPerMinute" must be a positive integer; using default.');
+      warned = true;
+    }
+  }
+
+  if (options.maxAutoReportsPerSession !== undefined) {
+    if (typeof options.maxAutoReportsPerSession === 'number' && Number.isInteger(options.maxAutoReportsPerSession) && options.maxAutoReportsPerSession > 0) {
+      config.maxAutoReportsPerSession = Math.min(options.maxAutoReportsPerSession, MAX_AUTO_PER_SESSION_CEILING);
+    } else if (!warned) {
+      warn('init() option "reporting.maxAutoReportsPerSession" must be a positive integer; using default.');
+      warned = true;
+    }
+  }
+
+  if (options.beforeSend !== undefined) {
+    if (typeof options.beforeSend === 'function') {
+      config.beforeSend = options.beforeSend;
+    } else if (!warned) {
+      warn('init() option "reporting.beforeSend" must be a function; ignored.');
+      warned = true;
+    }
+  }
+
+  return config;
+}
+
 /**
  * Validate and store configuration.
  *
@@ -397,6 +557,7 @@ export function configure(options: InitOptions): boolean {
     screenshot: boolean;
     sensitiveQueryParams?: readonly string[];
     diagnostics: DiagnosticsConfig;
+    reporting: ReportingConfig;
     onEvent?: SdkEventListener;
   } = {
     endpoint: options.endpoint,
@@ -405,6 +566,7 @@ export function configure(options: InitOptions): boolean {
     launcher: normaliseLauncher(options.launcher),
     screenshot: normaliseScreenshot(options.screenshot),
     diagnostics: normaliseDiagnostics(options.diagnostics),
+    reporting: normaliseReporting(options.reporting),
   };
   if (options.appVersion !== undefined) next.appVersion = options.appVersion;
   if (options.environment !== undefined) next.environment = options.environment;

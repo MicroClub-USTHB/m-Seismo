@@ -46,6 +46,8 @@ describe('scrubReport', () => {
       level: 'info',
     };
     const report = buildReport({
+      type: 'manual',
+      trigger: 'form',
       description: 'user text token=abcd1234',
       context,
       breadcrumbs: [breadcrumb],
@@ -69,6 +71,8 @@ describe('scrubReport', () => {
 
   it('never mutates the input', () => {
     const report = buildReport({
+      type: 'manual_with_error',
+      trigger: 'form',
       description: 'x',
       context,
       error: { type: 'Error', message: 'token=abcd1234' },

@@ -11,14 +11,43 @@ import type {
   NetworkCategory,
 } from '../diagnostics/types';
 
-/** Schema version carried on every report. Bumped only on breaking changes. */
-export const SCHEMA_VERSION = 1;
+/**
+ * Schema version carried on every report. Bumped only on breaking changes.
+ *
+ * Phase 7 bumps `1` → `2`: the payload gained `type`, `trigger`, an optional
+ * `error.fingerprint`/`error.occurrences`, and `description` became nullable for
+ * automatic/captured reports. See `docs/report.schema.json`.
+ */
+export const SCHEMA_VERSION = 2;
 
 export type SchemaVersion = typeof SCHEMA_VERSION;
 
 /**
+ * How a report came to exist (Phase 7).
+ *
+ * - `manual`              — user submitted the form, no error attached
+ * - `manual_with_error`   — user submitted the form with a recent error
+ * - `automatic_error`     — SDK reported an uncaught error / unhandled rejection
+ * - `captured_exception`  — host called `captureException()`
+ * - `captured_message`    — host called `captureMessage()`
+ */
+export type ReportType =
+  | 'manual'
+  | 'manual_with_error'
+  | 'automatic_error'
+  | 'captured_exception'
+  | 'captured_message';
+
+/** What caused the report to be produced (Phase 7). */
+export type ReportTrigger = 'form' | 'automatic' | 'api';
+
+/**
  * The most recent error attached to a report. `type`/`message` are required;
  * every other field is optional and additive over the Phase 5.1 shape.
+ *
+ * Phase 7 adds `fingerprint` (stable identity of this class of error) and
+ * `occurrences` (how many times this fingerprint occurred since the last report
+ * was sent for it). Both are present only for reports that carry an error.
  */
 export interface ReportError {
   readonly type: string;
@@ -31,6 +60,10 @@ export interface ReportError {
   readonly source?: DiagnosticSource;
   readonly flags?: readonly string[];
   readonly context?: Record<string, JsonValue>;
+  /** Stable identity of this error class (Phase 7). Lowercase hex, bounded. */
+  readonly fingerprint?: string;
+  /** Times this fingerprint occurred since the last report sent for it (≥ 1). */
+  readonly occurrences?: number;
 }
 
 export interface ReportApplication {
@@ -124,8 +157,16 @@ export interface ReportPayload {
   readonly schemaVersion: SchemaVersion;
   readonly sdkVersion: string;
   readonly reportId: string;
-  readonly description: string;
-  /** `null` is valid and required for manual reports. */
+  /** How this report was produced (Phase 7). */
+  readonly type: ReportType;
+  /** What caused this report to be produced (Phase 7). */
+  readonly trigger: ReportTrigger;
+  /**
+   * User description. A non-empty string is required for `manual` /
+   * `manual_with_error`; `null` is used for automatic and captured reports.
+   */
+  readonly description: string | null;
+  /** `null` is valid for `manual`, and for any report with no error attached. */
   readonly error: ReportError | null;
   readonly context: ReportContext;
   /** Recent breadcrumbs, oldest first (empty when diagnostics are disabled). */

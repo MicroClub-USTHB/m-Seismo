@@ -26,6 +26,7 @@ function initDiag(diagnostics: DiagnosticsOptions = {}): void {
       captureNetwork: false,
       ...diagnostics,
     },
+    reporting: { sendCapturedExceptions: false },
   };
   init(options);
 }

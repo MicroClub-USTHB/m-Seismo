@@ -16,25 +16,25 @@
  * - The transport is injectable so the flow can be unit-tested without network.
  */
 import { getConfig } from '../core/config';
-import type { SdkConfig } from '../core/config';
 import { emitEvent } from '../core/emit';
-import { buildReport, createReportId } from '../core/reportBuilder';
+import { createReportId } from '../core/reportBuilder';
 import { matchesShortcut } from '../core/shortcut';
-import type { ReportContext, ScreenshotAttachment } from '../core/types';
+import type { ScreenshotAttachment } from '../core/types';
 import { createSdkDiagnosticEvent } from '../diagnostics/event';
-import { selectDiagnostics } from '../diagnostics/select';
-import { getDiagnosticsBuffer, recordDiagnostic } from '../diagnostics/store';
-import { getContext } from '../context/getContext';
-import { sanitize } from '../privacy/sanitize';
-import type { SanitizedReport } from '../privacy/sanitize';
-import { sendReport } from '../transport/sendReport';
-import type { SendFailure, SendResult } from '../transport/types';
+import { recordDiagnostic } from '../diagnostics/store';
+import { processInput } from '../reporting/runtime';
+import type { ProcessReportInput, ProcessResult, SuppressReason } from '../reporting/processor';
+import type { SendFailureKind } from '../transport/types';
 import { fileToAttachment, formatBytes } from './screenshot';
 import { validateDescription } from './validation';
 
 export interface FormControllerDeps {
-  /** Transport override (defaults to the real {@link sendReport}). */
-  readonly send?: (report: SanitizedReport, config: SdkConfig) => Promise<SendResult>;
+  /**
+   * Report pipeline override (defaults to the real {@link processInput}). Unit
+   * tests inject a fake processor rather than a raw transport, so the form
+   * always goes through the one assembly/sanitize/dedup path.
+   */
+  readonly process?: (input: ProcessReportInput) => Promise<ProcessResult>;
 }
 
 export interface FormController {
@@ -149,23 +149,34 @@ function template(screenshotEnabled: boolean): string {
   `;
 }
 
-function failureMessage(result: SendFailure): string {
-  switch (result.kind) {
+function failureMessage(kind: SendFailureKind, status?: number): string {
+  switch (kind) {
     case 'network':
       return 'Could not reach the server. Check your connection and try again.';
     case 'timeout':
       return 'The request timed out. Please try again.';
     case 'http':
-      return `The server rejected the report (HTTP ${result.status ?? 'error'}).`;
+      return `The server rejected the report (HTTP ${status ?? 'error'}).`;
     case 'invalid-response':
       return 'The server response was not understood. Please try again.';
+  }
+}
+
+function suppressedMessage(reason: SuppressReason): string {
+  switch (reason) {
+    case 'disabled':
+      return 'The SDK is not configured.';
+    case 'invalid_input':
+      return 'The report could not be sent: the description is missing.';
+    default:
+      return 'The report could not be sent. Please try again.';
   }
 }
 
 export function createFormController(
   deps: FormControllerDeps = {},
 ): FormController {
-  const send = deps.send ?? sendReport;
+  const process = deps.process ?? processInput;
   const config = getConfig();
   const screenshotEnabled = config?.screenshot ?? true;
 
@@ -284,59 +295,31 @@ export function createFormController(
     setBusy(true);
     emitEvent({ type: 'submit:start', reportId: id });
 
-    // Collect context fresh at click time (not at form open) so a retry always
-    // reflects the current page/viewport. Never let a context failure block the
-    // submission: fall back to a minimal timestamp + config-value context.
-    let context: ReportContext;
-    try {
-      context = getContext({
-        reportId: id,
-        ...(current.appVersion !== undefined ? { appVersion: current.appVersion } : {}),
-        ...(current.environment !== undefined ? { environment: current.environment } : {}),
-        ...(current.sensitiveQueryParams !== undefined
-          ? { sensitiveQueryParams: current.sensitiveQueryParams }
-          : {}),
-      }).context;
-    } catch {
-      const application: { version?: string; environment?: string } = {};
-      if (current.appVersion !== undefined) application.version = current.appVersion;
-      if (current.environment !== undefined) application.environment = current.environment;
-      context = { timestamp: new Date().toISOString(), application };
+    // The unified processor collects context/diagnostics fresh at click time
+    // (so a retry reflects the current page), classifies, fingerprints, dedups,
+    // sanitizes and sends. Manual reports are never deduplicated.
+    const result = await process({
+      source: 'form',
+      description: validation.value,
+      screenshot,
+      reportId: id,
+    });
+
+    if (result.status === 'suppressed') {
+      setBusy(false);
+      setMessage('error', suppressedMessage(result.reason));
+      return;
     }
 
-    // Select the diagnostics to attach. Re-running on retry re-reads the buffer
-    // (fresh events) while preserving the same reportId for idempotency.
-    const selection = selectDiagnostics(
-      getDiagnosticsBuffer()?.snapshot() ?? [],
-      Date.now(),
-      {
-        includeInReports: current.diagnostics.includeInReports,
-        maxAgeMs: current.diagnostics.maxAgeMs,
-      },
-    );
-
-    const payload = buildReport(
-      {
-        description: validation.value,
-        screenshot,
-        context,
-        error: selection.error,
-        breadcrumbs: selection.breadcrumbs,
-        networkFailures: selection.networkFailures,
-      },
-      { reportId: id },
-    );
-
-    const result = await send(sanitize(payload), current);
-    if (!result.ok) {
+    if (result.status === 'failed') {
       setBusy(false);
-      setMessage('error', failureMessage(result));
+      setMessage('error', failureMessage(result.kind, result.httpStatus));
       sendBtn.textContent = 'Try again';
       emitEvent({
         type: 'submit:failure',
         reportId: id,
         kind: result.kind,
-        ...(result.status !== undefined ? { status: result.status } : {}),
+        ...(result.httpStatus !== undefined ? { status: result.httpStatus } : {}),
         message: result.message,
       });
       return;
@@ -345,7 +328,7 @@ export function createFormController(
     emitEvent({
       type: 'submit:success',
       reportId: id,
-      status: result.status,
+      status: result.httpStatus,
       ...(result.id !== undefined ? { id: result.id } : {}),
     });
     sendBtn.disabled = true;

@@ -3,16 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFormController } from '@sdk/form/formController';
 import { configure, resetConfig } from '@sdk/core/config';
 import type { SdkEvent } from '@sdk/core/events';
-import type { SanitizedReport } from '@sdk/privacy/sanitize';
-import type { SendResult } from '@sdk/transport/types';
+import type { ProcessReportInput, ProcessResult } from '@sdk/reporting/processor';
 
 let events: SdkEvent[];
 let controllers: ReturnType<typeof createFormController>[];
 
 function createController(
-  send: (report: SanitizedReport) => Promise<SendResult>,
+  process: (input: ProcessReportInput) => Promise<ProcessResult>,
 ): ReturnType<typeof createFormController> {
-  const controller = createFormController({ send });
+  const controller = createFormController({ process });
   controllers.push(controller);
   return controller;
 }
@@ -35,24 +34,37 @@ function typeDescription(value: string): void {
   q<HTMLTextAreaElement>('[data-testid="mseismo-description"]').value = value;
 }
 
-function sendSpy(
-  responses: SendResult[],
-  sent: SanitizedReport[],
-): (report: SanitizedReport) => Promise<SendResult> {
+function processSpy(
+  results: ProcessResult[],
+  seen: ProcessReportInput[],
+): (input: ProcessReportInput) => Promise<ProcessResult> {
   let call = 0;
-  return async (report) => {
-    sent.push(report);
-    const result = responses[Math.min(call, responses.length - 1)]!;
+  return async (input) => {
+    seen.push(input);
+    const result = results[Math.min(call, results.length - 1)]!;
     call += 1;
     return result;
   };
 }
 
-const OK: SendResult = { ok: true, status: 201, id: 'srv-1' };
-const FAIL: SendResult = {
-  ok: false,
+function sent(reportId = 'r', httpStatus = 201, id?: string): ProcessResult {
+  return {
+    status: 'sent',
+    reportId,
+    type: 'manual',
+    trigger: 'form',
+    httpStatus,
+    ...(id !== undefined ? { id } : {}),
+  };
+}
+
+const FAIL: ProcessResult = {
+  status: 'failed',
+  reportId: 'r',
+  type: 'manual',
+  trigger: 'form',
   kind: 'http',
-  status: 500,
+  httpStatus: 500,
   message: 'HTTP 500',
 };
 
@@ -76,7 +88,7 @@ afterEach(() => {
 
 describe('createFormController', () => {
   it('open() attaches the dialog in a shadow root and emits form:open', () => {
-    const controller = createController(sendSpy([OK], []));
+    const controller = createController(processSpy([sent('r')], []));
     expect(document.querySelector('[data-mseismo-form]')).toBeNull();
 
     controller.open();
@@ -87,36 +99,38 @@ describe('createFormController', () => {
     expect(events).toContainEqual({ type: 'form:open' });
   });
 
-  it('rejects an empty description without sending', async () => {
+  it('rejects an empty description without processing', async () => {
     vi.useFakeTimers();
-    const sent: SanitizedReport[] = [];
-    const send = vi.fn(sendSpy([OK], sent));
-    const controller = createController(send);
+    const seen: ProcessReportInput[] = [];
+    const process = vi.fn(processSpy([sent('r')], seen));
+    const controller = createController(process);
     controller.open();
 
     submit();
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(send).not.toHaveBeenCalled();
+    expect(process).not.toHaveBeenCalled();
     expect(events.some((e) => e.type === 'validation:error')).toBe(true);
     expect(q('[data-testid="mseismo-message"]').textContent).toContain('describe');
     expect(controller.isOpen()).toBe(true);
   });
 
-  it('sends a valid report, emits success, then closes', async () => {
+  it('sends a valid report through the processor, emits success, then closes', async () => {
     vi.useFakeTimers();
-    const sent: SanitizedReport[] = [];
-    const controller = createController(sendSpy([OK], sent));
+    const seen: ProcessReportInput[] = [];
+    const controller = createController(
+      processSpy([{ ...sent('r', 201, 'srv-1') }], seen),
+    );
     controller.open();
     typeDescription('  the save button did nothing  ');
 
     submit();
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(sent).toHaveLength(1);
-    expect(sent[0]!.description).toBe('the save button did nothing');
-    expect(sent[0]!.screenshot).toBeNull();
-    expect(sent[0]!.error).toBeNull();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.source).toBe('form');
+    expect(seen[0]!.description).toBe('the save button did nothing');
+    expect(seen[0]!.screenshot).toBeNull();
     expect(events.some((e) => e.type === 'submit:start')).toBe(true);
     expect(events.some((e) => e.type === 'submit:success')).toBe(true);
     expect(controller.isOpen()).toBe(true);
@@ -128,8 +142,11 @@ describe('createFormController', () => {
 
   it('keeps the form open on failure and reuses the reportId on retry', async () => {
     vi.useFakeTimers();
-    const sent: SanitizedReport[] = [];
-    const controller = createController(sendSpy([FAIL, OK], sent));
+    const seen: ProcessReportInput[] = [];
+    const first: ProcessResult = { ...FAIL, reportId: 'ignored' };
+    const controller = createController(
+      processSpy([first, sent('r')], seen),
+    );
     controller.open();
     typeDescription('something broke');
 
@@ -143,13 +160,35 @@ describe('createFormController', () => {
     submit();
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(sent).toHaveLength(2);
-    expect(sent[1]!.reportId).toBe(sent[0]!.reportId);
+    expect(seen).toHaveLength(2);
+    expect(seen[1]!.reportId).toBe(seen[0]!.reportId);
     expect(events.some((e) => e.type === 'submit:success')).toBe(true);
   });
 
+  it('shows an error and does not emit success when suppressed', async () => {
+    vi.useFakeTimers();
+    const seen: ProcessReportInput[] = [];
+    const suppressed: ProcessResult = {
+      status: 'suppressed',
+      reportId: 'r',
+      type: 'manual',
+      trigger: 'form',
+      reason: 'disabled',
+    };
+    const controller = createController(processSpy([suppressed], seen));
+    controller.open();
+    typeDescription('anything');
+
+    submit();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(events.some((e) => e.type === 'submit:success')).toBe(false);
+    expect(events.some((e) => e.type === 'submit:failure')).toBe(false);
+    expect(q('[data-testid="mseismo-message"]').textContent).toContain('not configured');
+  });
+
   it('discards typed text when closed without sending', () => {
-    const controller = createController(sendSpy([OK], []));
+    const controller = createController(processSpy([sent('r')], []));
     controller.open();
     typeDescription('to be discarded');
 
@@ -160,10 +199,10 @@ describe('createFormController', () => {
     expect(q<HTMLTextAreaElement>('[data-testid="mseismo-description"]').value).toBe('');
   });
 
-  it('attaches a screenshot picked by the user', async () => {
+  it('passes a screenshot picked by the user to the processor', async () => {
     vi.useFakeTimers();
-    const sent: SanitizedReport[] = [];
-    const controller = createController(sendSpy([OK], sent));
+    const seen: ProcessReportInput[] = [];
+    const controller = createController(processSpy([sent('r')], seen));
     controller.open();
 
     const file = new File([new Uint8Array([137, 80, 78, 71])], 'shot.png', {
@@ -178,8 +217,8 @@ describe('createFormController', () => {
     submit();
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(sent).toHaveLength(1);
-    const screenshot = sent[0]!.screenshot;
+    expect(seen).toHaveLength(1);
+    const screenshot = seen[0]!.screenshot;
     expect(screenshot).not.toBeNull();
     expect(screenshot?.mimeType).toBe('image/png');
     expect(screenshot?.name).toBe('shot.png');

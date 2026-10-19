@@ -24,6 +24,11 @@ import {
   deactivateDiagnostics,
   recordDiagnostic,
 } from '../diagnostics/store';
+import {
+  configureReporting,
+  handleAutomaticDiagnostic,
+  resetReportingState,
+} from '../reporting/runtime';
 
 let lifecycle: Lifecycle | null = null;
 let form: FormController | null = null;
@@ -88,10 +93,10 @@ function setupDom(): void {
   }
 
   if (config.diagnostics.captureUncaughtErrors) {
-    next.add(installErrorCollector(window, recordDiagnostic));
+    next.add(installErrorCollector(window, handleAutomaticDiagnostic));
   }
   if (config.diagnostics.captureUnhandledRejections) {
-    next.add(installRejectionCollector(window, recordDiagnostic));
+    next.add(installRejectionCollector(window, handleAutomaticDiagnostic));
   }
   if (config.diagnostics.captureNavigation) {
     next.add(
@@ -138,6 +143,7 @@ export function initSdk(options: InitOptions): boolean {
     const config = getConfig();
     if (config !== null) {
       activateDiagnostics(config.diagnostics.maxEvents, config.diagnostics.maxAgeMs);
+      configureReporting(config);
     }
     setupDom();
   }
@@ -157,5 +163,6 @@ export function openForm(): void {
 export function destroySdk(): void {
   teardownDom();
   deactivateDiagnostics(true);
+  resetReportingState();
   resetConfig();
 }
