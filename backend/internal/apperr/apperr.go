@@ -5,6 +5,7 @@ package apperr
 
 import (
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -18,6 +19,9 @@ const (
 	KindConflict
 	KindInvalid
 	KindUnauthorized
+	// KindRateLimited means the caller, or an upstream tracker acting for
+	// it, is over a rate limit. Retrying after RetryAfterOf(err) may succeed.
+	KindRateLimited
 )
 
 // Error is a domain error whose message is safe to show to clients.
@@ -25,6 +29,9 @@ type Error struct {
 	Kind Kind
 	Msg  string
 	Err  error
+	// Wait is how long to wait before retrying; only meaningful for
+	// KindRateLimited.
+	Wait time.Duration
 }
 
 func (e *Error) Error() string {
@@ -36,10 +43,34 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.Err }
 
+// RetryAfter implements RetryAfterer for rate-limited errors.
+func (e *Error) RetryAfter() time.Duration { return e.Wait }
+
 func NotFound(msg string) error     { return &Error{Kind: KindNotFound, Msg: msg} }
 func Conflict(msg string) error     { return &Error{Kind: KindConflict, Msg: msg} }
 func Invalid(msg string) error      { return &Error{Kind: KindInvalid, Msg: msg} }
 func Unauthorized(msg string) error { return &Error{Kind: KindUnauthorized, Msg: msg} }
+
+// RateLimited reports that a limit was hit; retry after wait.
+func RateLimited(msg string, wait time.Duration) error {
+	return &Error{Kind: KindRateLimited, Msg: msg, Wait: wait}
+}
+
+// RetryAfterer is implemented by errors that know when a retry may
+// succeed, such as issue.RateLimitError from a tracker.
+type RetryAfterer interface {
+	RetryAfter() time.Duration
+}
+
+// RetryAfterOf returns the retry delay carried by err (anywhere in its
+// chain), if any.
+func RetryAfterOf(err error) (time.Duration, bool) {
+	var ra RetryAfterer
+	if errors.As(err, &ra) && ra.RetryAfter() > 0 {
+		return ra.RetryAfter(), true
+	}
+	return 0, false
+}
 
 // Postgres error codes we translate.
 const (
@@ -49,7 +80,8 @@ const (
 
 // Classify returns the kind of err and a client-safe message. Missing rows
 // and constraint violations from Postgres are classified too, so services
-// can return query errors unchanged.
+// can return query errors unchanged, and so is any error carrying a retry
+// delay (RetryAfterer), such as a tracker rate limit.
 func Classify(err error) (Kind, string) {
 	var ae *Error
 	if errors.As(err, &ae) {
@@ -66,6 +98,9 @@ func Classify(err error) (Kind, string) {
 		case pgForeignKeyViolation:
 			return KindInvalid, "references a resource that does not exist"
 		}
+	}
+	if _, ok := RetryAfterOf(err); ok {
+		return KindRateLimited, "rate limited by the issue tracker; retry later"
 	}
 	return KindInternal, "internal error"
 }

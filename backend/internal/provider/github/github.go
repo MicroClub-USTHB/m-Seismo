@@ -62,13 +62,15 @@ func FromConfig(cfg *config.Config) ([]provider.Provider, error) {
 	}
 
 	p, err := New(Options{
-		AppID:        c.AppID,
-		AppSlug:      c.AppSlug,
-		ClientID:     c.ClientID,
-		ClientSecret: c.ClientSecret,
-		PrivateKey:   key,
-		APIURL:       c.APIURL,
-		WebURL:       c.WebURL,
+		AppID:            c.AppID,
+		AppSlug:          c.AppSlug,
+		ClientID:         c.ClientID,
+		ClientSecret:     c.ClientSecret,
+		PrivateKey:       key,
+		APIURL:           c.APIURL,
+		WebURL:           c.WebURL,
+		MinWriteInterval: c.MinWriteInterval,
+		MaxRateLimitWait: c.MaxRateLimitWait,
 	})
 	if err != nil {
 		return nil, err
@@ -87,6 +89,14 @@ type Options struct {
 	// WebURL is the web base used for install and OAuth URLs, e.g.
 	// https://github.com/.
 	WebURL string
+	// MinWriteInterval spaces write requests per installation (see
+	// ratelimit.go). Zero disables pacing; FromConfig defaults it to
+	// DefaultMinWriteInterval.
+	MinWriteInterval time.Duration
+	// MaxRateLimitWait is the longest a call waits out a rate limit before
+	// returning *issue.RateLimitError. Zero means DefaultMaxRateLimitWait;
+	// negative means never wait.
+	MaxRateLimitWait time.Duration
 }
 
 // Provider implements provider.Provider for GitHub.
@@ -95,7 +105,18 @@ type Provider struct {
 	appsTr    *ghinstallation.AppsTransport
 	httpc     *http.Client
 	mu        sync.Mutex
-	installed map[int64]*gh.Client
+	installed map[int64]*installation
+
+	milestoneMu sync.Mutex
+	milestones  map[string]milestoneEntry
+}
+
+// installation is the per-installation state: an API client authenticated
+// as the installation, and the pacer its write requests share.
+type installation struct {
+	id     int64
+	client *gh.Client
+	writes *pacer
 }
 
 func New(o Options) (*Provider, error) {
@@ -110,6 +131,9 @@ func New(o Options) (*Provider, error) {
 	}
 	o.APIURL = withSlash(o.APIURL)
 	o.WebURL = withSlash(o.WebURL)
+	if o.MaxRateLimitWait == 0 {
+		o.MaxRateLimitWait = DefaultMaxRateLimitWait
+	}
 
 	appsTr, err := ghinstallation.NewAppsTransport(http.DefaultTransport, o.AppID, o.PrivateKey)
 	if err != nil {
@@ -118,10 +142,11 @@ func New(o Options) (*Provider, error) {
 	appsTr.BaseURL = strings.TrimRight(o.APIURL, "/")
 
 	return &Provider{
-		opts:      o,
-		appsTr:    appsTr,
-		httpc:     &http.Client{Timeout: 15 * time.Second},
-		installed: make(map[int64]*gh.Client),
+		opts:       o,
+		appsTr:     appsTr,
+		httpc:      &http.Client{Timeout: 15 * time.Second},
+		installed:  make(map[int64]*installation),
+		milestones: make(map[string]milestoneEntry),
 	}, nil
 }
 
@@ -162,7 +187,12 @@ func (p *Provider) CompleteInstall(ctx context.Context, q url.Values) (provider.
 
 	opts := &gh.ListOptions{PerPage: 100}
 	for {
-		insts, resp, err := userClient.Apps.ListUserInstallations(ctx, opts)
+		var insts []*gh.Installation
+		var resp *gh.Response
+		err := p.call(ctx, installationID, nil, func() (err error) {
+			insts, resp, err = userClient.Apps.ListUserInstallations(ctx, opts)
+			return err
+		})
 		if err != nil {
 			return provider.Account{}, fmt.Errorf("github: list user installations: %w", err)
 		}
@@ -218,9 +248,11 @@ func (p *Provider) exchangeCode(ctx context.Context, code string) (string, error
 	return body.AccessToken, nil
 }
 
-// installationClient returns an API client acting as the installation.
-// Clients are cached; ghinstallation refreshes their tokens itself.
-func (p *Provider) installationClient(externalID string) (*gh.Client, error) {
+// installation returns the cached state for an installation, creating its
+// API client on first use. One client per installation matters: go-github
+// tracks rate limits per client, and ghinstallation caches and refreshes
+// the installation token inside it.
+func (p *Provider) installation(externalID string) (*installation, error) {
 	id, err := strconv.ParseInt(externalID, 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("github: invalid installation id %q", externalID)
@@ -228,20 +260,21 @@ func (p *Provider) installationClient(externalID string) (*gh.Client, error) {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if c, ok := p.installed[id]; ok {
-		return c, nil
+	if inst, ok := p.installed[id]; ok {
+		return inst, nil
 	}
-	tr := ghinstallation.NewFromAppsTransport(p.appsTr, id)
+	tr := &quotaWatcher{base: ghinstallation.NewFromAppsTransport(p.appsTr, id), installation: id}
 	c, err := gh.NewClient(gh.WithTransport(tr), gh.WithURLs(&p.opts.APIURL, nil), gh.WithTimeout(30*time.Second))
 	if err != nil {
 		return nil, fmt.Errorf("github: installation client: %w", err)
 	}
-	p.installed[id] = c
-	return c, nil
+	inst := &installation{id: id, client: c, writes: &pacer{interval: p.opts.MinWriteInterval}}
+	p.installed[id] = inst
+	return inst, nil
 }
 
 func (p *Provider) ListRepositories(ctx context.Context, externalID string) ([]provider.Repository, error) {
-	c, err := p.installationClient(externalID)
+	inst, err := p.installation(externalID)
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +282,12 @@ func (p *Provider) ListRepositories(ctx context.Context, externalID string) ([]p
 	out := []provider.Repository{}
 	opts := &gh.ListOptions{PerPage: 100}
 	for {
-		page, resp, err := c.Apps.ListRepos(ctx, opts)
+		var page *gh.ListRepositories
+		var resp *gh.Response
+		err := p.call(ctx, inst.id, nil, func() (err error) {
+			page, resp, err = inst.client.Apps.ListRepos(ctx, opts)
+			return err
+		})
 		if err != nil {
 			return nil, fmt.Errorf("github: list installation repositories: %w", err)
 		}
@@ -268,11 +306,14 @@ func (p *Provider) HasRepository(ctx context.Context, externalID, repository str
 	if err != nil {
 		return false, err
 	}
-	c, err := p.installationClient(externalID)
+	inst, err := p.installation(externalID)
 	if err != nil {
 		return false, err
 	}
-	_, _, err = c.Repositories.Get(ctx, owner, name)
+	err = p.call(ctx, inst.id, nil, func() error {
+		_, _, err := inst.client.Repositories.Get(ctx, owner, name)
+		return err
+	})
 	if isNotFound(err) {
 		return false, nil
 	}
@@ -283,11 +324,11 @@ func (p *Provider) HasRepository(ctx context.Context, externalID, repository str
 }
 
 func (p *Provider) Opener(_ context.Context, externalID string) (issue.Opener, error) {
-	c, err := p.installationClient(externalID)
+	inst, err := p.installation(externalID)
 	if err != nil {
 		return nil, err
 	}
-	return &opener{c: c}, nil
+	return &opener{p: p, inst: inst}, nil
 }
 
 func splitRepository(repository string) (owner, name string, err error) {

@@ -90,14 +90,36 @@ func (s *Service) OpenForApp(ctx context.Context, appID uuid.UUID, d Draft) ([]R
 
 	results := make([]Result, 0, len(rows))
 	var errs []error
+	// A rate limit applies to the whole connection (e.g. a GitHub App
+	// installation), so once one target hits it, the others on the same
+	// connection are skipped with the same error instead of piling on.
+	limited := map[string]*RateLimitError{}
 	for _, row := range rows {
-		res := s.open(ctx, target{
+		t := target{
 			projectID:           row.ProjectID,
 			projectRepositoryID: row.ProjectRepositoryID,
 			repository:          row.Repository,
 			tracker:             row.Tracker,
 			externalID:          row.ExternalID,
-		}, &appID, d)
+		}
+		conn := string(t.tracker) + "/" + t.externalID
+
+		var res Result
+		if rl, ok := limited[conn]; ok {
+			res = Result{
+				ProjectID:           t.projectID,
+				ProjectRepositoryID: t.projectRepositoryID,
+				Repository:          t.repository,
+				Tracker:             t.tracker,
+				Err:                 fmt.Errorf("issue: skipped %s %s: connection is rate limited: %w", t.tracker, t.repository, rl),
+			}
+		} else {
+			res = s.open(ctx, t, &appID, d)
+			var rl *RateLimitError
+			if errors.As(res.Err, &rl) {
+				limited[conn] = rl
+			}
+		}
 		if res.Err != nil {
 			errs = append(errs, res.Err)
 		}

@@ -29,4 +29,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("github.private_key_path", "")
 	v.SetDefault("github.api_url", "https://api.github.com/")
 	v.SetDefault("github.web_url", "https://github.com/")
+	v.SetDefault("github.min_write_interval", "1s")
+	v.SetDefault("github.max_rate_limit_wait", "30s")
+
+	v.SetDefault("limits.test_issues_per_minute", 10)
 }

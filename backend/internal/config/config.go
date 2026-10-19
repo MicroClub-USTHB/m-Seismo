@@ -55,14 +55,19 @@ func Load(configPath string) (*Config, error) {
 			JWTTTL:    v.GetDuration("auth.jwt_ttl"),
 		},
 		GitHub: GitHubConfig{
-			AppID:          v.GetInt64("github.app_id"),
-			AppSlug:        v.GetString("github.app_slug"),
-			ClientID:       v.GetString("github.client_id"),
-			ClientSecret:   v.GetString("github.client_secret"),
-			PrivateKey:     v.GetString("github.private_key"),
-			PrivateKeyPath: v.GetString("github.private_key_path"),
-			APIURL:         v.GetString("github.api_url"),
-			WebURL:         v.GetString("github.web_url"),
+			AppID:            v.GetInt64("github.app_id"),
+			AppSlug:          v.GetString("github.app_slug"),
+			ClientID:         v.GetString("github.client_id"),
+			ClientSecret:     v.GetString("github.client_secret"),
+			PrivateKey:       v.GetString("github.private_key"),
+			PrivateKeyPath:   v.GetString("github.private_key_path"),
+			APIURL:           v.GetString("github.api_url"),
+			WebURL:           v.GetString("github.web_url"),
+			MinWriteInterval: v.GetDuration("github.min_write_interval"),
+			MaxRateLimitWait: v.GetDuration("github.max_rate_limit_wait"),
+		},
+		Limits: LimitsConfig{
+			TestIssuesPerMinute: v.GetInt("limits.test_issues_per_minute"),
 		},
 	}
 

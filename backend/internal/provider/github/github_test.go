@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -23,9 +24,11 @@ import (
 // fakeGitHub serves the handful of GitHub endpoints the provider calls,
 // for both the web (OAuth) and API base URLs.
 type fakeGitHub struct {
-	mu          sync.Mutex
-	createdBody map[string]any
-	comments    []string
+	mu             sync.Mutex
+	createdBody    map[string]any
+	comments       []string
+	milestoneCalls int
+	slowAttempts   int
 }
 
 func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +79,33 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"full_name": "octo-org/app"})
 
 	case r.Method == http.MethodGet && r.URL.Path == "/repos/octo-org/app/milestones":
+		f.mu.Lock()
+		f.milestoneCalls++
+		f.mu.Unlock()
 		writeJSON(w, http.StatusOK, []any{map[string]any{"number": 3, "title": "v1.0"}})
+
+	// Secondary (abuse) limit on the first attempt only.
+	case r.Method == http.MethodPost && r.URL.Path == "/repos/octo-org/slow/issues":
+		f.mu.Lock()
+		f.slowAttempts++
+		attempt := f.slowAttempts
+		f.mu.Unlock()
+		if attempt == 1 {
+			w.Header().Set("Retry-After", "1")
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"message":           "You have exceeded a secondary rate limit.",
+				"documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+			})
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"number": 1, "html_url": "https://github.test/octo-org/slow/issues/1"})
+
+	// Primary hourly quota exhausted.
+	case r.Method == http.MethodPost && r.URL.Path == "/repos/octo-org/exhausted/issues":
+		w.Header().Set("X-RateLimit-Limit", "5000")
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
+		writeJSON(w, http.StatusForbidden, map[string]any{"message": "API rate limit exceeded for installation."})
 
 	case r.Method == http.MethodPost && r.URL.Path == "/repos/octo-org/app/issues":
 		var body map[string]any
@@ -107,7 +136,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func newTestProvider(t *testing.T) (*Provider, *fakeGitHub) {
+func newTestProvider(t *testing.T, opts ...func(*Options)) (*Provider, *fakeGitHub) {
 	t.Helper()
 	fake := &fakeGitHub{}
 	srv := httptest.NewServer(fake)
@@ -119,7 +148,7 @@ func newTestProvider(t *testing.T) (*Provider, *fakeGitHub) {
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
 
-	p, err := New(Options{
+	o := Options{
 		AppID:        1,
 		AppSlug:      "m-seismo",
 		ClientID:     "client",
@@ -127,7 +156,11 @@ func newTestProvider(t *testing.T) (*Provider, *fakeGitHub) {
 		PrivateKey:   keyPEM,
 		APIURL:       srv.URL,
 		WebURL:       srv.URL,
-	})
+	}
+	for _, f := range opts {
+		f(&o)
+	}
+	p, err := New(o)
 	if err != nil {
 		t.Fatal(err)
 	}

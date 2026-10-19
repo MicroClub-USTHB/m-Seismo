@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -38,13 +39,19 @@ func (f *fakeQuerier) CreateIssue(_ context.Context, arg db.CreateIssueParams) (
 
 // fakeOpener fails for repositories listed in fail.
 type fakeOpener struct {
-	fail   map[string]bool
-	opened []Issue
+	fail    map[string]bool
+	limited map[string]bool
+	calls   []string
+	opened  []Issue
 }
 
 func (o *fakeOpener) Open(_ context.Context, in Issue) (Ref, error) {
+	o.calls = append(o.calls, in.Repository)
 	if o.fail[in.Repository] {
 		return Ref{}, errors.New("tracker down")
+	}
+	if o.limited[in.Repository] {
+		return Ref{}, &RateLimitError{Tracker: "github", Wait: 42 * time.Second, Err: errors.New("403")}
 	}
 	o.opened = append(o.opened, in)
 	return Ref{ID: in.Repository + "#1", URL: "https://example.test/" + in.Repository}, nil
@@ -156,5 +163,35 @@ func TestOpenInRepository(t *testing.T) {
 	}
 	if res.Ref.ID != "octo/ok#1" || len(q.created) != 1 || q.created[0].AppID != nil {
 		t.Errorf("res = %+v, created = %+v", res, q.created)
+	}
+}
+
+func TestRateLimitedConnectionIsSkipped(t *testing.T) {
+	limited := newTarget("octo/limited", db.TrackerGithub)
+	sameConn := newTarget("octo/same-installation", db.TrackerGithub)
+	otherConn := newTarget("octo/other-installation", db.TrackerGithub)
+	otherConn.ExternalID = "7"
+
+	q := &fakeQuerier{targets: []db.ListIssueTargetsForAppRow{limited, sameConn, otherConn}}
+	op := &fakeOpener{limited: map[string]bool{"octo/limited": true}}
+	svc := NewService(q, fakeSource{opener: op})
+
+	results, err := svc.OpenForApp(context.Background(), uuid.New(), Draft{Title: "x"})
+	if err != nil {
+		t.Fatalf("one success should not fail the call: %v", err)
+	}
+
+	var rl *RateLimitError
+	if !errors.As(results[0].Err, &rl) || rl.RetryAfter() != 42*time.Second {
+		t.Errorf("limited target: err = %v", results[0].Err)
+	}
+	if !errors.As(results[1].Err, &rl) {
+		t.Errorf("same-connection target should be skipped with the rate-limit error, got %v", results[1].Err)
+	}
+	if results[2].Err != nil {
+		t.Errorf("other connection should still be tried: %v", results[2].Err)
+	}
+	if len(op.calls) != 2 || op.calls[1] != "octo/other-installation" {
+		t.Errorf("tracker calls = %v; the rate-limited connection must not be called again", op.calls)
 	}
 }

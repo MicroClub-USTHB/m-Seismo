@@ -5,7 +5,10 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -26,6 +29,16 @@ func JSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
+// SetRetryAfter sets the Retry-After header to wait, rounded up to whole
+// seconds (minimum 1).
+func SetRetryAfter(w http.ResponseWriter, wait time.Duration) {
+	secs := int(math.Ceil(wait.Seconds()))
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+}
+
 // NoContent writes a 204.
 func NoContent(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusNoContent)
@@ -36,10 +49,14 @@ type errorBody struct {
 }
 
 // Error writes err as a JSON error response. Internal errors are logged and
-// their details hidden from the client.
+// their details hidden from the client. Rate-limit errors carry a
+// Retry-After header (whole seconds, rounded up).
 func Error(w http.ResponseWriter, r *http.Request, err error) {
 	kind, msg := apperr.Classify(err)
 	status := statusFor(kind)
+	if wait, ok := apperr.RetryAfterOf(err); ok && kind == apperr.KindRateLimited {
+		SetRetryAfter(w, wait)
+	}
 	if status == http.StatusInternalServerError {
 		slog.ErrorContext(r.Context(), "request failed",
 			"method", r.Method,
@@ -61,6 +78,8 @@ func statusFor(k apperr.Kind) int {
 		return http.StatusUnprocessableEntity
 	case apperr.KindUnauthorized:
 		return http.StatusUnauthorized
+	case apperr.KindRateLimited:
+		return http.StatusTooManyRequests
 	default:
 		return http.StatusInternalServerError
 	}

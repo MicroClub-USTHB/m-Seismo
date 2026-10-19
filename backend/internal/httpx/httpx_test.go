@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -83,5 +84,29 @@ func TestAuthMiddleware(t *testing.T) {
 				t.Errorf("body %s, want owner id %s", rec.Body, id)
 			}
 		})
+	}
+}
+
+func TestRateLimitedSetsRetryAfter(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Error(rec, httptest.NewRequest(http.MethodGet, "/", nil), apperr.RateLimited("slow down", 2500*time.Millisecond))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status %d, want 429", rec.Code)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "3" {
+		t.Errorf("Retry-After = %q, want 3 (rounded up)", got)
+	}
+}
+
+type waitErr struct{}
+
+func (waitErr) Error() string             { return "tracker says wait" }
+func (waitErr) RetryAfter() time.Duration { return 10 * time.Second }
+
+func TestUpstreamRetryAfterIsClassified(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Error(rec, httptest.NewRequest(http.MethodGet, "/", nil), fmt.Errorf("wrapped: %w", waitErr{}))
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "10" {
+		t.Errorf("status %d, Retry-After %q; want 429 and 10", rec.Code, rec.Header().Get("Retry-After"))
 	}
 }
