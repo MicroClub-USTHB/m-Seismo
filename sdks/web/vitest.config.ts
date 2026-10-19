@@ -6,6 +6,7 @@ export default defineConfig({
     alias: {
       '@m-seismo/web': fileURLToPath(new URL('./src/index.ts', import.meta.url)),
       '@sdk': fileURLToPath(new URL('./src', import.meta.url)),
+      '@app': fileURLToPath(new URL('./test-app/src', import.meta.url)),
     },
   },
   test: {

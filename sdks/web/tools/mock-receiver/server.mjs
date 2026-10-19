@@ -18,7 +18,7 @@
  *                           byType, byFingerprint}
  *   POST /__reset          clear reports + counters, mode -> "ok"
  *   POST /__mode           {mode, delayMs?} where mode is
- *                          ok|fail500|slow|offline|rateLimited; delayMs overrides
+ *                          ok|fail500|fail413|slow|offline|rateLimited; delayMs overrides
  *                          the slow-mode delay for this session (reset restores
  *                          the default)
  *   POST /api/reports      validate + store a report (201 {id})
@@ -60,7 +60,7 @@ const MAX_BYTES = Number(process.env.MAX_BYTES ?? 4_194_304);
 const MAX_REPORTS = Number(process.env.MAX_REPORTS ?? 100);
 const SLOW_DELAY_MS = Number(process.env.SLOW_DELAY_MS ?? 7_000);
 
-const VALID_MODES = new Set(['ok', 'fail500', 'slow', 'offline', 'rateLimited']);
+const VALID_MODES = new Set(['ok', 'fail500', 'fail413', 'slow', 'offline', 'rateLimited']);
 
 /** @type {Map<string, object>} */
 const reports = new Map();
@@ -321,6 +321,10 @@ async function handleIngest(req, res) {
     sendJson(res, 500, { message: 'simulated server error' });
     return;
   }
+  if (mode === 'fail413') {
+    sendJson(res, 413, { message: 'payload too large (simulated)' });
+    return;
+  }
   if (mode === 'rateLimited') {
     res.setHeader('Retry-After', '1');
     sendJson(res, 429, { message: 'rate limited (simulated)' });
@@ -510,12 +514,19 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // /api/slow — delay, then succeed. `?ms=` overrides the default delay.
+  // /api/slow — delay, then respond. `?ms=` overrides the default delay;
+  // `?status=` (100–599) overrides the response status so a *slow failing*
+  // request can be exercised (used by the E11 lab scenario).
   if (method === 'GET' && pathname === '/api/slow') {
     const requested = Number(url.searchParams.get('ms'));
     const delay = Number.isFinite(requested) && requested >= 0 ? requested : 1_200;
+    const requestedStatus = Number(url.searchParams.get('status'));
+    const status =
+      Number.isInteger(requestedStatus) && requestedStatus >= 100 && requestedStatus <= 599
+        ? requestedStatus
+        : 200;
     void new Promise((resolve) => setTimeout(resolve, delay)).then(() => {
-      sendJson(res, 200, { ok: true, delayedMs: delay });
+      sendJson(res, status, { ok: status < 400, delayedMs: delay, status });
     });
     return;
   }
