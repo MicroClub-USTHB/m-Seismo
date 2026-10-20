@@ -1,6 +1,30 @@
-.PHONY: all backend-build backend-test backend-fmt agent-build agent-test agent-fmt db-up db-down db-status sqlc-generate
+.PHONY: all backend-build backend-test backend-fmt agent-build agent-test agent-fmt db-up db-down db-status sqlc-generate \
+	dev-up dev-down dev-reset dev-logs api-test api-test-fresh
+
+COMPOSE_DEV := docker compose -f deploy/compose.dev.yml
 
 all: backend-build agent-build
+
+# Local stack: Postgres, Redis, NATS, migrations, fake GitHub, backend on :8080.
+dev-up:
+	$(COMPOSE_DEV) up --build -d --wait
+
+dev-down:
+	$(COMPOSE_DEV) down
+
+# Also deletes the database and NATS volumes.
+dev-reset:
+	$(COMPOSE_DEV) down -v
+
+dev-logs:
+	$(COMPOSE_DEV) logs -f backend fakegithub
+
+# End-to-end API tests against the running stack (see backend/scripts/api).
+api-test:
+	bash backend/scripts/api/all.sh
+
+api-test-fresh:
+	bash backend/scripts/api/all.sh --fresh
 
 db-up:
 	cd backend && $(MAKE) db-up

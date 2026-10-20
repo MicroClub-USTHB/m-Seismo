@@ -1,20 +1,52 @@
 // Package issue opens, updates and closes issues on an external tracker on
 // behalf of m-Seismo (PRD section 12).
 //
-// This package holds only the Opener interface and the types it speaks in.
-// Each tracker gets its own subpackage that implements Opener:
+// This package holds the Opener interface, the types it speaks in, and the
+// Service that opens issues for apps. Each tracker gets its own provider
+// subpackage, which implements Opener next to the tracker's connect flow:
 //
-//	internal/issue/github/     - v1
-//	internal/issue/gitlab/
-//	internal/issue/bitbucket/
+//	internal/provider/github/     - v1
+//	internal/provider/gitlab/
+//	internal/provider/bitbucket/
 //
 // Nothing outside those subpackages should import a vendor's API client
-// directly. Domain code (dedup, routing, ...) depends only on Opener, so
-// adding or swapping a tracker never touches code outside its own
-// subpackage.
+// directly. Domain code (dedup, routing, ...) depends only on Opener and
+// OpenerSource, so adding or swapping a tracker never touches code outside
+// its own subpackage.
 package issue
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+// RateLimitError is returned by an Opener when the tracker refused the
+// request because of a rate limit and waiting was not possible within the
+// configured bounds. The request was not processed, so it is safe to retry
+// after Wait. Implements apperr.RetryAfterer.
+type RateLimitError struct {
+	Tracker string
+	// Wait is how long until the tracker is expected to accept requests.
+	Wait time.Duration
+	// Secondary is true for GitHub-style secondary (abuse) limits, false for
+	// the primary hourly quota.
+	Secondary bool
+	Err       error
+}
+
+func (e *RateLimitError) Error() string {
+	kind := "primary"
+	if e.Secondary {
+		kind = "secondary"
+	}
+	return fmt.Sprintf("%s %s rate limit: retry after %s: %v", e.Tracker, kind, e.Wait.Round(time.Second), e.Err)
+}
+
+func (e *RateLimitError) Unwrap() error { return e.Err }
+
+// RetryAfter returns Wait.
+func (e *RateLimitError) RetryAfter() time.Duration { return e.Wait }
 
 // Ref identifies an issue that was opened on a tracker.
 type Ref struct {

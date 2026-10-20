@@ -7,9 +7,54 @@ package db
 import (
 	"database/sql/driver"
 	"fmt"
+	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/google/uuid"
 )
+
+type AppPlatform string
+
+const (
+	AppPlatformIos         AppPlatform = "ios"
+	AppPlatformAndroid     AppPlatform = "android"
+	AppPlatformFlutter     AppPlatform = "flutter"
+	AppPlatformReactNative AppPlatform = "react_native"
+)
+
+func (e *AppPlatform) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AppPlatform(s)
+	case string:
+		*e = AppPlatform(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AppPlatform: %T", src)
+	}
+	return nil
+}
+
+type NullAppPlatform struct {
+	AppPlatform AppPlatform `json:"app_platform"`
+	Valid       bool        `json:"valid"` // Valid is true if AppPlatform is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAppPlatform) Scan(value interface{}) error {
+	if value == nil {
+		ns.AppPlatform, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AppPlatform.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAppPlatform) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AppPlatform), nil
+}
 
 type Tracker string
 
@@ -54,30 +99,81 @@ func (ns NullTracker) Value() (driver.Value, error) {
 	return string(ns.Tracker), nil
 }
 
-type Project struct {
-	ID                pgtype.UUID        `json:"id"`
-	Name              string             `json:"name"`
-	Slug              string             `json:"slug"`
-	DefaultRepository pgtype.Text        `json:"default_repository"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+type App struct {
+	ID        uuid.UUID   `json:"id"`
+	OwnerID   uuid.UUID   `json:"owner_id"`
+	Name      string      `json:"name"`
+	Platform  AppPlatform `json:"platform"`
+	BundleID  string      `json:"bundle_id"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
 }
 
-type ProjectKey struct {
-	ID        pgtype.UUID        `json:"id"`
-	ProjectID pgtype.UUID        `json:"project_id"`
-	Key       string             `json:"key"`
-	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+type AppKey struct {
+	ID        uuid.UUID  `json:"id"`
+	AppID     uuid.UUID  `json:"app_id"`
+	KeyHash   []byte     `json:"key_hash"`
+	KeyPrefix string     `json:"key_prefix"`
+	RevokedAt *time.Time `json:"revoked_at"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+type AppProject struct {
+	AppID     uuid.UUID `json:"app_id"`
+	ProjectID uuid.UUID `json:"project_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Issue struct {
+	ID                  uuid.UUID  `json:"id"`
+	ProjectRepositoryID uuid.UUID  `json:"project_repository_id"`
+	AppID               *uuid.UUID `json:"app_id"`
+	ExternalID          string     `json:"external_id"`
+	Url                 string     `json:"url"`
+	Title               string     `json:"title"`
+	State               string     `json:"state"`
+	Fingerprint         *string    `json:"fingerprint"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+}
+
+type Owner struct {
+	ID           uuid.UUID `json:"id"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"password_hash"`
+	Name         string    `json:"name"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type Project struct {
+	ID        uuid.UUID `json:"id"`
+	Name      string    `json:"name"`
+	Slug      string    `json:"slug"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	OwnerID   uuid.UUID `json:"owner_id"`
 }
 
 type ProjectRepository struct {
-	ID         pgtype.UUID        `json:"id"`
-	ProjectID  pgtype.UUID        `json:"project_id"`
-	Tracker    Tracker            `json:"tracker"`
-	Repository string             `json:"repository"`
-	IsDefault  bool               `json:"is_default"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ID                   uuid.UUID `json:"id"`
+	ProjectID            uuid.UUID `json:"project_id"`
+	Repository           string    `json:"repository"`
+	IsDefault            bool      `json:"is_default"`
+	CreatedAt            time.Time `json:"created_at"`
+	ProviderConnectionID uuid.UUID `json:"provider_connection_id"`
+}
+
+type ProviderConnection struct {
+	ID           uuid.UUID  `json:"id"`
+	OwnerID      uuid.UUID  `json:"owner_id"`
+	Tracker      Tracker    `json:"tracker"`
+	ExternalID   string     `json:"external_id"`
+	AccountLogin string     `json:"account_login"`
+	AccountType  string     `json:"account_type"`
+	SuspendedAt  *time.Time `json:"suspended_at"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 type SchemaMigration struct {

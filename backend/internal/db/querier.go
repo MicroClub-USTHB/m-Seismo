@@ -7,21 +7,51 @@ package db
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/google/uuid"
 )
 
 type Querier interface {
+	ClearDefaultProjectRepository(ctx context.Context, projectID uuid.UUID) error
+	CreateApp(ctx context.Context, arg CreateAppParams) (App, error)
+	CreateAppKey(ctx context.Context, arg CreateAppKeyParams) (AppKey, error)
+	CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue, error)
+	CreateOwner(ctx context.Context, arg CreateOwnerParams) (Owner, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
-	CreateProjectKey(ctx context.Context, arg CreateProjectKeyParams) (ProjectKey, error)
-	GetActiveProjectKey(ctx context.Context, key string) (ProjectKey, error)
-	GetDefaultProjectRepository(ctx context.Context, projectID pgtype.UUID) (ProjectRepository, error)
-	GetProjectByID(ctx context.Context, id pgtype.UUID) (Project, error)
-	GetProjectBySlug(ctx context.Context, slug string) (Project, error)
+	DeleteApp(ctx context.Context, arg DeleteAppParams) (int64, error)
+	DeleteOwner(ctx context.Context, id uuid.UUID) (int64, error)
+	DeleteProject(ctx context.Context, arg DeleteProjectParams) (int64, error)
+	DeleteProviderConnection(ctx context.Context, arg DeleteProviderConnectionParams) (int64, error)
+	GetActiveAppKeyByHash(ctx context.Context, keyHash []byte) (AppKey, error)
+	GetApp(ctx context.Context, arg GetAppParams) (App, error)
+	// Resolves one project repository to everything needed to open an issue in it.
+	GetIssueTarget(ctx context.Context, id uuid.UUID) (GetIssueTargetRow, error)
+	GetOpenIssueByFingerprint(ctx context.Context, arg GetOpenIssueByFingerprintParams) (Issue, error)
+	GetOwnerByEmail(ctx context.Context, email string) (Owner, error)
+	GetOwnerByID(ctx context.Context, id uuid.UUID) (Owner, error)
+	GetProject(ctx context.Context, arg GetProjectParams) (Project, error)
+	GetProjectRepository(ctx context.Context, arg GetProjectRepositoryParams) (ProjectRepository, error)
+	GetProviderConnection(ctx context.Context, arg GetProviderConnectionParams) (ProviderConnection, error)
+	LinkAppProject(ctx context.Context, arg LinkAppProjectParams) error
 	LinkProjectRepository(ctx context.Context, arg LinkProjectRepositoryParams) (ProjectRepository, error)
-	ListProjectRepositories(ctx context.Context, projectID pgtype.UUID) ([]ProjectRepository, error)
-	ListProjects(ctx context.Context) ([]Project, error)
-	RevokeProjectKey(ctx context.Context, id pgtype.UUID) error
-	UnlinkProjectRepository(ctx context.Context, id pgtype.UUID) error
+	ListAppKeys(ctx context.Context, appID uuid.UUID) ([]AppKey, error)
+	ListAppProjects(ctx context.Context, appID uuid.UUID) ([]Project, error)
+	ListApps(ctx context.Context, ownerID uuid.UUID) ([]App, error)
+	// The default repository of every project linked to the app.
+	ListIssueTargetsForApp(ctx context.Context, appID uuid.UUID) ([]ListIssueTargetsForAppRow, error)
+	ListProjectRepositories(ctx context.Context, projectID uuid.UUID) ([]ListProjectRepositoriesRow, error)
+	ListProjects(ctx context.Context, ownerID uuid.UUID) ([]Project, error)
+	ListProviderConnections(ctx context.Context, ownerID uuid.UUID) ([]ProviderConnection, error)
+	RevokeAppKey(ctx context.Context, arg RevokeAppKeyParams) (int64, error)
+	SetDefaultProjectRepository(ctx context.Context, arg SetDefaultProjectRepositoryParams) (int64, error)
+	SetIssueState(ctx context.Context, arg SetIssueStateParams) error
+	UnlinkAppProject(ctx context.Context, arg UnlinkAppProjectParams) (int64, error)
+	UnlinkProjectRepository(ctx context.Context, arg UnlinkProjectRepositoryParams) (int64, error)
+	UpdateApp(ctx context.Context, arg UpdateAppParams) (App, error)
+	UpdateOwner(ctx context.Context, arg UpdateOwnerParams) (Owner, error)
+	UpdateProject(ctx context.Context, arg UpdateProjectParams) (Project, error)
+	// Re-installing refreshes the account details. A connection already owned by
+	// another owner is left untouched and no row is returned.
+	UpsertProviderConnection(ctx context.Context, arg UpsertProviderConnectionParams) (ProviderConnection, error)
 }
 
 var _ Querier = (*Queries)(nil)

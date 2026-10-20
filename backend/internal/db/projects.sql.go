@@ -8,122 +8,85 @@ package db
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/google/uuid"
 )
 
 const createProject = `-- name: CreateProject :one
-INSERT INTO projects (name, slug, default_repository)
+INSERT INTO projects (owner_id, name, slug)
 VALUES ($1, $2, $3)
-RETURNING id, name, slug, default_repository, created_at, updated_at
+RETURNING id, name, slug, created_at, updated_at, owner_id
 `
 
 type CreateProjectParams struct {
-	Name              string      `json:"name"`
-	Slug              string      `json:"slug"`
-	DefaultRepository pgtype.Text `json:"default_repository"`
+	OwnerID uuid.UUID `json:"owner_id"`
+	Name    string    `json:"name"`
+	Slug    string    `json:"slug"`
 }
 
 func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error) {
-	row := q.db.QueryRow(ctx, createProject, arg.Name, arg.Slug, arg.DefaultRepository)
+	row := q.db.QueryRow(ctx, createProject, arg.OwnerID, arg.Name, arg.Slug)
 	var i Project
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
 		&i.Slug,
-		&i.DefaultRepository,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OwnerID,
 	)
 	return i, err
 }
 
-const createProjectKey = `-- name: CreateProjectKey :one
-INSERT INTO project_keys (project_id, key)
-VALUES ($1, $2)
-RETURNING id, project_id, key, revoked_at, created_at
+const deleteProject = `-- name: DeleteProject :execrows
+DELETE FROM projects
+WHERE id = $1 AND owner_id = $2
 `
 
-type CreateProjectKeyParams struct {
-	ProjectID pgtype.UUID `json:"project_id"`
-	Key       string      `json:"key"`
+type DeleteProjectParams struct {
+	ID      uuid.UUID `json:"id"`
+	OwnerID uuid.UUID `json:"owner_id"`
 }
 
-func (q *Queries) CreateProjectKey(ctx context.Context, arg CreateProjectKeyParams) (ProjectKey, error) {
-	row := q.db.QueryRow(ctx, createProjectKey, arg.ProjectID, arg.Key)
-	var i ProjectKey
-	err := row.Scan(
-		&i.ID,
-		&i.ProjectID,
-		&i.Key,
-		&i.RevokedAt,
-		&i.CreatedAt,
-	)
-	return i, err
+func (q *Queries) DeleteProject(ctx context.Context, arg DeleteProjectParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProject, arg.ID, arg.OwnerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const getActiveProjectKey = `-- name: GetActiveProjectKey :one
-SELECT id, project_id, key, revoked_at, created_at FROM project_keys
-WHERE key = $1 AND revoked_at IS NULL
+const getProject = `-- name: GetProject :one
+SELECT id, name, slug, created_at, updated_at, owner_id FROM projects
+WHERE id = $1 AND owner_id = $2
 `
 
-func (q *Queries) GetActiveProjectKey(ctx context.Context, key string) (ProjectKey, error) {
-	row := q.db.QueryRow(ctx, getActiveProjectKey, key)
-	var i ProjectKey
-	err := row.Scan(
-		&i.ID,
-		&i.ProjectID,
-		&i.Key,
-		&i.RevokedAt,
-		&i.CreatedAt,
-	)
-	return i, err
+type GetProjectParams struct {
+	ID      uuid.UUID `json:"id"`
+	OwnerID uuid.UUID `json:"owner_id"`
 }
 
-const getProjectByID = `-- name: GetProjectByID :one
-SELECT id, name, slug, default_repository, created_at, updated_at FROM projects
-WHERE id = $1
-`
-
-func (q *Queries) GetProjectByID(ctx context.Context, id pgtype.UUID) (Project, error) {
-	row := q.db.QueryRow(ctx, getProjectByID, id)
+func (q *Queries) GetProject(ctx context.Context, arg GetProjectParams) (Project, error) {
+	row := q.db.QueryRow(ctx, getProject, arg.ID, arg.OwnerID)
 	var i Project
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
 		&i.Slug,
-		&i.DefaultRepository,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const getProjectBySlug = `-- name: GetProjectBySlug :one
-SELECT id, name, slug, default_repository, created_at, updated_at FROM projects
-WHERE slug = $1
-`
-
-func (q *Queries) GetProjectBySlug(ctx context.Context, slug string) (Project, error) {
-	row := q.db.QueryRow(ctx, getProjectBySlug, slug)
-	var i Project
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Slug,
-		&i.DefaultRepository,
-		&i.CreatedAt,
-		&i.UpdatedAt,
+		&i.OwnerID,
 	)
 	return i, err
 }
 
 const listProjects = `-- name: ListProjects :many
-SELECT id, name, slug, default_repository, created_at, updated_at FROM projects
+SELECT id, name, slug, created_at, updated_at, owner_id FROM projects
+WHERE owner_id = $1
 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
-	rows, err := q.db.Query(ctx, listProjects)
+func (q *Queries) ListProjects(ctx context.Context, ownerID uuid.UUID) ([]Project, error) {
+	rows, err := q.db.Query(ctx, listProjects, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -135,9 +98,9 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 			&i.ID,
 			&i.Name,
 			&i.Slug,
-			&i.DefaultRepository,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.OwnerID,
 		); err != nil {
 			return nil, err
 		}
@@ -149,13 +112,37 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 	return items, nil
 }
 
-const revokeProjectKey = `-- name: RevokeProjectKey :exec
-UPDATE project_keys
-SET revoked_at = now()
-WHERE id = $1 AND revoked_at IS NULL
+const updateProject = `-- name: UpdateProject :one
+UPDATE projects
+SET name = $3,
+    slug = $4,
+    updated_at = now()
+WHERE id = $1 AND owner_id = $2
+RETURNING id, name, slug, created_at, updated_at, owner_id
 `
 
-func (q *Queries) RevokeProjectKey(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, revokeProjectKey, id)
-	return err
+type UpdateProjectParams struct {
+	ID      uuid.UUID `json:"id"`
+	OwnerID uuid.UUID `json:"owner_id"`
+	Name    string    `json:"name"`
+	Slug    string    `json:"slug"`
+}
+
+func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (Project, error) {
+	row := q.db.QueryRow(ctx, updateProject,
+		arg.ID,
+		arg.OwnerID,
+		arg.Name,
+		arg.Slug,
+	)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Slug,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OwnerID,
+	)
+	return i, err
 }

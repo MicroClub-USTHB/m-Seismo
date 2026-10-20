@@ -1,30 +1,25 @@
 -- name: CreateProject :one
-INSERT INTO projects (name, slug, default_repository)
+INSERT INTO projects (owner_id, name, slug)
 VALUES ($1, $2, $3)
 RETURNING *;
 
--- name: GetProjectByID :one
+-- name: GetProject :one
 SELECT * FROM projects
-WHERE id = $1;
-
--- name: GetProjectBySlug :one
-SELECT * FROM projects
-WHERE slug = $1;
+WHERE id = $1 AND owner_id = $2;
 
 -- name: ListProjects :many
 SELECT * FROM projects
+WHERE owner_id = $1
 ORDER BY created_at DESC;
 
--- name: CreateProjectKey :one
-INSERT INTO project_keys (project_id, key)
-VALUES ($1, $2)
+-- name: UpdateProject :one
+UPDATE projects
+SET name = $3,
+    slug = $4,
+    updated_at = now()
+WHERE id = $1 AND owner_id = $2
 RETURNING *;
 
--- name: GetActiveProjectKey :one
-SELECT * FROM project_keys
-WHERE key = $1 AND revoked_at IS NULL;
-
--- name: RevokeProjectKey :exec
-UPDATE project_keys
-SET revoked_at = now()
-WHERE id = $1 AND revoked_at IS NULL;
+-- name: DeleteProject :execrows
+DELETE FROM projects
+WHERE id = $1 AND owner_id = $2;
