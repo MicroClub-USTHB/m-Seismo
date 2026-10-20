@@ -47,6 +47,8 @@ export interface FormController {
 const FOCUSABLE_SELECTOR =
   'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
+const MAX_DESCRIPTION = 5000;
+
 const STYLES = `
   :host { all: initial; }
   * { box-sizing: border-box; }
@@ -56,7 +58,8 @@ const STYLES = `
   }
   .dialog {
     position: fixed; z-index: 2147483647;
-    top: 50%; left: 50%; transform: translate(-50%, -50%);
+    inset-inline: 0; margin-inline: auto;
+    top: 50%; transform: translateY(-50%);
     width: min(480px, calc(100vw - 32px));
     max-height: calc(100vh - 32px); overflow: auto;
     padding: 20px; border-radius: 12px;
@@ -64,43 +67,70 @@ const STYLES = `
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     font-size: 14px; line-height: 1.45;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+    text-align: start;
   }
   .title { margin: 0 0 14px; font-size: 17px; font-weight: 700; color: #14161a; }
   .field { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; color: #333a44; }
   textarea {
     display: block; width: 100%; min-height: 108px; resize: vertical;
-    padding: 10px; margin-bottom: 14px;
+    padding: 10px; margin-bottom: 4px;
     border: 1px solid #c7ccd4; border-radius: 8px;
     background: #ffffff; color: #14161a;
-    font-family: inherit; font-size: 14px; line-height: 1.45;
+    font-family: inherit; font-size: 16px; line-height: 1.45;
   }
-  textarea:focus, input[type="file"]:focus {
+  textarea:focus, input[type="file"]:focus, button:focus-visible {
     outline: 2px solid #2f6fed; outline-offset: 1px;
   }
+  .counter {
+    margin: 0 0 12px; font-size: 12px; color: #5b6470;
+    font-variant-numeric: tabular-nums; text-align: end;
+  }
+  .counter[data-near-limit="true"] { color: #b45309; }
+  .counter[data-at-limit="true"] { color: #c0392b; font-weight: 600; }
   input[type="file"] {
     display: block; width: 100%; margin-bottom: 6px;
     font-family: inherit; font-size: 13px; color: #333a44;
   }
   .file-info { margin: 0 0 12px; font-size: 12px; color: #5b6470; }
+  .privacy { margin: 0 0 12px; font-size: 12px; color: #5b6470; }
   .message { margin: 0 0 12px; min-height: 1.2em; font-size: 13px; }
   .message.error { color: #c0392b; }
   .message.success { color: #1a7f37; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
   .actions button {
+    min-height: 44px;
     padding: 9px 15px; border-radius: 8px; cursor: pointer;
     font-family: inherit; font-size: 14px; font-weight: 600;
   }
   .cancel { border: 1px solid #c7ccd4; background: #ffffff; color: #333a44; }
-  .send { border: 1px solid #2f6fed; background: #2f6fed; color: #ffffff; }
+  .send {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    border: 1px solid #2f6fed; background: #2f6fed; color: #ffffff;
+  }
   .send:disabled, .cancel:disabled { opacity: 0.6; cursor: default; }
+  .send[aria-busy="true"]::before {
+    content: ""; width: 13px; height: 13px; flex: none;
+    border: 2px solid currentColor; border-right-color: transparent;
+    border-radius: 50%; animation: mseismo-spin 0.7s linear infinite;
+  }
+  @keyframes mseismo-spin { to { transform: rotate(360deg); } }
   @media (prefers-color-scheme: dark) {
     .dialog { background: #1d2026; color: #eef1f5; }
     .title { color: #eef1f5; }
     .field { color: #c7ccd4; }
     textarea { background: #14161a; color: #eef1f5; border-color: #333a44; }
     input[type="file"] { color: #c7ccd4; }
-    .file-info { color: #9aa4b2; }
+    .file-info, .privacy, .counter { color: #9aa4b2; }
     .cancel { border-color: #333a44; background: #1d2026; color: #eef1f5; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .dialog, .send[aria-busy="true"]::before { animation: none; transition: none; }
+  }
+  @media (forced-colors: active) {
+    .dialog { border: 1px solid CanvasText; background: Canvas; color: CanvasText; }
+    .send { background: Highlight; color: HighlightText; border-color: Highlight; }
+    .send[aria-busy="true"]::before { border-color: ButtonText; border-right-color: transparent; }
+    .counter[data-at-limit="true"] { color: Mark; }
   }
 `;
 
@@ -134,11 +164,16 @@ function template(screenshotEnabled: boolean): string {
         <textarea
           id="mseismo-desc"
           data-testid="mseismo-description"
-          maxlength="5000"
+          maxlength="${MAX_DESCRIPTION}"
           rows="5"
           placeholder="Describe what you did and what happened…"
         ></textarea>
+        <p class="counter" data-testid="mseismo-counter">0 / ${MAX_DESCRIPTION}</p>
         ${screenshotField}
+        <p class="privacy" data-testid="mseismo-privacy">
+          Diagnostics from this session and basic page context are attached.
+          Secrets are scrubbed, but please do not paste passwords.
+        </p>
         <p class="message" data-testid="mseismo-message" role="status" aria-live="polite"></p>
         <div class="actions">
           <button type="button" class="cancel" data-testid="mseismo-cancel">Cancel</button>
@@ -196,6 +231,7 @@ export function createFormController(
   const dialog = query<HTMLElement>('.dialog');
   const formEl = query<HTMLFormElement>('.form');
   const textarea = query<HTMLTextAreaElement>('[data-testid="mseismo-description"]');
+  const counterEl = query<HTMLElement>('[data-testid="mseismo-counter"]');
   const messageEl = query<HTMLElement>('[data-testid="mseismo-message"]');
   const sendBtn = query<HTMLButtonElement>('[data-testid="mseismo-send"]');
   const cancelBtn = query<HTMLButtonElement>('[data-testid="mseismo-cancel"]');
@@ -218,10 +254,18 @@ export function createFormController(
     messageEl.textContent = text;
   }
 
+  function updateCounter(): void {
+    const length = textarea.value.length;
+    counterEl.textContent = `${length} / ${MAX_DESCRIPTION}`;
+    counterEl.dataset['nearLimit'] = length >= MAX_DESCRIPTION * 0.9 ? 'true' : 'false';
+    counterEl.dataset['atLimit'] = length >= MAX_DESCRIPTION ? 'true' : 'false';
+  }
+
   function setBusy(next: boolean): void {
     busy = next;
     sendBtn.disabled = next;
     cancelBtn.disabled = next;
+    sendBtn.setAttribute('aria-busy', next ? 'true' : 'false');
     sendBtn.textContent = next ? 'Sending…' : 'Send report';
   }
 
@@ -232,6 +276,7 @@ export function createFormController(
     screenshotError = null;
     reportId = null;
     if (fileInfo) fileInfo.textContent = '';
+    updateCounter();
     setMessage(null, '');
     setBusy(false);
     if (closeTimer !== null) {
@@ -379,6 +424,7 @@ export function createFormController(
   formEl.addEventListener('submit', (event) => void onSubmit(event));
   cancelBtn.addEventListener('click', () => close('cancel'));
   dialog.addEventListener('keydown', onDialogKeydown);
+  textarea.addEventListener('input', updateCounter);
   fileInput?.addEventListener('change', () => void onFileChange());
 
   function openForm(): void {

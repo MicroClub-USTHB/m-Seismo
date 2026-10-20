@@ -11,9 +11,79 @@ import { labContext, runScenario, runScenarios, getResults, clearResults } from 
 import { initLabSdk } from './helpers/init';
 import { accepts } from './verdict';
 import type { LabResult } from './types';
+import '../styles/tokens.css';
+import '../styles/components.css';
+import './lab.css';
 
 const rowsBody = document.querySelector<HTMLTableSectionElement>('[data-testid="lab-rows"]');
 const metaEl = document.querySelector<HTMLElement>('[data-testid="lab-meta"]');
+const groupFilterEl = document.querySelector<HTMLSelectElement>('[data-testid="lab-group-filter"]');
+const statusFilterEl = document.querySelector<HTMLSelectElement>('[data-testid="lab-status-filter"]');
+const emptyEl = document.querySelector<HTMLElement>('[data-testid="lab-empty"]');
+
+/** Scenario IDs whose latest result matches the current filters. */
+function statusOf(id: string): string {
+  const result = getResults().find((entry) => entry.id === id);
+  return result === undefined ? 'not-run' : result.status;
+}
+
+function applyFilters(): void {
+  const group = groupFilterEl?.value ?? 'all';
+  const status = statusFilterEl?.value ?? 'all';
+  let visible = 0;
+  for (const scenario of scenarios) {
+    const refs = rowRefs.get(scenario.id);
+    if (refs === undefined) continue;
+    const row = refs.statusCell.closest('tr');
+    if (row === null) continue;
+    const groupOk = group === 'all' || scenario.group === group;
+    const statusOk = status === 'all' || statusOf(scenario.id) === status;
+    const show = groupOk && statusOk;
+    row.hidden = !show;
+    if (show) visible += 1;
+  }
+  if (emptyEl !== null) emptyEl.hidden = visible > 0;
+}
+
+function updateSummary(): void {
+  const results = getResults();
+  const pass = results.filter((entry) => entry.status === 'pass').length;
+  const fail = results.filter((entry) => entry.status === 'fail').length;
+  const manual = results.filter((entry) => entry.status === 'needs-manual').length;
+  setChip('lab-summary-pass', `${pass} pass`);
+  setChip('lab-summary-fail', `${fail} fail`);
+  setChip('lab-summary-manual', `${manual} manual`);
+  const statusChip = document.querySelector('[data-testid="lab-status"]');
+  if (statusChip !== null) {
+    const label = statusChip.querySelector('[data-role="text"]');
+    const state = results.length === 0 ? 'warn' : fail > 0 ? 'bad' : 'ok';
+    statusChip.setAttribute('data-state', state);
+    if (label !== null) {
+      label.textContent =
+        results.length === 0
+          ? 'not run'
+          : fail > 0
+            ? `${fail} unexpected`
+            : `ran ${results.length}`;
+    }
+  }
+}
+
+function setChip(testid: string, text: string): void {
+  const chip = document.querySelector(`[data-testid="${testid}"]`);
+  if (chip !== null) chip.textContent = text;
+}
+
+function populateGroupFilter(): void {
+  if (groupFilterEl === null) return;
+  const groups = Array.from(new Set(scenarios.map((scenario) => scenario.group))).sort();
+  for (const group of groups) {
+    const option = document.createElement('option');
+    option.value = group;
+    option.textContent = group;
+    groupFilterEl.append(option);
+  }
+}
 
 interface RowRefs {
   statusCell: HTMLTableCellElement;
@@ -70,6 +140,8 @@ function renderRows(): void {
     rowsBody.appendChild(tr);
     rowRefs.set(scenario.id, { statusCell });
   }
+  applyFilters();
+  updateSummary();
 }
 
 function updateRow(result: LabResult): void {
@@ -106,6 +178,8 @@ function updateRow(result: LabResult): void {
     details.append(summary, pre);
     refs.statusCell.appendChild(details);
   }
+  updateSummary();
+  applyFilters();
 }
 
 function safeJson(value: unknown): string {
@@ -184,6 +258,17 @@ document.querySelector('[data-testid="lab-reset"]')?.addEventListener('click', (
   void resetEverything();
 });
 document.querySelector('[data-testid="lab-export"]')?.addEventListener('click', exportJson);
+groupFilterEl?.addEventListener('change', applyFilters);
+statusFilterEl?.addEventListener('change', applyFilters);
+document.querySelector('[data-testid="lab-clear-filters"]')?.addEventListener('click', () => {
+  if (groupFilterEl !== null) groupFilterEl.value = 'all';
+  if (statusFilterEl !== null) statusFilterEl.value = 'all';
+  applyFilters();
+});
+document.querySelector('[data-testid="theme-toggle"]')?.addEventListener('click', () => {
+  const root = document.documentElement;
+  root.dataset['theme'] = root.dataset['theme'] === 'dark' ? 'light' : 'dark';
+});
 
 window.__labRun = runOne;
 window.__labRunAll = runAll;
@@ -196,6 +281,9 @@ Object.defineProperty(window, '__labResults', {
 });
 
 async function boot(): Promise<void> {
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.dataset['theme'] = prefersDark ? 'dark' : 'light';
+  populateGroupFilter();
   renderRows();
   initLabSdk({});
   await updateMeta();

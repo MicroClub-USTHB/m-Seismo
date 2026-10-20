@@ -14,10 +14,12 @@ export default defineConfig({
   workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  reporter: [['list']],
+  reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL: BASE_URL,
-    trace: 'on-first-retry',
+    // No retries in the acceptance suite, so record on the first failure.
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },

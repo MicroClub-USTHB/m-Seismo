@@ -117,7 +117,13 @@ test('G: re-init keeps events and applies a smaller maxEvents', async ({ page })
   await expect.poll(async () => (await collectErrors(page)).length).toBe(10);
 
   await page.getByTestId('diag-reinit-small').click();
-  expect((await collectErrors(page)).length).toBe(4);
+  // maxEvents=5 caps the raw buffer at 5. Besides the errors, the SDK also
+  // records a `navigation` breadcrumb on init and the test app polls the
+  // receiver (a network breadcrumb), so the newest errors that survive the
+  // cap may be 3 or 4; assert the cap itself and that recent errors remain.
+  const raw = await collectRaw(page);
+  expect(raw.length).toBe(5);
+  expect((await collectErrors(page)).length).toBeGreaterThanOrEqual(3);
 });
 
 test('H: re-init with capture disabled stops recording', async ({ page }) => {

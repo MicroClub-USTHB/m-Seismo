@@ -16,6 +16,10 @@
  *                          Add ?type=manual_with_error to filter by report type.
  *   GET  /__stats          {preflightCount, requestCount, storedCount, mode,
  *                           byType, byFingerprint}
+ *   GET  /__viewer         a self-contained HTML page that renders the stored
+ *                          reports readably (no external assets). Screenshot
+ *                          base64 is shown as metadata only. Presentation of the
+ *                          payload, never an edit of it.
  *   POST /__reset          clear reports + counters, mode -> "ok"
  *   POST /__mode           {mode, delayMs?} where mode is
  *                          ok|fail500|fail413|slow|offline|rateLimited; delayMs overrides
@@ -375,6 +379,142 @@ async function handleIngest(req, res) {
   sendJson(res, 201, { id: parsed.reportId });
 }
 
+// --- /__viewer: a self-contained, read-only HTML view of stored reports -----
+// Every value is HTML-escaped before it reaches the page, so a report whose
+// description contains a <script> tag is rendered as inert text. No external
+// assets are referenced; the styling is inlined so the page works offline.
+
+function escapeHtml(value) {
+  return String(value).replace(
+    /[&<>"']/g,
+    (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char],
+  );
+}
+
+function presentType(type) {
+  const labels = {
+    manual: 'Manual report',
+    manual_with_error: 'Manual report with error',
+    automatic_error: 'Automatic error',
+    captured_exception: 'Captured exception',
+    captured_message: 'Captured message',
+  };
+  return typeof type === 'string' && type in labels ? labels[type] : `Report (${String(type)})`;
+}
+
+function renderReportSection(report) {
+  const error = report?.error;
+  const context = report?.context ?? {};
+  const breadcrumbs = Array.isArray(report?.breadcrumbs) ? report.breadcrumbs : [];
+  const network = Array.isArray(report?.networkFailures) ? report.networkFailures : [];
+  const screenshot = report?.screenshot;
+
+  const kv = (rows) =>
+    `<dl class="kv">${rows
+      .map(
+        ([key, value]) =>
+          `<dt>${escapeHtml(key)}</dt><dd>${value === undefined || value === null || value === '' ? '<span class="absent">not available</span>' : escapeHtml(value)}</dd>`,
+      )
+      .join('')}</dl>`;
+
+  const crumbs =
+    breadcrumbs.length === 0
+      ? '<p class="absent">No breadcrumbs.</p>'
+      : `<ol class="crumbs">${breadcrumbs
+          .map(
+            (crumb) =>
+              `<li><span class="cat">${escapeHtml(crumb?.category ?? '?')}</span> ${escapeHtml(crumb?.message ?? '')}</li>`,
+          )
+          .join('')}</ol>`;
+
+  const net =
+    network.length === 0
+      ? '<p class="absent">No network failures.</p>'
+      : `<table class="net"><thead><tr><th>Method</th><th>URL</th><th>Status</th><th>ms</th><th>Category</th></tr></thead><tbody>${network
+          .map(
+            (failure) =>
+              `<tr><td>${escapeHtml(failure?.method ?? '')}</td><td class="mono">${escapeHtml(failure?.url ?? '')}</td><td>${escapeHtml(failure?.status ?? '—')}</td><td>${escapeHtml(failure?.durationMs ?? '—')}</td><td>${escapeHtml(failure?.category ?? '')}</td></tr>`,
+          )
+          .join('')}</tbody></table>`;
+
+  const screenshotBlock =
+    typeof screenshot !== 'object' || screenshot === null
+      ? '<p class="absent">No screenshot attached.</p>'
+      : kv([
+          ['Name', screenshot.name],
+          ['MIME type', screenshot.mimeType],
+          ['Size', `${screenshot.sizeBytes ?? 0} bytes`],
+          ['Inline base64', screenshot.dataBase64 === undefined ? 'stripped' : 'present'],
+        ]);
+
+  return `
+  <article class="report">
+    <header><span class="badge">${escapeHtml(presentType(report?.type))}</span> <strong>${escapeHtml(report?.reportId ?? '(no id)')}</strong> <span class="absent">${escapeHtml(report?.context?.timestamp ?? '')}</span></header>
+    <h3>Description</h3>
+    <p>${report?.description ? escapeHtml(report.description) : '<span class="absent">(no description)</span>'}</p>
+    <h3>Error</h3>
+    ${
+      error === null || error === undefined
+        ? '<p class="absent">No error attached.</p>'
+        : kv([
+            ['Type', error.type],
+            ['Message', error.message],
+            ['Fingerprint', error.fingerprint],
+            ['Occurrences', error.occurrences],
+          ]) + (error.stack ? `<pre class="stack">${escapeHtml(error.stack)}</pre>` : '')
+    }
+    <h3>Context</h3>
+    ${kv([
+      ['URL', context.url],
+      ['Browser', context.browser ? `${context.browser.name ?? ''} ${context.browser.version ?? ''}`.trim() : undefined],
+      ['Platform', context.platform],
+      ['Viewport', context.viewport ? `${context.viewport.width} × ${context.viewport.height}` : undefined],
+      ['App version', context.application?.version],
+      ['Environment', context.application?.environment],
+    ])}
+    <h3>Breadcrumbs (${breadcrumbs.length})</h3>
+    ${crumbs}
+    <h3>Network failures (${network.length})</h3>
+    ${net}
+    <h3>Screenshot</h3>
+    ${screenshotBlock}
+  </article>`;
+}
+
+function renderViewerPage(stored, currentMode) {
+  const body =
+    stored.length === 0
+      ? '<p class="absent">No reports stored yet. Send one from the test app, then reload.</p>'
+      : stored.map(renderReportSection).join('');
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>m-Seismo mock receiver — stored reports (${stored.length})</title>
+<style>
+:root{--bg:#f5f6f8;--panel:#fff;--fg:#14161a;--muted:#5b6470;--border:#d7dbe2;--accent:#2f6fed;--code:#0f1115;--codefg:#d6dae0;}
+@media (prefers-color-scheme: dark){:root{--bg:#14161a;--panel:#1d2026;--fg:#eef1f5;--muted:#9aa4b2;--border:#333a44;--accent:#6da1ff;--code:#0b0d11;}}
+*{box-sizing:border-box;}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;}
+header.page{padding:16px 20px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+header.page h1{font-size:16px;margin:0;}
+main{max-width:900px;margin:0 auto;padding:20px;}
+.report{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px;}
+.report header{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;margin-bottom:8px;}
+.report h3{margin:16px 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);}
+.badge{background:#dbe7fb;color:#1a3f7a;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:700;}
+.absent{color:var(--muted);font-style:italic;}
+.kv{display:grid;grid-template-columns:minmax(120px,max-content) 1fr;gap:2px 16px;margin:0;}
+.kv dt{color:var(--muted);}.kv dd{margin:0;word-break:break-word;}
+.mono,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+pre.stack{background:var(--code);color:var(--codefg);padding:10px;border-radius:6px;font-size:12px;overflow:auto;max-height:260px;white-space:pre-wrap;word-break:break-word;}
+.crumbs{margin:0;padding-left:18px;}.crumbs .cat{font-weight:700;color:var(--accent);}
+table.net{border-collapse:collapse;width:100%;font-size:13px;}table.net th,table.net td{border:1px solid var(--border);padding:4px 6px;text-align:left;}
+a{color:var(--accent);}
+</style></head>
+<body>
+<header class="page"><h1>Mock receiver — stored reports</h1><span class="badge">${stored.length} stored</span><span class="absent">mode: ${escapeHtml(currentMode)}</span><a href="/__reports?full=1" style="margin-left:auto">Raw JSON</a></header>
+<main>${body}</main>
+</body></html>`;
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const { pathname } = url;
@@ -437,6 +577,13 @@ const server = http.createServer((req, res) => {
       byType,
       byFingerprint,
     });
+    return;
+  }
+
+  if (method === 'GET' && pathname === '/__viewer') {
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.end(renderViewerPage(Array.from(reports.values()), mode));
     return;
   }
 

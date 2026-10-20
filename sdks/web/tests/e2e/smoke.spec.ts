@@ -24,7 +24,7 @@ test.beforeEach(async ({ page }) => {
 
 test('test app loads and exposes every scenario button', async ({ page }) => {
   await expect(
-    page.getByRole('heading', { name: 'm-Seismo Web SDK — test app' }),
+    page.getByRole('heading', { level: 1, name: /m-Seismo Web SDK/ }),
   ).toBeVisible();
 
   for (const testid of BUTTON_TESTIDS) {

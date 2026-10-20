@@ -57,7 +57,7 @@ test('B: fail500 mode is logged and the page stays usable', async ({
   expect(stored.count).toBe(0);
 
   await page.getByTestId('theme-toggle').click();
-  await expect(page.getByTestId('event-log')).toContainText('theme toggled');
+  await expect(page.getByTestId('event-log')).toContainText('theme set to');
 });
 
 test('C: the browser sends a real cross-origin request (preflight handled)', async ({

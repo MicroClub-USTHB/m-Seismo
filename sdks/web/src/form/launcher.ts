@@ -22,6 +22,7 @@ export function createLauncher(
     position: 'fixed',
     'z-index': '2147483000',
     margin: '0',
+    'min-height': '44px',
     padding: '10px 16px',
     border: '1px solid rgba(0,0,0,0.12)',
     'border-radius': '999px',
@@ -53,6 +54,32 @@ export function createLauncher(
 
   for (const [property, value] of Object.entries(styles)) {
     button.style.setProperty(property, value);
+  }
+
+  // Progressive, no-dependency polish. Injected once into <head> (id-guarded)
+  // so it never changes the button's textContent or accessible name. The rules
+  // only upgrade focus, motion and High-Contrast looks when supported.
+  const STYLE_ID = 'mseismo-launcher-style';
+  if (document.getElementById(STYLE_ID) === null && document.head !== null) {
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `
+      [data-mseismo-launcher]:hover { filter: brightness(1.05); }
+      [data-mseismo-launcher]:focus-visible {
+        outline: 3px solid #ffffff; outline-offset: 2px;
+        box-shadow: 0 0 0 5px rgba(47, 111, 237, 0.6);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        [data-mseismo-launcher] { transition: none !important; }
+      }
+      @media (forced-colors: active) {
+        [data-mseismo-launcher] {
+          background: Highlight; color: HighlightText; border: 1px solid Highlight;
+        }
+        [data-mseismo-launcher]:focus-visible { outline: 3px solid Highlight; }
+      }
+    `;
+    document.head.appendChild(style);
   }
 
   button.addEventListener('click', () => onClick());

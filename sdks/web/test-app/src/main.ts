@@ -11,7 +11,7 @@ import {
   SDK_VERSION,
   sendReport,
 } from '@m-seismo/web';
-import type { ContextInput, InitOptions, SdkEvent } from '@m-seismo/web';
+import type { ContextInput, InitOptions, ReportPayload, SdkEvent } from '@m-seismo/web';
 import {
   clearDiagnostics,
   getDiagnosticsCount,
@@ -19,44 +19,146 @@ import {
   getDiagnosticsSnapshot,
   getReportProcessorStats,
 } from '@sdk/internal';
-import './styles.css';
+import { FAKE_SECRETS } from './lab/fixtures/secrets';
+import { appendEntry, classifyLevel, classifySource, countsByLevel, DEFAULT_FILTER, filterEntries, sourcesOf, type LogEntry, type LogFilter } from './ui/eventLog';
+import { renderViewer } from './viewer/render';
+import './styles/tokens.css';
+import './styles/layout.css';
+import './styles/components.css';
 
 /**
- * Phase 3 test harness. The SDK is initialised with a launcher + shortcut;
- * buttons drive config/lifecycle/receiver scenarios and every SDK lifecycle
- * event is written to the event log via `onEvent`.
+ * Test harness for the m-Seismo Web SDK. Wires every SDK trigger to a button and
+ * renders a readable, bounded event log + report viewer. Presentation only: it
+ * never changes what the SDK captures or sends.
  */
 
-const log = document.querySelector<HTMLOListElement>('[data-testid="event-log"]');
-const indicator = document.querySelector<HTMLElement>(
-  '[data-testid="ctrl-enter-indicator"]',
-);
+const $ = <T extends HTMLElement>(testid: string): T | null =>
+  document.querySelector<T>(`[data-testid="${testid}"]`);
 
-function record(message: string): void {
-  if (!log) return;
-  const li = document.createElement('li');
-  const time = new Date().toISOString().slice(11, 23);
-  li.textContent = `[${time}] ${message}`;
-  log.append(li);
-  log.scrollTop = log.scrollHeight;
+// --- Event log -------------------------------------------------------------
+const logView = $('event-log');
+const logCount = $('event-log-count');
+let logEntries: LogEntry[] = [];
+let logSeq = 0;
+let logFilter: LogFilter = DEFAULT_FILTER;
+let logPaused = false;
+
+function timeNow(): string {
+  return new Date().toISOString().slice(11, 23);
+}
+
+function renderLog(): void {
+  if (!logView) return;
+  logView.replaceChildren();
+  const visible = filterEntries(logEntries, logFilter);
+  const frag = document.createDocumentFragment();
+  for (const entry of visible) {
+    const li = document.createElement('li');
+    li.dataset['level'] = entry.level;
+    const time = document.createElement('span');
+    time.className = 'el-time';
+    time.textContent = entry.time;
+    const icon = document.createElement('span');
+    icon.className = 'el-icon';
+    icon.textContent = entry.level === 'error' ? '✗' : entry.level === 'warn' ? '!' : '·';
+    const source = document.createElement('span');
+    source.className = 'el-source';
+    source.textContent = entry.source;
+    const message = document.createElement('span');
+    message.className = 'el-msg';
+    message.textContent = entry.message;
+    li.append(time, icon, source, message);
+    frag.append(li);
+  }
+  logView.append(frag);
+  if (logCount) logCount.textContent = String(logEntries.length);
+  if (!logPaused) logView.scrollTop = logView.scrollHeight;
+}
+
+function refreshSourceOptions(): void {
+  const select = $<HTMLSelectElement>('event-log-source-filter');
+  if (!select) return;
+  const current = select.value;
+  const options = ['all', ...sourcesOf(logEntries)];
+  select.replaceChildren(
+    ...options.map((source) => {
+      const option = document.createElement('option');
+      option.value = source;
+      option.textContent = source;
+      return option;
+    }),
+  );
+  select.value = options.includes(current) ? current : 'all';
+}
+
+/** Records one message into the bounded event log. */
+function record(message: string, level?: 'info' | 'warn' | 'error'): void {
+  logSeq += 1;
+  logEntries = appendEntry(logEntries, {
+    id: logSeq,
+    time: timeNow(),
+    level: classifyLevel(message, level),
+    source: classifySource(message),
+    message,
+  });
+  refreshSourceOptions();
+  renderLog();
+}
+
+// --- Toasts ----------------------------------------------------------------
+let toastTimer: number | undefined;
+function toast(message: string, tone: 'ok' | 'error' = 'ok'): void {
+  const region = $('toast-region');
+  if (!region) return;
+  const node = document.createElement('div');
+  node.className = 'toast';
+  node.dataset['tone'] = tone;
+  node.textContent = message;
+  region.append(node);
+  window.setTimeout(() => node.remove(), 3200);
+  if (toastTimer !== undefined) window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => {
+    if (region.childElementCount > 4) region.firstElementChild?.remove();
+  }, 100);
 }
 
 // --- Theme -----------------------------------------------------------------
+function currentTheme(): 'light' | 'dark' {
+  return document.documentElement.dataset['theme'] === 'dark' ? 'dark' : 'light';
+}
+
+function updateThemeChip(): void {
+  const chip = $('status-theme')?.querySelector('[data-role="text"]');
+  const theme = currentTheme();
+  if (chip) chip.textContent = `theme: ${theme}`;
+}
+
+function setTheme(theme: 'light' | 'dark'): void {
+  document.documentElement.dataset['theme'] = theme;
+  updateThemeChip();
+  record(`theme set to ${theme}`);
+}
+
 function applyInitialTheme(): void {
   const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   document.documentElement.dataset['theme'] = prefersDark ? 'dark' : 'light';
+  updateThemeChip();
   record(`initial theme = ${prefersDark ? 'dark' : 'light'} (system preference)`);
 }
 
-applyInitialTheme();
-
 // --- SDK init --------------------------------------------------------------
-// Endpoint is configurable via Vite env; defaults to the local mock receiver so
-// the browser makes a REAL cross-origin request during development.
 const ENDPOINT =
   (import.meta.env.VITE_MSEISMO_ENDPOINT as string | undefined) ??
   'http://localhost:4010/api/reports';
 const RECEIVER_BASE = new URL(ENDPOINT).origin;
+
+function setStatusChip(testid: string, text: string, state: 'ok' | 'bad' | 'warn'): void {
+  const chip = $(testid);
+  if (!chip) return;
+  chip.dataset['state'] = state;
+  const label = chip.querySelector('[data-role="text"]');
+  if (label) label.textContent = text;
+}
 
 function describeEvent(event: SdkEvent): string {
   switch (event.type) {
@@ -71,11 +173,22 @@ function describeEvent(event: SdkEvent): string {
     case 'submit:failure':
       return `sdk event: submit:failure id=${event.reportId} kind=${event.kind}`;
     case 'validation:error':
-      return `sdk event: validation:error`;
+      return 'sdk event: validation:error';
   }
 }
 
-const onEvent = (event: SdkEvent): void => record(describeEvent(event));
+const onEvent = (event: SdkEvent): void => {
+  record(describeEvent(event));
+  if (event.type === 'form:open') markStep('open');
+  if (event.type === 'submit:start') markStep('send');
+  if (event.type === 'submit:success') {
+    markStep('read');
+    toast('Report sent', 'ok');
+    void refreshReceiver();
+    void loadLatestReport();
+  }
+  if (event.type === 'submit:failure') toast('Report failed', 'error');
+};
 
 function initSdk(
   label: string,
@@ -91,9 +204,9 @@ function initSdk(
     ...extra,
   });
   record(`${label}: init ${enabled ? 'enabled' : 'disabled'}`);
+  setStatusChip('status-sdk', enabled ? 'initialized' : 'disabled', enabled ? 'ok' : 'warn');
 }
 
-/** Re-init with no appVersion/environment, to test context without app metadata. */
 function initSdkWithoutMeta(label: string): void {
   const enabled = init({
     endpoint: ENDPOINT,
@@ -102,9 +215,9 @@ function initSdkWithoutMeta(label: string): void {
     onEvent,
   });
   record(`${label}: init ${enabled ? 'enabled' : 'disabled'} (no app metadata)`);
+  setStatusChip('status-sdk', enabled ? 'initialized' : 'disabled', enabled ? 'ok' : 'warn');
 }
 
-/** Builds a fresh context input from the current SDK config (Phase 5.1). */
 function contextInput(reportId?: string): ContextInput {
   const config = getConfig();
   return {
@@ -117,78 +230,180 @@ function contextInput(reportId?: string): ContextInput {
   };
 }
 
+// --- Quick start checklist -------------------------------------------------
+const doneSteps = new Set<string>();
+function markStep(step: string): void {
+  if (doneSteps.has(step)) return;
+  doneSteps.add(step);
+  const li = document.querySelector(`[data-testid="quickstart-steps"] li[data-step="${step}"]`);
+  if (li) li.setAttribute('data-done', 'true');
+}
+function resetChecklist(): void {
+  doneSteps.clear();
+  document
+    .querySelectorAll('[data-testid="quickstart-steps"] li')
+    .forEach((li) => li.setAttribute('data-done', 'false'));
+}
+
+// --- Receiver panel --------------------------------------------------------
+let receiverDown = false;
+
+async function receiverHealth(): Promise<boolean> {
+  try {
+    const response = await fetch(`${RECEIVER_BASE}/__health`);
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function refreshReceiver(): Promise<void> {
+  try {
+    const response = await fetch(`${RECEIVER_BASE}/__stats`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const stats = (await response.json()) as { storedCount?: number; mode?: string };
+    receiverDown = false;
+    setStatusChip('status-receiver', 'receiver ok', 'ok');
+    setStatusChip('receiver-state', 'reachable', 'ok');
+    const count = $('receiver-count');
+    if (count) count.textContent = `${stats.storedCount ?? 0} stored`;
+    if (typeof stats.mode === 'string') {
+      setStatusChip('status-mode', `mode: ${stats.mode}`, stats.mode === 'ok' ? 'ok' : 'warn');
+      syncModeButtons(stats.mode);
+    }
+    const note = $('receiver-note');
+    if (note) note.textContent = '';
+  } catch {
+    receiverDown = true;
+    setStatusChip('status-receiver', 'receiver down', 'bad');
+    setStatusChip('receiver-state', 'unreachable', 'bad');
+    const note = $('receiver-note');
+    if (note) note.textContent = `Receiver not reachable at ${RECEIVER_BASE}. Start it with "node tools/mock-receiver/server.mjs".`;
+  }
+}
+
+function syncModeButtons(mode: string): void {
+  document
+    .querySelectorAll<HTMLButtonElement>('[data-testid="receiver-modes"] button')
+    .forEach((button) => {
+      const active = button.dataset['mode'] === mode;
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+}
+
+// --- Output viewer ---------------------------------------------------------
+const viewerSecrets: string[] = [
+  FAKE_SECRETS.longToken,
+  FAKE_SECRETS.jwt,
+  FAKE_SECRETS.longHex,
+  FAKE_SECRETS.keyValue,
+  FAKE_SECRETS.bearer,
+  'fake-secret-123',
+  'fake-secret-nav',
+  FAKE_SECRETS.prosePassword,
+];
+let viewerReports: ReportPayload[] = [];
+let viewerCompare = false;
+
+function renderOutput(): void {
+  const root = $('viewer-root');
+  if (!root) return;
+  const count = $('viewer-count');
+  if (count) count.textContent = `${viewerReports.length} report${viewerReports.length === 1 ? '' : 's'}`;
+  renderViewer(root, {
+    reports: viewerReports,
+    secrets: viewerSecrets,
+    compare: viewerCompare,
+    onCopy: (text) => {
+      void copyText(text);
+      toast('Raw JSON copied', 'ok');
+    },
+  });
+}
+
+async function loadLatestReport(): Promise<void> {
+  try {
+    const response = await fetch(`${RECEIVER_BASE}/__reports?full=1`);
+    const body = (await response.json()) as { count: number; reports: ReportPayload[] };
+    viewerReports = Array.isArray(body.reports) ? body.reports : [];
+    renderOutput();
+  } catch (error) {
+    record(`viewer: load failed: ${String(error)}`);
+    toast('Could not load reports', 'error');
+  }
+}
+
+async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    record('clipboard: write blocked by the browser', 'warn');
+  }
+}
+
+// ---------------------------------------------------------------------------
+applyInitialTheme();
 initSdk('initial');
-const endpointLabel = document.querySelector('[data-testid="receiver-endpoint"]');
+const endpointLabel = $('receiver-endpoint');
 if (endpointLabel) endpointLabel.textContent = ENDPOINT;
+const versionLabel = $('sdk-version');
+if (versionLabel) versionLabel.textContent = `v${SDK_VERSION}`;
 record(`SDK imported, SDK_VERSION=${SDK_VERSION}`);
+void refreshReceiver();
+window.setInterval(() => void refreshReceiver(), 5000);
 
 // --- Open the form ---------------------------------------------------------
-document
-  .querySelector('[data-testid="open-form"]')
-  ?.addEventListener('click', () => {
-    openReportForm();
-    record('openReportForm() called');
-  });
+$('open-form')?.addEventListener('click', () => {
+  openReportForm();
+  record('openReportForm() called');
+});
 
-// --- Phase 1 error/request scenarios (kept for regression coverage) --------
-document
-  .querySelector('[data-testid="throw-sync"]')
-  ?.addEventListener('click', () => {
-    record('uncaught exception thrown (see console)');
-    setTimeout(() => {
-      throw new Error('m-Seismo test app: uncaught synchronous exception');
-    }, 0);
-  });
+// --- Phase 1 error/request scenarios ---------------------------------------
+$('throw-sync')?.addEventListener('click', () => {
+  record('uncaught exception thrown (see console)');
+  setTimeout(() => {
+    throw new Error('m-Seismo test app: uncaught synchronous exception');
+  }, 0);
+});
 
-document
-  .querySelector('[data-testid="unhandled-rejection"]')
-  ?.addEventListener('click', () => {
-    record('unhandled promise rejection triggered (see console)');
-    void Promise.reject(new Error('m-Seismo test app: unhandled promise rejection'));
-  });
+$('unhandled-rejection')?.addEventListener('click', () => {
+  record('unhandled promise rejection triggered (see console)');
+  void Promise.reject(new Error('m-Seismo test app: unhandled promise rejection'));
+});
 
 async function requestEndpoint(url: string, testid: string): Promise<void> {
-  document.querySelector(`[data-testid="${testid}"]`)?.addEventListener(
-    'click',
-    async () => {
-      try {
-        const response = await fetch(url);
-        record(`HTTP ${response.status} received from ${url}`);
-      } catch (error) {
-        record(`request to ${url} failed: ${String(error)}`);
-      }
-    },
-  );
+  $(testid)?.addEventListener('click', async () => {
+    try {
+      const response = await fetch(url);
+      record(`HTTP ${response.status} received from ${url}`);
+    } catch (error) {
+      record(`request to ${url} failed: ${String(error)}`);
+    }
+  });
 }
 
 void requestEndpoint('/api/fail', 'fetch-500');
 void requestEndpoint('/api/ok', 'fetch-200');
 
-document
-  .querySelector('[data-testid="silent-save"]')
-  ?.addEventListener('click', () => {
-    record('Save clicked — nothing happened (simulated logical bug)');
-  });
+$('silent-save')?.addEventListener('click', () => {
+  record('Save clicked — nothing happened (simulated logical bug)');
+});
 
-// --- Config / lifecycle controls ------------------------------------------
-document
-  .querySelector('[data-testid="init-twice"]')
-  ?.addEventListener('click', () => initSdk('init() again'));
+// --- Config / lifecycle controls -------------------------------------------
+$('init-twice')?.addEventListener('click', () => initSdk('init() again'));
+$('init-no-shortcut')?.addEventListener('click', () =>
+  initSdk('init() without shortcut', { shortcut: false }),
+);
+$('destroy')?.addEventListener('click', () => {
+  destroy();
+  record('destroy() called');
+  setStatusChip('status-sdk', 'destroyed', 'bad');
+});
 
-document
-  .querySelector('[data-testid="init-no-shortcut"]')
-  ?.addEventListener('click', () => initSdk('init() without shortcut', { shortcut: false }));
-
-document
-  .querySelector('[data-testid="destroy"]')
-  ?.addEventListener('click', () => {
-    destroy();
-    record('destroy() called');
-  });
-
-// --- Ctrl + Enter indicator (test-app's own handler) ----------------------
+// --- Ctrl + Enter indicator ------------------------------------------------
 window.addEventListener('keydown', (event) => {
   if (event.ctrlKey && event.key === 'Enter') {
+    const indicator = $('ctrl-enter-indicator');
     if (indicator) indicator.textContent = `Ctrl+Enter pressed at ${new Date().toISOString()}`;
     record('Ctrl+Enter pressed');
   }
@@ -196,13 +411,17 @@ window.addEventListener('keydown', (event) => {
 
 // --- Receiver mode controls ------------------------------------------------
 function wireModeButton(testid: string, mode: string): void {
-  document.querySelector(`[data-testid="${testid}"]`)?.addEventListener('click', () => {
+  $(testid)?.addEventListener('click', () => {
     void fetch(`${RECEIVER_BASE}/__mode`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode }),
     })
-      .then((response) => record(`receiver mode -> ${mode} (HTTP ${response.status})`))
+      .then((response) => {
+        record(`receiver mode -> ${mode} (HTTP ${response.status})`);
+        syncModeButtons(mode);
+        void refreshReceiver();
+      })
       .catch((error) => record(`receiver mode -> ${mode} failed: ${String(error)}`));
   });
 }
@@ -212,91 +431,88 @@ wireModeButton('mode-fail500', 'fail500');
 wireModeButton('mode-slow', 'slow');
 wireModeButton('mode-drop', 'offline');
 
+$('receiver-reset')?.addEventListener('click', () => {
+  void fetch(`${RECEIVER_BASE}/__reset`, { method: 'POST' })
+    .then((response) => {
+      record(`receiver reset (HTTP ${response.status})`);
+      toast('Receiver cleared', 'ok');
+      viewerReports = [];
+      renderOutput();
+      void refreshReceiver();
+    })
+    .catch((error) => record(`receiver reset failed: ${String(error)}`));
+});
+
 // --- Theme toggle ----------------------------------------------------------
-document
-  .querySelector('[data-testid="theme-toggle"]')
-  ?.addEventListener('click', () => {
-    const root = document.documentElement;
-    const next = root.dataset['theme'] === 'dark' ? 'light' : 'dark';
-    root.dataset['theme'] = next;
-    record(`theme toggled to ${next}`);
-  });
+function toggleTheme(): void {
+  setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+}
+$('theme-toggle')?.addEventListener('click', toggleTheme);
+$('theme-toggle-2')?.addEventListener('click', toggleTheme);
 
 // --- Phase 5.1 context lab -------------------------------------------------
-document
-  .querySelector('[data-testid="context-lab-navigate"]')
-  ?.addEventListener('click', () => {
-    const url = `${location.pathname}?token=fake-secret-123&utm_source=docs&email=a@b.c#section`;
-    history.replaceState(null, '', url);
-    record(`context lab: URL set to ${location.href}`);
-  });
+$('context-lab-navigate')?.addEventListener('click', () => {
+  const url = `${location.pathname}?token=fake-secret-123&utm_source=docs&email=a@b.c#section`;
+  history.replaceState(null, '', url);
+  record(`context lab: URL set to ${location.href}`);
+});
 
-document
-  .querySelector('[data-testid="context-lab-reset-url"]')
-  ?.addEventListener('click', () => {
-    history.replaceState(null, '', location.pathname);
-    record(`context lab: URL reset to ${location.href}`);
-  });
+$('context-lab-reset-url')?.addEventListener('click', () => {
+  history.replaceState(null, '', location.pathname);
+  record(`context lab: URL reset to ${location.href}`);
+});
 
-document
-  .querySelector('[data-testid="context-lab-reinit"]')
-  ?.addEventListener('click', () => initSdk('context lab: re-init with app metadata'));
+$('context-lab-reinit')?.addEventListener('click', () =>
+  initSdk('context lab: re-init with app metadata'),
+);
+$('context-lab-reinit-no-meta')?.addEventListener('click', () =>
+  initSdkWithoutMeta('context lab: re-init without app metadata'),
+);
 
-document
-  .querySelector('[data-testid="context-lab-reinit-no-meta"]')
-  ?.addEventListener('click', () =>
-    initSdkWithoutMeta('context lab: re-init without app metadata'),
-  );
-
-document
-  .querySelector('[data-testid="show-context"]')
-  ?.addEventListener('click', async () => {
-    try {
-      const response = await fetch(`${RECEIVER_BASE}/__reports`);
-      const body = (await response.json()) as {
-        count: number;
-        reports: Array<{ context?: unknown }>;
-      };
-      if (body.count === 0) {
-        record('show last context: no reports stored yet');
-        return;
-      }
-      const latest = body.reports[body.reports.length - 1];
-      record(`show last context: ${JSON.stringify(latest?.context)}`);
-    } catch (error) {
-      record(`show last context failed: ${String(error)}`);
-    }
-  });
-
-// --- Send a test report via the SDK transport ------------------------------
-document
-  .querySelector('[data-testid="send-report"]')
-  ?.addEventListener('click', async () => {
-    const config = getConfig();
-    if (!config) {
-      record('send test report: SDK is not configured (init failed or destroyed)');
+$('show-context')?.addEventListener('click', async () => {
+  try {
+    const response = await fetch(`${RECEIVER_BASE}/__reports`);
+    const body = (await response.json()) as {
+      count: number;
+      reports: Array<{ context?: unknown }>;
+    };
+    if (body.count === 0) {
+      record('show last context: no reports stored yet');
       return;
     }
-    const report = buildReport({
-      type: 'manual',
-      trigger: 'form',
-      description: 'Manual test report from the m-Seismo test app',
-      context: getContext(contextInput()).context,
-    });
-    const result = await sendReport(sanitize(report), config);
-    if (result.ok) {
-      const id = result.id ? ` id=${result.id}` : '';
-      record(`send test report: ok status=${result.status}${id}`);
-    } else {
-      const status = result.status !== undefined ? ` status=${result.status}` : '';
-      record(`send test report: failed kind=${result.kind}${status} (${result.message})`);
-    }
+    const latest = body.reports[body.reports.length - 1];
+    record(`show last context: ${JSON.stringify(latest?.context)}`);
+  } catch (error) {
+    record(`show last context failed: ${String(error)}`);
+  }
+});
+
+// --- Send a test report via the SDK transport ------------------------------
+$('send-report')?.addEventListener('click', async () => {
+  const config = getConfig();
+  if (!config) {
+    record('send test report: SDK is not configured (init failed or destroyed)');
+    return;
+  }
+  const report = buildReport({
+    type: 'manual',
+    trigger: 'form',
+    description: 'Manual test report from the m-Seismo test app',
+    context: getContext(contextInput()).context,
   });
+  const result = await sendReport(sanitize(report), config);
+  if (result.ok) {
+    const id = result.id ? ` id=${result.id}` : '';
+    record(`send test report: ok status=${result.status}${id}`);
+    void refreshReceiver();
+  } else {
+    const status = result.status !== undefined ? ` status=${result.status}` : '';
+    record(`send test report: failed kind=${result.kind}${status} (${result.message})`);
+  }
+});
 
 // --- Phase 5.2 diagnostics lab ---------------------------------------------
-const diagnosticsView = document.querySelector<HTMLElement>(
-  '[data-testid="diagnostics-buffer"]',
-);
+const diagnosticsView = $('diagnostics-buffer');
 
 function renderDiagnostics(): void {
   if (!diagnosticsView) return;
@@ -304,7 +520,7 @@ function renderDiagnostics(): void {
 }
 
 function onClick(testid: string, handler: () => void): void {
-  document.querySelector(`[data-testid="${testid}"]`)?.addEventListener('click', handler);
+  $(testid)?.addEventListener('click', handler);
 }
 
 onClick('diag-uncaught-typeerror', () => {
@@ -427,9 +643,7 @@ onClick('diag-reinit-disabled', () => {
 });
 
 // --- Phase 5.3 breadcrumbs & network lab -----------------------------------
-const selectionView = document.querySelector<HTMLElement>(
-  '[data-testid="selection-buffer"]',
-);
+const selectionView = $('selection-buffer');
 
 function renderSelection(): void {
   if (!selectionView) return;
@@ -498,15 +712,13 @@ onClick('bc-show-selection', () => {
 });
 
 // --- Phase 7 report processor lab ------------------------------------------
-const statsView = document.querySelector<HTMLElement>('[data-testid="processor-stats"]');
-const lastView = document.querySelector<HTMLElement>('[data-testid="processor-last"]');
+const statsView = $('processor-stats');
+const lastView = $('processor-last');
 
-/** One stable code path for the "repeat the same error" scenarios. */
 function reportSameError(): void {
   captureException(new Error('m-Seismo test app: repeated error'));
 }
 
-/** A second, distinct code path with an identical message (different frame). */
 function reportSameErrorViaSecondPath(): void {
   captureException(new Error('m-Seismo test app: repeated error'));
 }
@@ -656,3 +868,90 @@ onClick('rp-stats-link', () => {
   window.open(`${RECEIVER_BASE}/__stats`, '_blank');
   record('report lab: opened /__stats in a new tab');
 });
+
+// --- Quick start / golden path ---------------------------------------------
+$('quickstart-reset')?.addEventListener('click', () => {
+  resetChecklist();
+  record('quickstart: checklist reset');
+});
+
+$('golden-path')?.addEventListener('click', async () => {
+  record('golden path: starting');
+  const healthy = await receiverHealth();
+  if (healthy) markStep('receiver');
+  const config = getConfig();
+  if (!config) {
+    toast('SDK not initialized', 'error');
+    return;
+  }
+  captureException(new Error('m-Seismo test app: golden path demo error'), {
+    feature: 'golden-path',
+  });
+  markStep('bug');
+  record('golden path: seeded an error, opening the form');
+  openReportForm();
+  toast('Form opened — describe the bug and send', 'ok');
+});
+
+// --- Event log controls ----------------------------------------------------
+$('event-log-toggle')?.addEventListener('click', () => {
+  const panel = $('event-log-panel');
+  const toggle = $('event-log-toggle');
+  if (!panel || !toggle) return;
+  const collapsed = panel.dataset['collapsed'] === 'true';
+  panel.dataset['collapsed'] = collapsed ? 'false' : 'true';
+  toggle.setAttribute('aria-expanded', collapsed ? 'true' : 'false');
+  toggle.textContent = collapsed ? 'Collapse' : 'Expand';
+});
+
+$<HTMLSelectElement>('event-log-level-filter')?.addEventListener('change', (event) => {
+  logFilter = { ...logFilter, level: (event.target as HTMLSelectElement).value as LogFilter['level'] };
+  renderLog();
+});
+
+$<HTMLSelectElement>('event-log-source-filter')?.addEventListener('change', (event) => {
+  logFilter = { ...logFilter, source: (event.target as HTMLSelectElement).value };
+  renderLog();
+});
+
+$<HTMLInputElement>('event-log-search')?.addEventListener('input', (event) => {
+  logFilter = { ...logFilter, search: (event.target as HTMLInputElement).value };
+  renderLog();
+});
+
+$('event-log-pause')?.addEventListener('click', () => {
+  logPaused = !logPaused;
+  const button = $('event-log-pause');
+  if (button) {
+    button.setAttribute('aria-pressed', logPaused ? 'true' : 'false');
+    button.textContent = logPaused ? 'Resume auto-scroll' : 'Pause auto-scroll';
+  }
+});
+
+$('event-log-copy')?.addEventListener('click', () => {
+  const text = logEntries.map((entry) => `[${entry.time}] ${entry.level} ${entry.source} ${entry.message}`).join('\n');
+  void copyText(text).then(() => toast('Log copied', 'ok'));
+});
+
+$('event-log-clear')?.addEventListener('click', () => {
+  logEntries = [];
+  renderLog();
+  record('event log cleared');
+});
+
+// --- Output viewer controls ------------------------------------------------
+$('viewer-load-latest')?.addEventListener('click', () => {
+  viewerCompare = false;
+  void loadLatestReport();
+  record('viewer: loading latest reports');
+});
+
+$('viewer-refresh')?.addEventListener('click', () => {
+  void loadLatestReport();
+  record('viewer: refreshed');
+});
+
+// --- Initial render --------------------------------------------------------
+renderLog();
+refreshSourceOptions();
+renderOutput();

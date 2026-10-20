@@ -1,81 +1,87 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#14161a" />
     <title>m-Seismo — error laboratory</title>
-    <style>
-      :root { color-scheme: light dark; }
-      body {
-        margin: 0;
-        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-        font-size: 14px;
-        line-height: 1.45;
-        background: #f5f6f8;
-        color: #14161a;
-      }
-      header { padding: 16px 20px; background: #14161a; color: #fff; }
-      header h1 { margin: 0 0 4px; font-size: 18px; }
-      header p { margin: 0; opacity: 0.8; font-size: 13px; }
-      main { padding: 16px 20px 60px; }
-      .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
-      button { font: inherit; padding: 7px 12px; border-radius: 8px; border: 1px solid #c7ccd4; background: #fff; cursor: pointer; }
-      button:hover { background: #eef1f5; }
-      .meta { margin-bottom: 14px; font-size: 12px; color: #5b6470; }
-      table { border-collapse: collapse; width: 100%; background: #fff; }
-      th, td { border: 1px solid #e2e6ec; padding: 6px 8px; text-align: left; vertical-align: top; }
-      th { background: #eef1f5; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
-      td.id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; white-space: nowrap; }
-      td.group, td.expected { font-size: 12px; color: #5b6470; white-space: nowrap; }
-      .badge { display: inline-block; min-width: 64px; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; text-align: center; }
-      .badge.pass { background: #d7f5dd; color: #116329; }
-      .badge.fail { background: #fbd8d6; color: #8f1d16; }
-      .badge.info { background: #dbe7fb; color: #1a3f7a; }
-      .badge.needs-manual { background: #fdeccf; color: #7a4a06; }
-      .badge.pending { background: #eceef1; color: #5b6470; }
-      .observed { font-size: 12px; color: #333a44; }
-      details { margin-top: 4px; }
-      summary { cursor: pointer; font-size: 12px; color: #2f6fed; }
-      pre { margin: 6px 0 0; padding: 8px; background: #0f1115; color: #d6dae0; border-radius: 6px; font-size: 11px; overflow: auto; max-height: 320px; }
-      .expected.mismatch { color: #8f1d16; font-weight: 600; }
-      .lab-tools { margin-top: 24px; padding: 12px; background: #fff; border: 1px solid #e2e6ec; border-radius: 8px; }
-      .lab-tools h2 { margin: 0 0 8px; font-size: 14px; }
-    </style>
   </head>
   <body>
-    <header>
-      <h1>m-Seismo — error laboratory</h1>
-      <p>25 scenarios (E01–E25) against the local mock receiver. Honest results: gaps are recorded, not hidden.</p>
-    </header>
-    <main>
-      <div class="controls">
-        <button type="button" data-testid="lab-run-all">Run all</button>
-        <button type="button" data-testid="lab-run-assisted">Run assisted too</button>
-        <button type="button" data-testid="lab-reset">Reset everything</button>
-        <button type="button" data-testid="lab-export">Export JSON</button>
-      </div>
-      <div class="meta" data-testid="lab-meta"></div>
-      <table>
-        <thead>
-          <tr>
-            <th>ID</th><th>Scenario</th><th>Group</th><th>Expected</th><th>Run</th><th>Status</th>
-          </tr>
-        </thead>
-        <tbody data-testid="lab-rows"></tbody>
-      </table>
+    <a class="skip-link" href="#lab-main">Skip to content</a>
 
-      <div class="lab-tools">
+    <header class="app-header lab-header">
+      <span class="brand">m-Seismo error laboratory</span>
+      <div class="status-chips" aria-label="Lab status">
+        <span class="chip" data-testid="lab-status" data-state="warn"><span class="dot"></span><span data-role="text">not run</span></span>
+        <span class="chip" data-testid="lab-summary-pass">0 pass</span>
+        <span class="chip" data-testid="lab-summary-fail">0 fail</span>
+        <span class="chip" data-testid="lab-summary-manual">0 manual</span>
+      </div>
+      <button type="button" class="btn small" data-testid="theme-toggle">Toggle theme</button>
+      <a class="btn small" href="/">Back to the test app</a>
+    </header>
+
+    <main class="lab-main" id="lab-main">
+      <p class="lede">
+        25 scenarios (E01–E25) against the local mock receiver. Results are honest:
+        gaps are recorded as <em>needs manual</em> or mismatches, never hidden.
+      </p>
+
+      <div class="lab-controls card">
+        <div class="lab-controls-row">
+          <button type="button" class="btn primary" data-testid="lab-run-all">Run all</button>
+          <button type="button" class="btn" data-testid="lab-run-assisted">Run assisted too</button>
+          <button type="button" class="btn" data-testid="lab-reset">Reset everything</button>
+          <button type="button" class="btn" data-testid="lab-export">Export JSON</button>
+        </div>
+        <div class="lab-controls-row">
+          <label class="lab-filter">
+            Group
+            <select data-testid="lab-group-filter" aria-label="Filter scenarios by group">
+              <option value="all">all groups</option>
+            </select>
+          </label>
+          <label class="lab-filter">
+            Status
+            <select data-testid="lab-status-filter" aria-label="Filter scenarios by status">
+              <option value="all">all statuses</option>
+              <option value="pass">pass</option>
+              <option value="fail">fail</option>
+              <option value="needs-manual">needs manual</option>
+              <option value="not-run">not run</option>
+            </select>
+          </label>
+          <span class="spacer"></span>
+          <button type="button" class="btn small" data-testid="lab-clear-filters">Clear filters</button>
+        </div>
+        <div class="meta" data-testid="lab-meta"></div>
+      </div>
+
+      <div class="lab-table-wrap card">
+        <table class="table lab-table">
+          <thead>
+            <tr>
+              <th>ID</th><th>Scenario</th><th>Group</th><th>Expected</th><th>Run</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody data-testid="lab-rows"></tbody>
+        </table>
+        <p class="empty-state" data-testid="lab-empty" hidden>No scenarios match the current filters.</p>
+      </div>
+
+      <div class="lab-tools card">
         <h2>Interaction targets (used by the UI scenarios)</h2>
         <p>
           <label for="lab-typing">Type here</label>
           <textarea id="lab-typing" data-testid="lab-typing" rows="2" placeholder="Ctrl+Enter here must NOT open the form"></textarea>
         </p>
         <p>
-          <button type="button" data-testid="lab-silent-save">Save (does nothing)</button>
-          <span class="observed">— a logical bug: no error, only a manual report (E21).</span>
+          <button type="button" class="btn small" data-testid="lab-silent-save">Save (does nothing)</button>
+          <span class="observed subtle">— a logical bug: no error, only a manual report (E21).</span>
         </p>
       </div>
     </main>
+
     <script type="module" src="/src/lab/main.ts"></script>
   </body>
 </html>
