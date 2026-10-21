@@ -8,6 +8,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider"
 )
 
 var Module = fx.Module("app",
@@ -18,12 +19,14 @@ var Module = fx.Module("app",
 )
 
 type Handler struct {
-	svc     *Service
+	svc *Service
+	// conns runs the per-app connect flow and manages app connections.
+	conns   *provider.Service
 	require httpx.AuthMiddleware
 }
 
-func NewHandler(svc *Service, require httpx.AuthMiddleware) *Handler {
-	return &Handler{svc: svc, require: require}
+func NewHandler(svc *Service, conns *provider.Service, require httpx.AuthMiddleware) *Handler {
+	return &Handler{svc: svc, conns: conns, require: require}
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -42,6 +45,13 @@ func (h *Handler) Mount(r chi.Router) {
 			r.Get("/projects", h.listProjects)
 			r.Put("/projects/{projectID}", h.linkProject)
 			r.Delete("/projects/{projectID}", h.unlinkProject)
+
+			r.Get("/connect/{tracker}", h.connect)
+			r.Get("/connections", h.listConnections)
+			r.Post("/connections", h.attachConnection)
+			r.Delete("/connections/{connectionID}", h.disconnect)
+			r.Get("/connections/{connectionID}/repositories", h.listConnectionRepositories)
+			r.Get("/targets", h.targets)
 
 			r.Post("/test-issue", h.sendTestIssue)
 		})

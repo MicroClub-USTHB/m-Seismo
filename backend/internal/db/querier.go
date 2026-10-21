@@ -18,29 +18,34 @@ type Querier interface {
 	CreateOwner(ctx context.Context, arg CreateOwnerParams) (Owner, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	DeleteApp(ctx context.Context, arg DeleteAppParams) (int64, error)
+	DeleteAppConnection(ctx context.Context, arg DeleteAppConnectionParams) (int64, error)
 	DeleteOwner(ctx context.Context, id uuid.UUID) (int64, error)
 	DeleteProject(ctx context.Context, arg DeleteProjectParams) (int64, error)
-	DeleteProviderConnection(ctx context.Context, arg DeleteProviderConnectionParams) (int64, error)
 	GetActiveAppKeyByHash(ctx context.Context, keyHash []byte) (AppKey, error)
 	GetApp(ctx context.Context, arg GetAppParams) (App, error)
-	// Resolves one project repository to everything needed to open an issue in it.
-	GetIssueTarget(ctx context.Context, id uuid.UUID) (GetIssueTargetRow, error)
+	GetAppConnection(ctx context.Context, arg GetAppConnectionParams) (ProviderConnection, error)
+	// One project repository, provided the app is linked to its project. The
+	// credentials come from the app's connections, resolved by the caller.
+	GetIssueTarget(ctx context.Context, arg GetIssueTargetParams) (GetIssueTargetRow, error)
 	GetOpenIssueByFingerprint(ctx context.Context, arg GetOpenIssueByFingerprintParams) (Issue, error)
 	GetOwnerByEmail(ctx context.Context, email string) (Owner, error)
 	GetOwnerByID(ctx context.Context, id uuid.UUID) (Owner, error)
+	GetOwnerConnection(ctx context.Context, arg GetOwnerConnectionParams) (ProviderConnection, error)
 	GetProject(ctx context.Context, arg GetProjectParams) (Project, error)
 	GetProjectRepository(ctx context.Context, arg GetProjectRepositoryParams) (ProjectRepository, error)
-	GetProviderConnection(ctx context.Context, arg GetProviderConnectionParams) (ProviderConnection, error)
 	LinkAppProject(ctx context.Context, arg LinkAppProjectParams) error
 	LinkProjectRepository(ctx context.Context, arg LinkProjectRepositoryParams) (ProjectRepository, error)
+	// The connections the issue service may use for an app.
+	ListActiveConnectionsForApp(ctx context.Context, appID uuid.UUID) ([]ProviderConnection, error)
+	ListAppConnections(ctx context.Context, arg ListAppConnectionsParams) ([]ProviderConnection, error)
 	ListAppKeys(ctx context.Context, appID uuid.UUID) ([]AppKey, error)
 	ListAppProjects(ctx context.Context, appID uuid.UUID) ([]Project, error)
 	ListApps(ctx context.Context, ownerID uuid.UUID) ([]App, error)
 	// The default repository of every project linked to the app.
 	ListIssueTargetsForApp(ctx context.Context, appID uuid.UUID) ([]ListIssueTargetsForAppRow, error)
-	ListProjectRepositories(ctx context.Context, projectID uuid.UUID) ([]ListProjectRepositoriesRow, error)
+	ListOwnerConnections(ctx context.Context, ownerID uuid.UUID) ([]ProviderConnection, error)
+	ListProjectRepositories(ctx context.Context, projectID uuid.UUID) ([]ProjectRepository, error)
 	ListProjects(ctx context.Context, ownerID uuid.UUID) ([]Project, error)
-	ListProviderConnections(ctx context.Context, ownerID uuid.UUID) ([]ProviderConnection, error)
 	RevokeAppKey(ctx context.Context, arg RevokeAppKeyParams) (int64, error)
 	SetDefaultProjectRepository(ctx context.Context, arg SetDefaultProjectRepositoryParams) (int64, error)
 	SetIssueState(ctx context.Context, arg SetIssueStateParams) error
@@ -49,8 +54,9 @@ type Querier interface {
 	UpdateApp(ctx context.Context, arg UpdateAppParams) (App, error)
 	UpdateOwner(ctx context.Context, arg UpdateOwnerParams) (Owner, error)
 	UpdateProject(ctx context.Context, arg UpdateProjectParams) (Project, error)
-	// Re-installing refreshes the account details. A connection already owned by
-	// another owner is left untouched and no row is returned.
+	// Connecting the same tracker account to the same app again refreshes the
+	// account details. Connecting an account that another owner holds fails on
+	// provider_connections_one_owner_per_account (SQLSTATE 23P01).
 	UpsertProviderConnection(ctx context.Context, arg UpsertProviderConnectionParams) (ProviderConnection, error)
 }
 

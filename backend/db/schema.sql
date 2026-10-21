@@ -1,6 +1,5 @@
-
 -- Dumped from database version 17.11
--- Dumped by pg_dump version 18.4
+-- Dumped by pg_dump version 18.6
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -13,6 +12,20 @@ SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
+
+--
+-- Name: btree_gist; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS btree_gist WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION btree_gist; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION btree_gist IS 'support for indexing common datatypes in GiST';
+
 
 --
 -- Name: pgcrypto; Type: EXTENSION; Schema: -; Owner: -
@@ -110,6 +123,7 @@ CREATE TABLE public.issues (
     fingerprint text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    provider_connection_id uuid,
     CONSTRAINT issues_state_check CHECK ((state = ANY (ARRAY['open'::text, 'closed'::text])))
 );
 
@@ -138,7 +152,7 @@ CREATE TABLE public.project_repositories (
     repository text NOT NULL,
     is_default boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    provider_connection_id uuid NOT NULL
+    tracker public.tracker NOT NULL
 );
 
 
@@ -169,7 +183,8 @@ CREATE TABLE public.provider_connections (
     account_type text NOT NULL,
     suspended_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    app_id uuid NOT NULL
 );
 
 
@@ -204,6 +219,14 @@ ALTER TABLE ONLY public.app_keys
 
 ALTER TABLE ONLY public.app_projects
     ADD CONSTRAINT app_projects_pkey PRIMARY KEY (app_id, project_id);
+
+
+--
+-- Name: apps apps_id_owner_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.apps
+    ADD CONSTRAINT apps_id_owner_id_key UNIQUE (id, owner_id);
 
 
 --
@@ -243,7 +266,7 @@ ALTER TABLE ONLY public.project_repositories
 --
 
 ALTER TABLE ONLY public.project_repositories
-    ADD CONSTRAINT project_repositories_target_key UNIQUE (project_id, provider_connection_id, repository);
+    ADD CONSTRAINT project_repositories_target_key UNIQUE (project_id, tracker, repository);
 
 
 --
@@ -263,19 +286,27 @@ ALTER TABLE ONLY public.projects
 
 
 --
+-- Name: provider_connections provider_connections_app_target_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.provider_connections
+    ADD CONSTRAINT provider_connections_app_target_key UNIQUE (app_id, tracker, external_id);
+
+
+--
+-- Name: provider_connections provider_connections_one_owner_per_account; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.provider_connections
+    ADD CONSTRAINT provider_connections_one_owner_per_account EXCLUDE USING gist (tracker WITH =, external_id WITH =, owner_id WITH <>);
+
+
+--
 -- Name: provider_connections provider_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.provider_connections
     ADD CONSTRAINT provider_connections_pkey PRIMARY KEY (id);
-
-
---
--- Name: provider_connections provider_connections_tracker_external_id_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.provider_connections
-    ADD CONSTRAINT provider_connections_tracker_external_id_key UNIQUE (tracker, external_id);
 
 
 --
@@ -315,6 +346,13 @@ CREATE INDEX issues_project_repository_id_fingerprint_idx ON public.issues USING
 
 
 --
+-- Name: issues_provider_connection_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issues_provider_connection_id_idx ON public.issues USING btree (provider_connection_id);
+
+
+--
 -- Name: owners_email_lower_key; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -336,10 +374,10 @@ CREATE INDEX project_repositories_project_id_idx ON public.project_repositories 
 
 
 --
--- Name: project_repositories_provider_connection_id_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: provider_connections_app_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX project_repositories_provider_connection_id_idx ON public.project_repositories USING btree (provider_connection_id);
+CREATE INDEX provider_connections_app_id_idx ON public.provider_connections USING btree (app_id);
 
 
 --
@@ -398,6 +436,14 @@ ALTER TABLE ONLY public.issues
 
 
 --
+-- Name: issues issues_provider_connection_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issues
+    ADD CONSTRAINT issues_provider_connection_id_fkey FOREIGN KEY (provider_connection_id) REFERENCES public.provider_connections(id) ON DELETE SET NULL;
+
+
+--
 -- Name: project_repositories project_repositories_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -406,19 +452,19 @@ ALTER TABLE ONLY public.project_repositories
 
 
 --
--- Name: project_repositories project_repositories_provider_connection_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.project_repositories
-    ADD CONSTRAINT project_repositories_provider_connection_id_fkey FOREIGN KEY (provider_connection_id) REFERENCES public.provider_connections(id) ON DELETE CASCADE;
-
-
---
 -- Name: projects projects_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.projects
     ADD CONSTRAINT projects_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.owners(id) ON DELETE CASCADE;
+
+
+--
+-- Name: provider_connections provider_connections_app_owner_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.provider_connections
+    ADD CONSTRAINT provider_connections_app_owner_fkey FOREIGN KEY (app_id, owner_id) REFERENCES public.apps(id, owner_id) ON DELETE CASCADE;
 
 
 --
@@ -442,4 +488,5 @@ ALTER TABLE ONLY public.provider_connections
 INSERT INTO public.schema_migrations (version) VALUES
     ('20261016190043'),
     ('20261016192420'),
-    ('20261017120000');
+    ('20261017120000'),
+    ('20261021120000');

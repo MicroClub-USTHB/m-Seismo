@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
@@ -28,49 +29,102 @@ func (m memStates) Take(_ context.Context, k string) (string, bool, error) {
 	return v, ok, nil
 }
 
-type fakeProvider struct{ account Account }
+type fakeProvider struct {
+	account Account
+	listed  []issue.Connection
+}
 
-func (fakeProvider) Tracker() db.Tracker { return db.TrackerGithub }
-func (fakeProvider) InstallURL(state string) string {
+func (*fakeProvider) Tracker() db.Tracker { return db.TrackerGithub }
+func (*fakeProvider) InstallURL(state string) string {
 	return "https://tracker.test/install?state=" + state
 }
-func (f fakeProvider) CompleteInstall(context.Context, url.Values) (Account, error) {
+func (f *fakeProvider) CompleteInstall(context.Context, url.Values) (Account, error) {
 	return f.account, nil
 }
-func (fakeProvider) ListRepositories(context.Context, string) ([]Repository, error) { return nil, nil }
-func (fakeProvider) HasRepository(_ context.Context, _, repo string) (bool, error) {
-	return repo == "octo/app", nil
+func (f *fakeProvider) ListRepositories(_ context.Context, c issue.Connection) ([]Repository, error) {
+	f.listed = append(f.listed, c)
+	return []Repository{{FullName: "octo/app"}}, nil
 }
-func (fakeProvider) Opener(context.Context, string) (issue.Opener, error) { return nil, nil }
+func (*fakeProvider) HasRepository(context.Context, issue.Connection, string) (bool, error) {
+	return true, nil
+}
+func (*fakeProvider) ValidateRepository(string) error { return nil }
+func (*fakeProvider) Covers(c issue.Connection, repo string) bool {
+	return strings.HasPrefix(repo, c.AccountLogin+"/")
+}
+func (*fakeProvider) Opener(context.Context, issue.Connection) (issue.Opener, error) { return nil, nil }
 
+// fakeQuerier keeps apps (app → owner) and connections in memory and
+// enforces the rule the database enforces with an exclusion constraint: a
+// tracker account belongs to one owner.
 type fakeQuerier struct {
 	db.Querier
-	// takenBy simulates the installation already belonging to another owner.
-	takenBy uuid.UUID
-	saved   []db.UpsertProviderConnectionParams
-	conns   map[uuid.UUID]db.ProviderConnection
+	apps  map[uuid.UUID]uuid.UUID
+	conns map[uuid.UUID]db.ProviderConnection
+}
+
+func newFakeQuerier() *fakeQuerier {
+	return &fakeQuerier{apps: map[uuid.UUID]uuid.UUID{}, conns: map[uuid.UUID]db.ProviderConnection{}}
+}
+
+func (f *fakeQuerier) addApp(owner uuid.UUID) uuid.UUID {
+	id := uuid.New()
+	f.apps[id] = owner
+	return id
+}
+
+func (f *fakeQuerier) addConn(c db.ProviderConnection) db.ProviderConnection {
+	c.ID = uuid.New()
+	f.conns[c.ID] = c
+	return c
+}
+
+func (f *fakeQuerier) GetApp(_ context.Context, arg db.GetAppParams) (db.App, error) {
+	if owner, ok := f.apps[arg.ID]; ok && owner == arg.OwnerID {
+		return db.App{ID: arg.ID, OwnerID: owner}, nil
+	}
+	return db.App{}, pgx.ErrNoRows
 }
 
 func (f *fakeQuerier) UpsertProviderConnection(_ context.Context, arg db.UpsertProviderConnectionParams) (db.ProviderConnection, error) {
-	if f.takenBy != uuid.Nil && f.takenBy != arg.OwnerID {
-		return db.ProviderConnection{}, pgx.ErrNoRows
+	for id, c := range f.conns {
+		if c.Tracker != arg.Tracker || c.ExternalID != arg.ExternalID {
+			continue
+		}
+		if c.OwnerID != arg.OwnerID {
+			return db.ProviderConnection{}, &pgconn.PgError{Code: "23P01"}
+		}
+		if c.AppID == arg.AppID {
+			c.AccountLogin = arg.AccountLogin
+			f.conns[id] = c
+			return c, nil
+		}
 	}
-	f.saved = append(f.saved, arg)
-	return db.ProviderConnection{ID: uuid.New(), OwnerID: arg.OwnerID, Tracker: arg.Tracker, ExternalID: arg.ExternalID, AccountLogin: arg.AccountLogin}, nil
+	return f.addConn(db.ProviderConnection{
+		OwnerID: arg.OwnerID, AppID: arg.AppID, Tracker: arg.Tracker,
+		ExternalID: arg.ExternalID, AccountLogin: arg.AccountLogin, AccountType: arg.AccountType,
+	}), nil
 }
 
-func (f *fakeQuerier) GetProviderConnection(_ context.Context, arg db.GetProviderConnectionParams) (db.ProviderConnection, error) {
-	c, ok := f.conns[arg.ID]
-	if !ok || c.OwnerID != arg.OwnerID {
-		return db.ProviderConnection{}, pgx.ErrNoRows
+func (f *fakeQuerier) GetOwnerConnection(_ context.Context, arg db.GetOwnerConnectionParams) (db.ProviderConnection, error) {
+	if c, ok := f.conns[arg.ID]; ok && c.OwnerID == arg.OwnerID {
+		return c, nil
 	}
-	return c, nil
+	return db.ProviderConnection{}, pgx.ErrNoRows
 }
 
-func newTestService(q *fakeQuerier) (*Service, memStates) {
+func (f *fakeQuerier) GetAppConnection(_ context.Context, arg db.GetAppConnectionParams) (db.ProviderConnection, error) {
+	if c, ok := f.conns[arg.ID]; ok && c.AppID == arg.AppID && c.OwnerID == arg.OwnerID {
+		return c, nil
+	}
+	return db.ProviderConnection{}, pgx.ErrNoRows
+}
+
+func newTestService(q *fakeQuerier) (*Service, memStates, *fakeProvider) {
 	states := memStates{}
-	reg := NewRegistry(registryParams{Providers: []Provider{fakeProvider{account: Account{ExternalID: "42", Login: "octo", Type: "User"}}}})
-	return NewService(q, reg, states), states
+	p := &fakeProvider{account: Account{ExternalID: "42", Login: "octo", Type: "User"}}
+	reg := NewRegistry(registryParams{Providers: []Provider{p}})
+	return NewService(q, reg, states), states, p
 }
 
 func stateFrom(t *testing.T, installURL string) string {
@@ -83,12 +137,13 @@ func stateFrom(t *testing.T, installURL string) string {
 }
 
 func TestConnectFlow(t *testing.T) {
-	q := &fakeQuerier{}
-	svc, states := newTestService(q)
+	q := newFakeQuerier()
+	svc, states, _ := newTestService(q)
 	ctx := context.Background()
 	owner := uuid.New()
+	app := q.addApp(owner)
 
-	u, err := svc.StartConnect(ctx, owner, db.TrackerGithub)
+	u, err := svc.StartConnect(ctx, owner, app, db.TrackerGithub)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,17 +152,31 @@ func TestConnectFlow(t *testing.T) {
 		t.Fatalf("state %q not stored", state)
 	}
 
-	conn, err := svc.FinishConnect(ctx, db.TrackerGithub, url.Values{"state": {state}})
+	gotApp, conn, err := svc.FinishConnect(ctx, db.TrackerGithub, url.Values{"state": {state}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if conn.AccountLogin != "octo" || len(q.saved) != 1 || q.saved[0].OwnerID != owner || q.saved[0].ExternalID != "42" {
-		t.Errorf("conn = %+v, saved = %+v", conn, q.saved)
+	saved := q.conns[conn.ID]
+	if gotApp != app || conn.AppID != app || conn.AccountLogin != "octo" || saved.OwnerID != owner || saved.ExternalID != "42" {
+		t.Errorf("app = %s, conn = %+v, saved = %+v", gotApp, conn, saved)
 	}
 
 	// A state is single-use.
-	if _, err := svc.FinishConnect(ctx, db.TrackerGithub, url.Values{"state": {state}}); kindOf(err) != apperr.KindInvalid {
+	if _, _, err := svc.FinishConnect(ctx, db.TrackerGithub, url.Values{"state": {state}}); kindOf(err) != apperr.KindInvalid {
 		t.Errorf("replayed state: err = %v", err)
+	}
+}
+
+func TestStartConnectRequiresOwnApp(t *testing.T) {
+	q := newFakeQuerier()
+	svc, states, _ := newTestService(q)
+	app := q.addApp(uuid.New())
+
+	if _, err := svc.StartConnect(context.Background(), uuid.New(), app, db.TrackerGithub); kindOf(err) != apperr.KindNotFound {
+		t.Errorf("another owner's app: err = %v", err)
+	}
+	if len(states) != 0 {
+		t.Error("no state may be stored for an app the owner does not have")
 	}
 }
 
@@ -115,63 +184,151 @@ func TestConnectRejects(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("unknown tracker", func(t *testing.T) {
-		svc, _ := newTestService(&fakeQuerier{})
-		if _, err := svc.StartConnect(ctx, uuid.New(), db.TrackerGitlab); kindOf(err) != apperr.KindNotFound {
+		q := newFakeQuerier()
+		svc, _, _ := newTestService(q)
+		owner := uuid.New()
+		if _, err := svc.StartConnect(ctx, owner, q.addApp(owner), db.TrackerGitlab); kindOf(err) != apperr.KindNotFound {
 			t.Errorf("err = %v", err)
 		}
 	})
 
 	t.Run("missing state", func(t *testing.T) {
-		svc, _ := newTestService(&fakeQuerier{})
-		if _, err := svc.FinishConnect(ctx, db.TrackerGithub, url.Values{}); kindOf(err) != apperr.KindInvalid {
+		svc, _, _ := newTestService(newFakeQuerier())
+		if _, _, err := svc.FinishConnect(ctx, db.TrackerGithub, url.Values{}); kindOf(err) != apperr.KindInvalid {
 			t.Errorf("err = %v", err)
 		}
 	})
 
 	t.Run("state for another tracker", func(t *testing.T) {
-		svc, states := newTestService(&fakeQuerier{})
-		states[stateKeyPrefix+"s"] = "gitlab:" + uuid.NewString()
-		if _, err := svc.FinishConnect(ctx, db.TrackerGithub, url.Values{"state": {"s"}}); kindOf(err) != apperr.KindInvalid {
+		svc, states, _ := newTestService(newFakeQuerier())
+		states[stateKeyPrefix+"s"] = "gitlab:" + uuid.NewString() + ":" + uuid.NewString()
+		if _, _, err := svc.FinishConnect(ctx, db.TrackerGithub, url.Values{"state": {"s"}}); kindOf(err) != apperr.KindInvalid {
 			t.Errorf("err = %v", err)
 		}
 	})
 
-	t.Run("installation owned by someone else", func(t *testing.T) {
-		svc, _ := newTestService(&fakeQuerier{takenBy: uuid.New()})
-		u, err := svc.StartConnect(ctx, uuid.New(), db.TrackerGithub)
+	t.Run("state without an app", func(t *testing.T) {
+		svc, states, _ := newTestService(newFakeQuerier())
+		states[stateKeyPrefix+"s"] = "github:" + uuid.NewString()
+		if _, _, err := svc.FinishConnect(ctx, db.TrackerGithub, url.Values{"state": {"s"}}); kindOf(err) != apperr.KindInvalid {
+			t.Errorf("err = %v", err)
+		}
+	})
+
+	t.Run("account held by another owner", func(t *testing.T) {
+		q := newFakeQuerier()
+		svc, _, _ := newTestService(q)
+		otherOwner := uuid.New()
+		q.addConn(db.ProviderConnection{OwnerID: otherOwner, AppID: q.addApp(otherOwner), Tracker: db.TrackerGithub, ExternalID: "42"})
+
+		owner := uuid.New()
+		app := q.addApp(owner)
+		u, err := svc.StartConnect(ctx, owner, app, db.TrackerGithub)
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = svc.FinishConnect(ctx, db.TrackerGithub, url.Values{"state": {stateFrom(t, u)}})
+		gotApp, _, err := svc.FinishConnect(ctx, db.TrackerGithub, url.Values{"state": {stateFrom(t, u)}})
 		if kindOf(err) != apperr.KindConflict {
 			t.Errorf("err = %v", err)
+		}
+		if gotApp != app {
+			t.Errorf("app = %s, want %s so the browser returns to it", gotApp, app)
 		}
 	})
 }
 
-func TestVerifyRepository(t *testing.T) {
-	owner, other := uuid.New(), uuid.New()
-	connID := uuid.New()
-	suspendedID := uuid.New()
-	now := time.Now()
-	q := &fakeQuerier{conns: map[uuid.UUID]db.ProviderConnection{
-		connID:      {ID: connID, OwnerID: owner, Tracker: db.TrackerGithub, ExternalID: "42"},
-		suspendedID: {ID: suspendedID, OwnerID: owner, Tracker: db.TrackerGithub, ExternalID: "43", SuspendedAt: &now},
-	}}
-	svc, _ := newTestService(q)
+// Apps of one owner may share a tracker account; each gets its own row.
+func TestSameAccountOnTwoApps(t *testing.T) {
+	q := newFakeQuerier()
+	svc, _, _ := newTestService(q)
 	ctx := context.Background()
+	owner := uuid.New()
+	appA, appB := q.addApp(owner), q.addApp(owner)
 
-	if _, err := svc.VerifyRepository(ctx, owner, connID, "octo/app"); err != nil {
-		t.Errorf("reachable repo: %v", err)
+	var ids []uuid.UUID
+	for _, app := range []uuid.UUID{appA, appB} {
+		u, err := svc.StartConnect(ctx, owner, app, db.TrackerGithub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, conn, err := svc.FinishConnect(ctx, db.TrackerGithub, url.Values{"state": {stateFrom(t, u)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, conn.ID)
 	}
-	if _, err := svc.VerifyRepository(ctx, owner, connID, "octo/secret"); kindOf(err) != apperr.KindInvalid {
-		t.Errorf("unreachable repo: err = %v", err)
+	if ids[0] == ids[1] || q.conns[ids[0]].AppID != appA || q.conns[ids[1]].AppID != appB {
+		t.Errorf("connections = %+v", q.conns)
 	}
-	if _, err := svc.VerifyRepository(ctx, other, connID, "octo/app"); kindOf(err) != apperr.KindNotFound {
-		t.Errorf("other owner's connection: err = %v", err)
+}
+
+func TestAttachConnection(t *testing.T) {
+	q := newFakeQuerier()
+	svc, _, _ := newTestService(q)
+	ctx := context.Background()
+	owner, other := uuid.New(), uuid.New()
+	appA, appB, otherApp := q.addApp(owner), q.addApp(owner), q.addApp(other)
+	now := time.Now()
+	src := q.addConn(db.ProviderConnection{OwnerID: owner, AppID: appA, Tracker: db.TrackerGithub, ExternalID: "42", AccountLogin: "octo"})
+	suspended := q.addConn(db.ProviderConnection{OwnerID: owner, AppID: appA, Tracker: db.TrackerGithub, ExternalID: "43", SuspendedAt: &now})
+	foreign := q.addConn(db.ProviderConnection{OwnerID: other, AppID: otherApp, Tracker: db.TrackerGithub, ExternalID: "44"})
+
+	c, err := svc.AttachConnection(ctx, owner, appB, src.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := svc.VerifyRepository(ctx, owner, suspendedID, "octo/app"); err == nil || !strings.Contains(err.Error(), "suspended") {
+	if c.ID == src.ID || c.AppID != appB || q.conns[c.ID].ExternalID != "42" || c.AccountLogin != "octo" {
+		t.Errorf("attached = %+v", c)
+	}
+
+	if _, err := svc.AttachConnection(ctx, owner, appB, foreign.ID); kindOf(err) != apperr.KindNotFound {
+		t.Errorf("another owner's connection: err = %v", err)
+	}
+	if _, err := svc.AttachConnection(ctx, owner, appB, suspended.ID); kindOf(err) != apperr.KindInvalid {
 		t.Errorf("suspended connection: err = %v", err)
+	}
+	if _, err := svc.AttachConnection(ctx, owner, otherApp, src.ID); kindOf(err) != apperr.KindNotFound {
+		t.Errorf("into another owner's app: err = %v", err)
+	}
+}
+
+func TestListRepositories(t *testing.T) {
+	q := newFakeQuerier()
+	svc, _, p := newTestService(q)
+	ctx := context.Background()
+	owner := uuid.New()
+	appA, appB := q.addApp(owner), q.addApp(owner)
+	now := time.Now()
+	conn := q.addConn(db.ProviderConnection{OwnerID: owner, AppID: appA, Tracker: db.TrackerGithub, ExternalID: "42", AccountLogin: "octo"})
+	suspended := q.addConn(db.ProviderConnection{OwnerID: owner, AppID: appA, Tracker: db.TrackerGithub, ExternalID: "43", SuspendedAt: &now})
+
+	if _, err := svc.ListRepositories(ctx, owner, appA, conn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.listed) != 1 || p.listed[0].ID != conn.ID || p.listed[0].ExternalID != "42" {
+		t.Errorf("provider got %+v, want the whole connection", p.listed)
+	}
+	if _, err := svc.ListRepositories(ctx, owner, appB, conn.ID); kindOf(err) != apperr.KindNotFound {
+		t.Errorf("another app's connection: err = %v", err)
+	}
+	if _, err := svc.ListRepositories(ctx, uuid.New(), appA, conn.ID); kindOf(err) != apperr.KindNotFound {
+		t.Errorf("another owner: err = %v", err)
+	}
+	if _, err := svc.ListRepositories(ctx, owner, appA, suspended.ID); err == nil || !strings.Contains(err.Error(), "suspended") {
+		t.Errorf("suspended connection: err = %v", err)
+	}
+}
+
+func TestRegistryCovers(t *testing.T) {
+	_, _, p := newTestService(newFakeQuerier())
+	reg := NewRegistry(registryParams{Providers: []Provider{p}})
+	gh := issue.Connection{Tracker: db.TrackerGithub, AccountLogin: "octo"}
+
+	if !reg.Covers(gh, "octo/app") || reg.Covers(gh, "acme/app") {
+		t.Error("registry must delegate Covers to the tracker's provider")
+	}
+	if reg.Covers(issue.Connection{Tracker: db.TrackerGitlab, AccountLogin: "octo"}, "octo/app") {
+		t.Error("a connection on an unconfigured tracker covers nothing")
 	}
 }
 

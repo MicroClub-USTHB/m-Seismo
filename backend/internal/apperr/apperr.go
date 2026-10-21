@@ -76,6 +76,7 @@ func RetryAfterOf(err error) (time.Duration, bool) {
 const (
 	pgUniqueViolation     = "23505"
 	pgForeignKeyViolation = "23503"
+	pgExclusionViolation  = "23P01"
 )
 
 // Classify returns the kind of err and a client-safe message. Missing rows
@@ -93,7 +94,7 @@ func Classify(err error) (Kind, string) {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
-		case pgUniqueViolation:
+		case pgUniqueViolation, pgExclusionViolation:
 			return KindConflict, "already exists"
 		case pgForeignKeyViolation:
 			return KindInvalid, "references a resource that does not exist"
