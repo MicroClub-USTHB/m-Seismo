@@ -15,6 +15,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider/github"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ratelimit"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/secrets"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/worker"
 )
 
@@ -32,6 +33,7 @@ func Options() fx.Option {
 		owner.Module,
 		project.Module,
 		app.Module,
+		secrets.Module,
 		provider.Module,
 		github.Module,
 		issue.Module,

@@ -90,13 +90,14 @@ func (s redisStateStore) Take(ctx context.Context, key string) (string, bool, er
 // method is scoped to the owner, and all but ListOwnerConnections to one of
 // the owner's apps.
 type Service struct {
-	q      db.Querier
-	reg    *Registry
-	states StateStore
+	q       db.Querier
+	reg     *Registry
+	states  StateStore
+	secrets SecretStore
 }
 
-func NewService(q db.Querier, reg *Registry, states StateStore) *Service {
-	return &Service{q: q, reg: reg, states: states}
+func NewService(q db.Querier, reg *Registry, states StateStore, secrets SecretStore) *Service {
+	return &Service{q: q, reg: reg, states: states, secrets: secrets}
 }
 
 // connectState is what a state token stands for: who started the flow, for
@@ -190,6 +191,11 @@ func (s *Service) FinishConnect(ctx context.Context, tracker db.Tracker, query u
 // another of their apps, without a new round trip through the tracker. With
 // GitHub this is the way to share an installation between apps: installing
 // an App that is already installed only shows its settings page.
+//
+// Connections with stored credentials (GitLab and Bitbucket OAuth tokens)
+// cannot be attached: their OAuth grant belongs to the app that made it,
+// and GitLab rotates refresh tokens, so a shared copy would break as soon
+// as either app refreshed. Each app connects those trackers itself.
 func (s *Service) AttachConnection(ctx context.Context, ownerID, appID, fromConnectionID uuid.UUID) (Connection, error) {
 	if err := s.requireApp(ctx, ownerID, appID); err != nil {
 		return Connection{}, err
@@ -205,6 +211,12 @@ func (s *Service) AttachConnection(ctx context.Context, ownerID, appID, fromConn
 		return Connection{}, apperr.Invalid("connection is suspended")
 	}
 	if _, err := s.reg.Get(src.Tracker); err != nil {
+		return Connection{}, err
+	}
+	switch _, err := s.secrets.Load(ctx, src.ID); {
+	case err == nil:
+		return Connection{}, apperr.Invalid(string(src.Tracker) + " connections use the app's own OAuth authorization and cannot be shared; connect this app with GET /apps/{appID}/connect/" + string(src.Tracker))
+	case !errors.Is(err, ErrNoSecret):
 		return Connection{}, err
 	}
 	return s.upsert(ctx, ownerID, appID, src.Tracker, Account{
@@ -232,6 +244,11 @@ func (s *Service) upsert(ctx context.Context, ownerID, appID uuid.UUID, tracker 
 			return Connection{}, apperr.NotFound("app not found")
 		}
 		return Connection{}, err
+	}
+	if acct.Secret != nil {
+		if err := s.secrets.Save(ctx, c.ID, acct.Secret); err != nil {
+			return Connection{}, err
+		}
 	}
 	return toConnection(c), nil
 }

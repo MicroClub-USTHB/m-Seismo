@@ -29,6 +29,36 @@ func TestLoadDevelopmentFallsBackToDevSecret(t *testing.T) {
 	}
 }
 
+func TestLoadOAuthTrackers(t *testing.T) {
+	t.Setenv("SEISMO_AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("SEISMO_SERVER_PUBLIC_URL", "https://seismo.example.com/")
+	t.Setenv("SEISMO_GITLAB_CLIENT_ID", "gl-id")
+	t.Setenv("SEISMO_BITBUCKET_REDIRECT_URL", "https://cb.example.com/bb")
+
+	t.Setenv("SEISMO_ENV", "production")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "secrets.encryption_key is required") {
+		t.Fatalf("gitlab without an encryption key outside development: err = %v", err)
+	}
+
+	t.Setenv("SEISMO_SECRETS_ENCRYPTION_KEY", "a2V5")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GitLab.ClientID != "gl-id" || cfg.GitLab.APIURL != "https://gitlab.com/api/v4/" {
+		t.Errorf("gitlab = %+v", cfg.GitLab)
+	}
+	if cfg.GitLab.RedirectURL != "https://seismo.example.com/api/v1/providers/gitlab/callback" {
+		t.Errorf("derived gitlab redirect = %q", cfg.GitLab.RedirectURL)
+	}
+	if cfg.Bitbucket.RedirectURL != "https://cb.example.com/bb" {
+		t.Errorf("explicit bitbucket redirect = %q", cfg.Bitbucket.RedirectURL)
+	}
+	if cfg.Bitbucket.APIURL != "https://api.bitbucket.org/2.0/" || cfg.Bitbucket.MaxRateLimitWait.Seconds() != 30 {
+		t.Errorf("bitbucket = %+v", cfg.Bitbucket)
+	}
+}
+
 func TestLoadLogLevel(t *testing.T) {
 	t.Setenv("SEISMO_AUTH_JWT_SECRET", "test-secret")
 

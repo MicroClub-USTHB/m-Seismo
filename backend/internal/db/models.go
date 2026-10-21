@@ -124,6 +124,13 @@ type AppProject struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type ConnectionSecret struct {
+	ProviderConnectionID uuid.UUID `json:"provider_connection_id"`
+	Ciphertext           []byte    `json:"ciphertext"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
 type Issue struct {
 	ID                   uuid.UUID  `json:"id"`
 	ProjectRepositoryID  uuid.UUID  `json:"project_repository_id"`

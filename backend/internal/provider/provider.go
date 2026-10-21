@@ -1,6 +1,8 @@
-// Package provider links apps to issue trackers (GitHub now, GitLab and
-// Bitbucket later) and hands out per-connection issue openers. Every
-// connection belongs to one app: each app brings its own credentials.
+// Package provider links apps to issue trackers (GitHub, GitLab, Bitbucket)
+// and hands out per-connection issue openers. Every connection belongs to
+// one app: each app brings its own credentials, and the credentials that
+// must be kept (GitLab and Bitbucket OAuth tokens) are stored encrypted per
+// connection through SecretStore.
 //
 // Each tracker lives in its own subpackage that implements Provider and
 // registers it in the "providers" fx group. Nothing here knows about a
@@ -27,6 +29,11 @@ type Account struct {
 	Login      string
 	// Type is the tracker's account type, e.g. "User" or "Organization".
 	Type string
+	// Secret is the credentials to keep for this connection, encoded by the
+	// provider (GitLab and Bitbucket: the OAuth tokens). Nil for trackers
+	// that need none, such as GitHub. Service stores it encrypted, per
+	// connection, so per app.
+	Secret []byte
 }
 
 // Repository is a repository reachable through a connection.

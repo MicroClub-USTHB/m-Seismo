@@ -109,6 +109,18 @@ CREATE TABLE public.apps (
 
 
 --
+-- Name: connection_secrets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.connection_secrets (
+    provider_connection_id uuid NOT NULL,
+    ciphertext bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: issues; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -280,6 +292,14 @@ ALTER TABLE ONLY public.apps
 
 ALTER TABLE ONLY public.apps
     ADD CONSTRAINT apps_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: connection_secrets connection_secrets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.connection_secrets
+    ADD CONSTRAINT connection_secrets_pkey PRIMARY KEY (provider_connection_id);
 
 
 --
@@ -511,6 +531,14 @@ ALTER TABLE ONLY public.apps
 
 
 --
+-- Name: connection_secrets connection_secrets_provider_connection_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.connection_secrets
+    ADD CONSTRAINT connection_secrets_provider_connection_id_fkey FOREIGN KEY (provider_connection_id) REFERENCES public.provider_connections(id) ON DELETE CASCADE;
+
+
+--
 -- Name: issues issues_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -622,4 +650,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261017120000'),
     ('20261018120000'),
     ('20261021120000'),
-    ('20261021130000');
+    ('20261021130000'),
+    ('20261022120000');

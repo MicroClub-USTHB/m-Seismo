@@ -25,6 +25,7 @@ type Querier interface {
 	GetActiveAppKeyByHash(ctx context.Context, keyHash []byte) (AppKey, error)
 	GetApp(ctx context.Context, arg GetAppParams) (App, error)
 	GetAppConnection(ctx context.Context, arg GetAppConnectionParams) (ProviderConnection, error)
+	GetConnectionSecret(ctx context.Context, providerConnectionID uuid.UUID) ([]byte, error)
 	// One project repository, provided the app is linked to its project. The
 	// credentials come from the app's connections, resolved by the caller.
 	GetIssueTarget(ctx context.Context, arg GetIssueTargetParams) (GetIssueTargetRow, error)
@@ -64,6 +65,9 @@ type Querier interface {
 	UpdateApp(ctx context.Context, arg UpdateAppParams) (App, error)
 	UpdateOwner(ctx context.Context, arg UpdateOwnerParams) (Owner, error)
 	UpdateProject(ctx context.Context, arg UpdateProjectParams) (Project, error)
+	// Stores a connection's encrypted credentials, replacing earlier ones (a
+	// re-connect, or a refreshed OAuth token).
+	UpsertConnectionSecret(ctx context.Context, arg UpsertConnectionSecretParams) error
 	// Connecting the same tracker account to the same app again refreshes the
 	// account details. Connecting an account that another owner holds fails on
 	// provider_connections_one_owner_per_account (SQLSTATE 23P01).

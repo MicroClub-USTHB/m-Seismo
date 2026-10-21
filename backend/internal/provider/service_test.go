@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/secrets"
 )
 
 type memStates map[string]string
@@ -27,6 +29,22 @@ func (m memStates) Take(_ context.Context, k string) (string, bool, error) {
 	v, ok := m[k]
 	delete(m, k)
 	return v, ok, nil
+}
+
+// memSecrets is an in-memory SecretStore.
+type memSecrets map[uuid.UUID][]byte
+
+func (m memSecrets) Load(_ context.Context, id uuid.UUID) ([]byte, error) {
+	v, ok := m[id]
+	if !ok {
+		return nil, ErrNoSecret
+	}
+	return v, nil
+}
+
+func (m memSecrets) Save(_ context.Context, id uuid.UUID, v []byte) error {
+	m[id] = v
+	return nil
 }
 
 type fakeProvider struct {
@@ -59,12 +77,13 @@ func (*fakeProvider) Opener(context.Context, issue.Connection) (issue.Opener, er
 // tracker account belongs to one owner.
 type fakeQuerier struct {
 	db.Querier
-	apps  map[uuid.UUID]uuid.UUID
-	conns map[uuid.UUID]db.ProviderConnection
+	apps    map[uuid.UUID]uuid.UUID
+	conns   map[uuid.UUID]db.ProviderConnection
+	secrets memSecrets
 }
 
 func newFakeQuerier() *fakeQuerier {
-	return &fakeQuerier{apps: map[uuid.UUID]uuid.UUID{}, conns: map[uuid.UUID]db.ProviderConnection{}}
+	return &fakeQuerier{apps: map[uuid.UUID]uuid.UUID{}, conns: map[uuid.UUID]db.ProviderConnection{}, secrets: memSecrets{}}
 }
 
 func (f *fakeQuerier) addApp(owner uuid.UUID) uuid.UUID {
@@ -124,7 +143,7 @@ func newTestService(q *fakeQuerier) (*Service, memStates, *fakeProvider) {
 	states := memStates{}
 	p := &fakeProvider{account: Account{ExternalID: "42", Login: "octo", Type: "User"}}
 	reg := NewRegistry(registryParams{Providers: []Provider{p}})
-	return NewService(q, reg, states), states, p
+	return NewService(q, reg, states, q.secrets), states, p
 }
 
 func stateFrom(t *testing.T, installURL string) string {
@@ -338,4 +357,81 @@ func kindOf(err error) apperr.Kind {
 	}
 	k, _ := apperr.Classify(err)
 	return k
+}
+
+// An OAuth tracker's tokens are stored for the connection when the flow
+// completes, and such a connection cannot be attached to another app.
+func TestOAuthSecretsArePerApp(t *testing.T) {
+	q := newFakeQuerier()
+	svc, _, p := newTestService(q)
+	p.account.Secret = []byte(`{"access_token":"t"}`)
+	ctx := context.Background()
+	owner := uuid.New()
+	appA, appB := q.addApp(owner), q.addApp(owner)
+
+	u, err := svc.StartConnect(ctx, owner, appA, db.TrackerGithub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, conn, err := svc.FinishConnect(ctx, db.TrackerGithub, url.Values{"state": {stateFrom(t, u)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(q.secrets[conn.ID]); got != `{"access_token":"t"}` {
+		t.Errorf("stored secret = %q", got)
+	}
+
+	if _, err := svc.AttachConnection(ctx, owner, appB, conn.ID); kindOf(err) != apperr.KindInvalid || !strings.Contains(err.Error(), "cannot be shared") {
+		t.Errorf("attaching an OAuth connection: err = %v, want 422 'cannot be shared'", err)
+	}
+}
+
+// fakeSecretRows implements the two connection_secrets queries.
+type fakeSecretRows struct {
+	db.Querier
+	rows map[uuid.UUID][]byte
+}
+
+func (f *fakeSecretRows) UpsertConnectionSecret(_ context.Context, arg db.UpsertConnectionSecretParams) error {
+	f.rows[arg.ProviderConnectionID] = arg.Ciphertext
+	return nil
+}
+
+func (f *fakeSecretRows) GetConnectionSecret(_ context.Context, id uuid.UUID) ([]byte, error) {
+	v, ok := f.rows[id]
+	if !ok {
+		return nil, pgx.ErrNoRows
+	}
+	return v, nil
+}
+
+func TestDBSecretStore(t *testing.T) {
+	key := make([]byte, secrets.KeySize)
+	key[0] = 1
+	c, err := secrets.New(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := &fakeSecretRows{rows: map[uuid.UUID][]byte{}}
+	store := NewDBSecretStore(rows, c)
+	ctx := context.Background()
+	a, b := uuid.New(), uuid.New()
+
+	if _, err := store.Load(ctx, a); !errors.Is(err, ErrNoSecret) {
+		t.Errorf("missing secret: err = %v, want ErrNoSecret", err)
+	}
+	if err := store.Save(ctx, a, []byte("token-a")); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rows.rows[a]), "token-a") {
+		t.Error("the stored row must be encrypted")
+	}
+	if got, err := store.Load(ctx, a); err != nil || string(got) != "token-a" {
+		t.Errorf("Load = %q, %v", got, err)
+	}
+
+	rows.rows[b] = rows.rows[a] // a ciphertext copied to another connection
+	if _, err := store.Load(ctx, b); err == nil {
+		t.Error("a ciphertext must only decrypt for its own connection")
+	}
 }
