@@ -76,6 +76,11 @@ func Load(configPath string) (*Config, error) {
 			InstallationPerMinute: v.GetFloat64("ingest.installation_per_minute"),
 			InstallationBurst:     v.GetInt("ingest.installation_burst"),
 		},
+		Worker: WorkerConfig{
+			Enabled:     v.GetBool("worker.enabled"),
+			Concurrency: v.GetInt("worker.concurrency"),
+			MaxAttempts: v.GetInt("worker.max_attempts"),
+		},
 	}
 
 	cfg.Server.PublicURL = v.GetString("server.public_url")
@@ -108,6 +113,9 @@ func (c *Config) validate() error {
 	if c.Ingest.AppPerMinute <= 0 || c.Ingest.AppBurst < 1 ||
 		c.Ingest.InstallationPerMinute <= 0 || c.Ingest.InstallationBurst < 1 {
 		return fmt.Errorf("ingest rate limits must be positive")
+	}
+	if c.Worker.Concurrency < 1 || c.Worker.MaxAttempts < 1 {
+		return fmt.Errorf("worker.concurrency and worker.max_attempts must be at least 1")
 	}
 	return nil
 }

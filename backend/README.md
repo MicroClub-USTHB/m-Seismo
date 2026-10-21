@@ -1,8 +1,9 @@
 # Backend
 
 Go service: ingestion, enrichment, deduplication, GitHub publishing. Status:
-owner accounts, projects, apps, GitHub connections and the issue service are
-in place. There is no ingestion endpoint yet.
+owner accounts, projects, apps, GitHub connections, the issue service, the
+ingestion endpoint and the worker that turns reports into issues are in
+place.
 
 **In-depth documentation:** [docs/](docs/README.md). It covers the
 architecture, data model, GitHub integration, issue service, API reference,

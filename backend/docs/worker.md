@@ -1,0 +1,115 @@
+# Worker
+
+The worker turns accepted reports into issues. The ingestion API stores each
+report and announces it on NATS JetStream (`reports.accepted` in the
+`REPORTS` stream); the worker reads those messages, opens the issues and only
+then acknowledges them. The code lives in `internal/worker`.
+
+```
+POST /reports ──▶ Postgres (reports) ──▶ JetStream REPORTS ──▶ worker ──▶ issue.Service ──▶ GitHub
+                                          reports.accepted       │
+                                                                 └──▶ report_deliveries, reports.processed_at
+```
+
+It runs inside the backend process by default. Several processes can run it
+at once: they share one durable consumer, `report-worker`, and JetStream
+hands each message to one of them.
+
+## What it does with a report
+
+1. Loads the report by the ID in the message. A report that no longer exists
+   (deleted with its app, for example) is dropped.
+2. Skips it if `processed_at` is already set.
+3. Lists the targets: the default repository of every project the app is
+   linked to. An app with no target is dropped with a warning.
+4. Renders the issue from the report (`render.go`): the reporter's title (or
+   one made from the crash or the platform and release), description,
+   category and severity, the breadcrumbs as numbered steps to reproduce,
+   the crash and its stack trace, the environment, recent logs and network
+   requests. Network request bodies are never included, and an `@` in
+   reporter-written text can't notify anyone on GitHub.
+5. Opens the issue in each target that doesn't have it yet, through
+   `issue.Service.OpenInRepository`, and records each one in
+   `report_deliveries`.
+6. Sets `processed_at` once every target has its issue, then acknowledges
+   the message.
+
+The issue format is provisional: the report schema and the issue template
+will be settled once enrichment (crash, server context) is in. Everything
+about the format is in `render.go`.
+
+## Never lost, never doubled
+
+JetStream delivers a message **at least once**. A worker that stops before
+acknowledging, or doesn't answer within the ack wait, gets the message
+redelivered, possibly to another worker. So processing is idempotent:
+
+- each repository that got the issue has a `report_deliveries` row and is
+  skipped on the next attempt, so a report opens at most one issue per
+  repository;
+- when some targets fail, the others are recorded and the next attempt only
+  retries the failed ones;
+- a processed report is left alone.
+
+One gap remains: if the issue is opened but recording the delivery fails
+(the database goes away at that moment), the next attempt opens it again.
+The worker logs it as an error.
+
+While working on a message the worker tells JetStream every 20 seconds that
+it is still on it, so a slow tracker doesn't cause a redelivery; only a
+worker that stopped loses its messages to another one.
+
+## Failures and retries
+
+| Outcome | What the worker does |
+|---|---|
+| Done | acknowledges |
+| Permanent: report gone, unreadable, app with no target | logs a warning and terminates the message |
+| Tracker rate limit (`issue.RateLimitError`) | hands the message back to come again after the tracker's wait |
+| Other error (tracker down, network, database) | hands it back after 5 s, 30 s, 2 min, 10 min, then every 30 min |
+| `worker.max_attempts` reached | logs an error and terminates the message; the report keeps `processed_at` empty |
+| Shutdown | waits for the reports in progress; past the shutdown timeout their work is cancelled and their messages come back at once |
+
+A terminated report can be found with `processed_at IS NULL`. Retrying it
+from the admin console comes with failed deliveries.
+
+## Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SEISMO_WORKER_ENABLED` | `true` | Run the worker in this process. Set `false` to run the API alone and the workers elsewhere. |
+| `SEISMO_WORKER_CONCURRENCY` | `4` | Reports one process works on at a time. Also caps the messages it holds. |
+| `SEISMO_WORKER_MAX_ATTEMPTS` | `10` | Attempts before giving up on a report. Waiting out a rate limit counts as one. |
+
+## Data
+
+`report_deliveries` has one row per report and repository it was delivered
+to:
+
+| Column | Meaning |
+|---|---|
+| `report_id` | the report (`reports.id`); cascade on delete |
+| `project_repository_id` | the repository; cascade on delete |
+| `issue_id` | the issue row, or null if the issue was opened but could not be recorded; set null when the issue row is deleted |
+| `url` | the issue's URL on the tracker |
+| `created_at` | when it was delivered |
+
+`reports.processed_at` is set when every target has its issue.
+
+## Not done yet
+
+- **Routing rules**: only the default repository of each project is used.
+- **Deduplication**: every report opens its own issue; the fingerprint and
+  `Opener.Comment` are ready for it.
+- **Enrichment**: no Crashlytics crash or server context yet.
+- **Attachments**: the issue says a screenshot was sent but doesn't link it;
+  that needs private, expiring links.
+- **Sweeper**: a report stored but never published (`queued_at IS NULL`,
+  when NATS was down and the SDK never retried) is not picked up.
+
+## Tests
+
+`go test ./internal/worker/` covers rendering, idempotent processing with
+fakes, and how each outcome settles the message. The end-to-end flow (report
+in, issue on the fake GitHub, resend, partial failure, worker stopped while
+reports arrive) was run against the dev stack.

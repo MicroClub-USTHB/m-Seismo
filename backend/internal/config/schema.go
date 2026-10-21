@@ -73,6 +73,20 @@ type IngestConfig struct {
 	InstallationBurst     int
 }
 
+// WorkerConfig controls the pipeline worker that turns accepted reports
+// into issues.
+type WorkerConfig struct {
+	// Enabled runs the worker in this process. Turn it off to run the API
+	// alone and the workers elsewhere.
+	Enabled bool
+	// Concurrency is how many reports one process works on at a time.
+	Concurrency int
+	// MaxAttempts is how many times a report is tried before the worker
+	// gives up on it. Waiting out a tracker's rate limit counts as an
+	// attempt.
+	MaxAttempts int
+}
+
 type Config struct {
 	Env      string
 	LogLevel string
@@ -84,4 +98,5 @@ type Config struct {
 	GitHub   GitHubConfig
 	Limits   LimitsConfig
 	Ingest   IngestConfig
+	Worker   WorkerConfig
 }

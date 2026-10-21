@@ -2,9 +2,9 @@
 
 `internal/issue` defines what "opening an issue" means for any tracker, and
 `issue.Service` decides **where** an app's issue goes, opens it, and records
-it. It is a Go service with no route of its own. The future ingestion
-pipeline is expected to call it after a report is accepted and enriched.
-Today its only HTTP entry point is the owner's
+it. It is a Go service with no route of its own. The
+[worker](worker.md) calls `OpenInRepository` for every accepted report.
+Its only HTTP entry point is the owner's
 [`POST /apps/{appID}/test-issue`](api.md#test-issue), which calls
 `OpenForApp` with a test draft. The API scripts use it to exercise the
 service end to end (`backend/scripts/api/issues.sh`).

@@ -67,8 +67,8 @@ It exposes a JSON REST API under `/api/v1` with these resources:
 | providers | admin console and browser | link a tracker account (a GitHub App installation) and browse its repositories |
 
 `issue.Service` is a **service, not a route**. It opens tracker issues for an
-app. The ingestion pipeline will call it once that exists. Until then it is
-only exercised by tests and by the e2e test.
+app. The worker calls it for every accepted report (see
+[worker.md](worker.md)), and `POST /apps/{id}/test-issue` calls it directly.
 
 ---
 
