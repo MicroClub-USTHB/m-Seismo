@@ -23,14 +23,14 @@ Bash on Windows.
 | `owners.sh` | `GET/PATCH/DELETE /owners/me`; `current_password` rules; email/password change then login; delete then token and login fail |
 | `projects.sh` | CRUD; derived and explicit slugs; conflicts; validation; malformed and unknown IDs; per-owner isolation; slugs unique per owner |
 | `apps.sh` | CRUD; platform validation; SDK keys (format, shown once, revoke, revoke twice); app↔project links (idempotent, unknown, cross-owner); test-issue without targets |
-| `providers.sh` | provider list; connect flow (unknown state, **forged installation_id**, state replay, missing code, pending org approval, success); connections; repositories; link (first is default, duplicate, unreachable, malformed); default switching and rollback; isolation; disconnect |
-| `issues.sh` | **issue service**: open in the default repository; ref, URL and record; content on the fake GitHub; default title; fan-out to every linked project; non-defaults ignored; partial failure (201 + per-target error); total failure (502); projects without a default skipped; **GitHub rate limits** (secondary limit waited out without duplicates; exhausted quota → fast 429 + `Retry-After`, GitHub not called again; per-app test-issue throttle); validation; isolation |
+| `providers.sh` | provider list; old owner-level routes gone; **per-app** connect flow (unknown state, **forged installation_id**, state replay, missing code, pending org approval, success, redirect back to the app); **connections are per app**; attach (share an installation between apps); one installation never spans two owners; repositories; link by tracker (first is default, duplicate, malformed, unconfigured tracker); default switching and rollback; isolation; disconnect affects only that app |
+| `issues.sh` | **issue service**: targets preview; open in the default repository **through the app's own connection**; ref, URL, record and `connection_id`; content on the fake GitHub; default title; **an app without a connection fails, then works after attach, with its own connection**; **an app connected to two GitHub accounts** routes each repository through the matching one; fan-out to every linked project; non-defaults ignored; partial failure (201 + per-target error); total failure (502); projects without a default skipped; **GitHub rate limits** (secondary limit waited out without duplicates; exhausted quota → fast 429 + `Retry-After`, GitHub not called again, also for another app sharing the installation; per-app test-issue throttle); validation; isolation |
 | `all.sh` | runs all of the above in order; exit code 0 only if every script passed |
 
 ## Bearer token handling
 
-The owner's email, password, bearer token, owner ID and GitHub connection ID
-are saved in `scripts/api/.env.test`. That file is git-ignored; override its
+The owner's email, password, bearer token and owner ID, plus a test app and
+that app's GitHub connection ID, are saved in `scripts/api/.env.test`. That file is git-ignored; override its
 location with `STATE_FILE`.
 
 - **At the start of each script**, `ensure_token` checks the saved token with
@@ -47,11 +47,12 @@ location with `STATE_FILE`.
 
 | `GITHUB_MODE` | How the connection is made | Notes |
 |---|---|---|
-| `fake` (default) | The script plays the browser. It calls `/providers/github/callback` with a random installation `N` and code `fake-code-N`, as GitHub's redirect would. | Fully automatic. Also runs the forged-ID, replay, fan-out and failure tests. |
-| `real` | The script prints the install URL, you install the App in a browser, and the script polls `/providers/connections` until the connection appears. | Set `GITHUB_TEST_REPO=owner/name` to a repository the App can access. **This opens real issues**, labelled `m-seismo-test`. Fake-only tests are skipped. |
+| `fake` (default) | The script plays the browser. It calls `/apps/{id}/connect/github`, then `/providers/github/callback` with a random installation `N` and code `fake-code-N`, as GitHub's redirect would. | Fully automatic. Also runs the forged-ID, replay, two-account, fan-out and failure tests. |
+| `real` | The script prints the install URL, you install the App in a browser, and the script polls `/apps/{id}/connections` until the connection appears. | Set `GITHUB_TEST_REPO=owner/name` to a repository the App can access. **This opens real issues**, labelled `m-seismo-test`. Fake-only tests are skipped. |
 
-The GitHub connection is saved and reused across runs, so in real mode you
-install once.
+The test app and its GitHub connection are saved and reused across runs.
+Apps that a script creates get their own connection by **attaching** the saved
+one, so in real mode you install once.
 
 ## Environment
 

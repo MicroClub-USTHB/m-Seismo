@@ -11,22 +11,28 @@ file-by-file reference, extension recipes and testing.
 ## Domain
 
 ```
-owner ──< project ──< project_repository >── provider_connection >── owner
-  │          │                                  (GitHub App installation)
+owner ──< project ──< project_repository  (tracker + owner/name, one default)
+  │          │
   └──< app >─┘  (app_projects, many-to-many)
-        └──< app_key  (SDK keys, stored hashed)
-issue  ── opened in a project_repository, optionally from an app
+        ├──< app_key              (SDK keys, stored hashed)
+        └──< provider_connection  (the app's credentials: a GitHub App installation, …)
+issue  ── opened in a project_repository, by an app, through one of its connections
 ```
 
-- An **owner** signs up with email and password and gets a JWT.
-- A **provider connection** is the owner's link to a tracker. On GitHub this
-  is one installation of the m-Seismo GitHub App.
-- A **project** sends issues to one or more repositories. Each repository is
-  reached through one of the owner's connections, and exactly one repository
-  is the project's default.
-- An **app** is a source of issues. It holds the SDK keys and links to any
-  number of the owner's projects. `issue.Service.OpenForApp` opens an issue in
-  the default repository of every linked project.
+- An **owner** signs up with email and password and gets a JWT, and owns
+  many apps and projects.
+- A **project** says where code lives: one or more repositories, each named
+  by tracker and full name, and exactly one is the default. Projects hold no
+  credentials.
+- An **app** is a source of issues. It holds the SDK keys, links to any
+  number of the owner's projects, and has its **own provider connections**.
+  On GitHub, a connection is an installation of the m-Seismo GitHub App.
+  Apps of one owner may share an installation; two owners can't.
+- `issue.Service.OpenForApp` opens an issue in the default repository of
+  every linked project, each **through the app's own connection** whose
+  account covers that repository. Two apps feeding one project therefore
+  use their own credentials, and a target the app has no connection for
+  fails on its own. See [docs/github.md](docs/github.md#who-a-connection-belongs-to).
 
 Trackers plug in under `internal/provider/<tracker>/`. Each one implements
 `provider.Provider` (the connect flow, repository listing and `issue.Opener`)
@@ -58,7 +64,9 @@ go run .
 
 The `20261017120000_owners_apps_providers` migration makes `projects.owner_id`
 `NOT NULL`, so a local database that already has projects needs to be
-recreated.
+recreated. `20261021120000_app_scoped_connections` moves connections to apps
+and keeps existing data: each owner connection is copied to each of that
+owner's apps.
 
 ## GitHub App setup
 
@@ -90,7 +98,7 @@ Every route except register, login and the provider callback needs
 | GET / PATCH / DELETE | `/owners/me` | changing the email or password requires `current_password` |
 | POST / GET | `/projects` | `{name, slug?}` |
 | GET / PATCH / DELETE | `/projects/{id}` | |
-| GET / POST | `/projects/{id}/repositories` | `{connection_id, repository: "owner/name", is_default}` |
+| GET / POST | `/projects/{id}/repositories` | `{tracker: "github", repository: "owner/name", is_default}` (no credentials) |
 | PUT | `/projects/{id}/repositories/{repoID}/default` | |
 | DELETE | `/projects/{id}/repositories/{repoID}` | |
 | POST / GET | `/apps` | `{name, platform: ios\|android\|flutter\|react_native, bundle_id}` |
@@ -99,12 +107,15 @@ Every route except register, login and the provider callback needs
 | DELETE | `/apps/{id}/keys/{keyID}` | revoke |
 | GET | `/apps/{id}/projects` | |
 | PUT / DELETE | `/apps/{id}/projects/{projectID}` | link / unlink |
+| GET | `/apps/{id}/connect/{tracker}` | → `{url}`; send the browser there to connect **this app** |
+| GET / POST | `/apps/{id}/connections` | list; or `{connection_id}` to attach another of your apps' connections |
+| DELETE | `/apps/{id}/connections/{connectionID}` | only this app loses it; the App stays installed on GitHub |
+| GET | `/apps/{id}/connections/{connectionID}/repositories` | |
+| GET | `/apps/{id}/targets` | where the app's issues would go, and through which connection |
+| POST | `/apps/{id}/test-issue` | open a test issue through the issue service |
 | GET | `/providers` | the trackers configured on this deployment |
-| GET | `/providers/{tracker}/connect` | → `{url}`; send the browser there |
-| GET | `/providers/{tracker}/callback` | public; redirects to `{frontend_url}/settings/providers?status=…` |
-| GET | `/providers/connections` | |
-| DELETE | `/providers/connections/{id}` | m-Seismo forgets the connection; the App stays installed on GitHub |
-| GET | `/providers/connections/{id}/repositories` | |
+| GET | `/providers/{tracker}/callback` | public; redirects to `{frontend_url}/apps/{appID}/connections?status=…` |
+| GET | `/providers/connections` | every connection of every app of yours (read-only) |
 
 ## Tests
 

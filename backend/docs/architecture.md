@@ -48,6 +48,7 @@ flowchart LR
     SDK -. "ingestion (not built yet)" .-> Issue
     Router --> Owner & Project & App & Provider
     Project --> Provider
+    App --> Provider & Issue
     Provider --> GH
     Issue --> Provider
     GH --> GitHub
@@ -62,9 +63,9 @@ It exposes a JSON REST API under `/api/v1` with these resources:
 | Resource | Who calls it | Purpose |
 |---|---|---|
 | owners | admin console | sign up, log in, manage your own account |
-| projects | admin console | group repositories that receive issues |
-| apps | admin console | the mobile apps that report bugs, their SDK keys, and which projects they report into |
-| providers | admin console and browser | link a tracker account (a GitHub App installation) and browse its repositories |
+| projects | admin console | say where code lives: the tracker repositories that receive issues |
+| apps | admin console | the mobile apps that report bugs: their SDK keys, their own tracker connections (credentials), and which projects they report into |
+| providers | admin console and browser | the configured trackers, the connect-flow callback, and an owner-wide list of connections |
 
 `issue.Service` is a **service, not a route**. It opens tracker issues for an
 app. The ingestion pipeline will call it once that exists. Until then it is
@@ -74,16 +75,24 @@ only exercised by tests and by the e2e test.
 
 ## Domain model in one paragraph
 
-An **owner** has many **projects**, many **apps** and many **provider
-connections**. A provider connection is one tracker account the owner granted
-access to, such as one GitHub App installation on `octo-org`. A project
-targets one or more **repositories**. Each repository is reached through one
-of the owner's connections, so one project can mix GitHub, GitLab and
-Bitbucket. Exactly one of a project's repositories is its **default**. An app
-is a *source* of issues. It links to any number of projects (many-to-many)
-and authenticates with **app keys**. When an app reports a bug,
-`issue.Service.OpenForApp` opens an issue in the default repository of every
-project the app is linked to, and records each one as an **issue** row.
+An **owner** has many **projects** and many **apps**.
+
+- A **project** says where code lives: one or more **repositories**, each
+  named by tracker and full name (`github` + `octo-org/app`), so one project
+  can mix GitHub, GitLab and Bitbucket. Exactly one of a project's
+  repositories is its **default**. Projects hold no credentials.
+- An **app** is a *source* of issues. It authenticates with **app keys**,
+  links to any number of projects (many-to-many), and has its own **provider
+  connections**: the tracker accounts it was granted, such as one GitHub App
+  installation on `octo-org`.
+
+When an app reports a bug, `issue.Service.OpenForApp` takes the default
+repository of every linked project and picks the app's connection on that
+repository's tracker that covers it. It opens the issue through that
+connection and records it as an **issue** row, together with the connection
+used. Two apps reporting into the same project therefore use their own
+credentials. Apps of one owner may share a tracker account, each with its own
+connection row; two owners never can.
 
 See [data-model.md](data-model.md) for the tables.
 
@@ -136,7 +145,7 @@ flowchart TD
 
     owner --> auth & httpx & db & apperr
     project --> provider & httpx & db & apperr
-    app --> httpx & db & apperr
+    app --> provider & issue & httpx & db & apperr
     provider --> issue & httpx & db & apperr & config
     github --> provider & issue & db & apperr & config
     issue --> db
@@ -149,10 +158,15 @@ flowchart TD
 Two points are deliberate:
 
 - **`issue` does not import `provider`.** `provider` already imports `issue`
-  for the `issue.Opener` type, so the reverse import would be a cycle.
-  Instead `issue` declares the small interface it needs, `issue.OpenerSource`,
-  and `provider.Registry` satisfies it. fx connects the two in
-  `provider.Module` with `func(r *Registry) issue.OpenerSource { return r }`.
+  for the `issue.Opener` and `issue.Connection` types, so the reverse import
+  would be a cycle. Instead `issue` declares the small interface it needs,
+  `issue.OpenerSource` (`Opener` and `Covers`), and `provider.Registry`
+  satisfies it. fx connects the two in `provider.Module` with
+  `func(r *Registry) issue.OpenerSource { return r }`.
+- **The per-app connection routes live in `app`.** They sit under
+  `/apps/{appID}/…`, and chi can mount `/apps` only once, so `app.Handler`
+  mounts them and calls `provider.Service`. `provider.Handler` keeps
+  `/providers`: the tracker list, the callback and the owner-wide list.
 - **`auth` imports `httpx`, not the reverse.** `httpx` declares
   `TokenVerifier`, `auth.Issuer` implements it, and `auth.Module` provides the
   `Issuer` as that interface. The HTTP layer therefore never depends on the
@@ -173,7 +187,7 @@ fx.Options(
     auth.Module,     // *auth.Issuer, httpx.TokenVerifier
     owner.Module,    // *owner.Service, owner.Handler → group "routes"
     project.Module,  // *project.Service, project.Handler → group "routes"
-    app.Module,      // *app.Service, app.Handler → group "routes"
+    app.Module,      // *app.Service, app.Handler (incl. /apps/{id}/connections…) → group "routes"
     provider.Module, // *provider.Registry, issue.OpenerSource, provider.StateStore, *provider.Service, provider.Handler → group "routes"
     github.Module,   // []provider.Provider → group "providers" (empty when GitHub is not configured)
     issue.Module,    // *issue.Service
@@ -190,8 +204,9 @@ list:
 
 The `providers` group is *flattened*: `github.FromConfig` returns a
 `[]provider.Provider`, and when `github.app_id` is unset that slice is empty.
-The server then runs without GitHub. `GET /providers` returns an empty list,
-and `connect` returns 404 "provider github is not available".
+The server then runs without GitHub. `GET /providers` returns an empty list.
+`GET /apps/{id}/connect/github`, and linking a `github` repository to a
+project, return 404 "provider github is not available".
 
 Lifecycle hooks:
 
@@ -212,7 +227,8 @@ has a provider, without running any constructor.
 
 ## Life of an HTTP request
 
-Example: `POST /api/v1/projects/{id}/repositories`.
+Example: `POST /api/v1/apps/{id}/test-issue`, which runs the issue service
+through the app's own connections.
 
 ```mermaid
 sequenceDiagram
@@ -220,28 +236,32 @@ sequenceDiagram
     participant C as Client
     participant MW as chi middleware
     participant A as AuthMiddleware
-    participant H as project.Handler
-    participant S as project.Service
-    participant P as provider.Service
+    participant H as app.Handler
+    participant S as app.Service
+    participant I as issue.Service
+    participant R as provider.Registry
     participant G as provider/github
     participant DB as Postgres
 
-    C->>MW: POST /api/v1/projects/{id}/repositories<br/>Authorization: Bearer …
+    C->>MW: POST /api/v1/apps/{id}/test-issue<br/>Authorization: Bearer …
     MW->>MW: RequestID, RealIP, Logger, Recoverer
-    MW->>A: route matched (/projects group uses h.require)
+    MW->>A: route matched (/apps group uses h.require)
     A->>A: auth.Issuer.Verify(token) → ownerID
     A->>H: ctx carries ownerID
-    H->>H: UUIDParam("projectID"), Decode(body)
-    H->>S: LinkRepository(ctx, ownerID, projectID, in)
-    S->>DB: GetProject(id, owner_id) — 404 if not the owner's
-    S->>P: VerifyRepository(owner, connection, "octo/app")
-    P->>DB: GetProviderConnection(id, owner_id)
-    P->>G: HasRepository(installationID, "octo/app")
-    G-->>P: true / false
-    P-->>S: Connection or apperr.Invalid
-    S->>DB: BEGIN; List…; ClearDefault…; LinkProjectRepository; COMMIT
-    S-->>H: Repository DTO or error
-    H-->>C: 201 JSON  /  httpx.Error → 4xx/5xx {"error": "…"}
+    H->>H: UUIDParam("appID"), Decode(body)
+    H->>S: SendTestIssue(ctx, ownerID, appID, in)
+    S->>DB: GetApp(id, owner_id) — 404 if not the owner's
+    S->>S: ratelimit.Limiter.Allow("test_issue:<app>")
+    S->>I: OpenForApp(ctx, appID, draft)
+    I->>DB: ListIssueTargetsForApp, ListActiveConnectionsForApp
+    I->>R: Covers(connection, "octo-org/app"), per target
+    I->>R: Opener(connection)
+    R->>G: Opener(connection) → per-installation client
+    I->>G: Open(issue) → POST /repos/octo-org/app/issues
+    I->>DB: CreateIssue(…, provider_connection_id)
+    I-->>S: []Result (per target: ref or error)
+    S-->>H: TestIssueOutcome
+    H-->>C: 201 / 429 + Retry-After / 502 JSON
 ```
 
 Middleware order, from `httpx.NewRouter`:
@@ -265,8 +285,8 @@ it, and `httpx.Error` *maps* it.
 | `apperr` kind | Constructor | HTTP status | Typical cause |
 |---|---|---|---|
 | `KindNotFound` | `apperr.NotFound(msg)` | 404 | missing row, another owner's row, malformed UUID in the path |
-| `KindConflict` | `apperr.Conflict(msg)` | 409 | duplicate email, slug, repository link or installation |
-| `KindInvalid` | `apperr.Invalid(msg)` | 422 | validation failure, bad JSON, unreachable repository |
+| `KindConflict` | `apperr.Conflict(msg)` | 409 | duplicate email, slug or repository link; a tracker account another owner holds |
+| `KindInvalid` | `apperr.Invalid(msg)` | 422 | validation failure, bad JSON, malformed repository name |
 | `KindUnauthorized` | `apperr.Unauthorized(msg)` | 401 | missing or invalid token, wrong password, bad app key |
 | `KindRateLimited` | `apperr.RateLimited(msg, wait)`, or any error with a `RetryAfter() time.Duration` method such as `*issue.RateLimitError` | 429 + `Retry-After` | m-Seismo throttle, GitHub rate limit |
 | `KindInternal` | any other error | 500 | everything else; logged, and the details are hidden |
@@ -275,7 +295,8 @@ it, and `httpx.Error` *maps* it.
 return a query error unchanged:
 
 - `pgx.ErrNoRows`, even wrapped, becomes `KindNotFound` with the message "not found".
-- Postgres `23505` (unique violation) becomes `KindConflict` with "already exists".
+- Postgres `23505` (unique violation) and `23P01` (exclusion violation)
+  become `KindConflict` with "already exists".
 - Postgres `23503` (foreign-key violation) becomes `KindInvalid`.
 
 Services usually replace the generic message with a specific one, for example
@@ -328,20 +349,33 @@ SELECT * FROM projects WHERE id = $1 AND owner_id = $2;
 
 The pattern is:
 
-- **Direct resources** (projects, apps, provider connections) have
-  owner-scoped `Get`, `Update` and `Delete` queries. When the owner doesn't
+- **Direct resources** (projects, apps) have owner-scoped `Get`, `Update`
+  and `Delete` queries. When the owner doesn't
   match, the query returns no row, which becomes 404. It is the same response
   as an ID that doesn't exist, so callers learn nothing about other owners.
 - **Child resources** (project repositories, app keys, app↔project links):
   the service first loads the parent with the owner-scoped query, then runs
   the child query filtered by parent ID. An example is
   `UnlinkProjectRepository ... WHERE id = $1 AND project_id = $2`.
+- **Provider connections** belong to an app and carry a denormalised
+  `owner_id`, so their queries filter on both:
+  `GetAppConnection ... WHERE id = $1 AND app_id = $2 AND owner_id = $3`. A
+  composite foreign key `(app_id, owner_id) → apps (id, owner_id)` keeps the
+  two consistent.
 - **Cross-resource links** check both sides. `app.Service.LinkProject` loads
-  the app *and* the project as the same owner. `project.Service.LinkRepository`
-  checks that the connection belongs to the owner, through
-  `provider.Service.VerifyRepository`.
-- **The GitHub callback has no JWT.** The owner comes from the server-side
-  state stored when that owner called `connect`.
+  the app *and* the project as the same owner.
+  `provider.Service.AttachConnection` loads the target app and the source
+  connection as the same owner.
+- **The issue service only uses the app's own connections.** It reads
+  `ListActiveConnectionsForApp(app_id)`. `OpenInRepository` also requires the
+  app to be linked to the repository's project: `GetIssueTarget` joins
+  `app_projects`.
+- **A tracker account belongs to one owner.** The exclusion constraint
+  `provider_connections_one_owner_per_account` rejects a second owner who
+  connects the same GitHub installation, even after a valid OAuth check.
+- **The GitHub callback has no JWT.** The owner and the app come from the
+  server-side state stored when that owner called
+  `GET /apps/{id}/connect/{tracker}`.
 
 ---
 
@@ -354,16 +388,26 @@ type Provider interface {
     Tracker() db.Tracker
     InstallURL(state string) string
     CompleteInstall(ctx, query url.Values) (Account, error)
-    ListRepositories(ctx, externalID string) ([]Repository, error)
-    HasRepository(ctx, externalID, repository string) (bool, error)
-    Opener(ctx, externalID string) (issue.Opener, error)
+    ListRepositories(ctx, c issue.Connection) ([]Repository, error)
+    HasRepository(ctx, c issue.Connection, repository string) (bool, error)
+    ValidateRepository(repository string) error
+    Covers(c issue.Connection, repository string) bool
+    Opener(ctx, c issue.Connection) (issue.Opener, error)
 }
 ```
 
-`externalID` is the tracker's own identifier for a connection. For GitHub it
-is the App installation ID. Everything outside the tracker package treats it
-as an opaque string. Adding GitLab means adding `internal/provider/gitlab`
-and one line in `main.go`. See [extending.md](extending.md).
+`issue.Connection` is one app connection: its m-Seismo `ID`, `Tracker`,
+`ExternalID` (the tracker's identifier; for GitHub, the App installation ID)
+and `AccountLogin`.
+
+- Providers receive the whole value, so a tracker that stores per-connection
+  secrets, such as GitLab or Bitbucket OAuth tokens, can look them up by
+  `ID`.
+- `Covers` lets the issue service choose among an app's connections without
+  calling the tracker.
+
+Adding GitLab means adding `internal/provider/gitlab` and one line in
+`main.go`. See [extending.md](extending.md).
 
 ---
 

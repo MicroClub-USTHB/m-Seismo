@@ -37,43 +37,60 @@ type Provider struct{ /* client, credentials */ }
 func (p *Provider) Tracker() db.Tracker { return db.TrackerGitlab }
 func (p *Provider) InstallURL(state string) string { /* OAuth authorize URL with state */ }
 func (p *Provider) CompleteInstall(ctx context.Context, q url.Values) (provider.Account, error) { /* exchange q["code"] */ }
-func (p *Provider) ListRepositories(ctx context.Context, externalID string) ([]provider.Repository, error) { /* … */ }
-func (p *Provider) HasRepository(ctx context.Context, externalID, repo string) (bool, error) { /* … */ }
-func (p *Provider) Opener(ctx context.Context, externalID string) (issue.Opener, error) { /* … */ }
+func (p *Provider) ListRepositories(ctx context.Context, c issue.Connection) ([]provider.Repository, error) { /* … */ }
+func (p *Provider) HasRepository(ctx context.Context, c issue.Connection, repo string) (bool, error) { /* … */ }
+func (p *Provider) ValidateRepository(repo string) error { /* "group/subgroup/project" format */ }
+func (p *Provider) Covers(c issue.Connection, repo string) bool { /* see step 4 */ }
+func (p *Provider) Opener(ctx context.Context, c issue.Connection) (issue.Opener, error) { /* … */ }
 ```
 
 **2. Add `gitlab.Module` to `Options()` in `main.go`.** That is the only
 change outside the new package. `TestGraph` will fail if you forget a
 dependency.
 
-**3. Decide what `externalID` means.** It is opaque to everything else.
+**3. Decide what `ExternalID` means, and where secrets live.**
+`issue.Connection.ExternalID` is opaque to everything else.
 
 - *GitHub* uses an App installation ID, and no secret is stored.
 - *GitLab and Bitbucket* have no exact equivalent of GitHub App
   installations. They use OAuth with a user or group access token, so you
-  will need to **store a token**. Two things follow:
-  - Add a migration with a nullable `credentials bytea` column on
-    `provider_connections` (or a separate table) and **encrypt** it (AES-GCM
-    with a key from config). Never store it in plain text.
-  - `externalID` can be the group or user ID, with the token looked up by
-    connection.
+  will need to **store a token per connection**. That is, per app, because
+  connections belong to apps. Two things follow:
+  - Add a migration with a table such as
+    `connection_secrets (provider_connection_id uuid primary key references provider_connections on delete cascade, ciphertext bytea, refreshed_at timestamptz)`
+    and **encrypt** the token (AES-GCM with a key from config). Never store
+    it in plain text, and never put it on `provider_connections`, which is
+    listed in API responses.
+  - `ExternalID` can be the GitLab user or group ID. The token is looked up
+    by `c.ID`, which every connection-scoped method receives, so no
+    interface change is needed.
 
-  Because `Opener(ctx, externalID)` only receives the external ID, a
-  token-based provider needs either a store it can query by that ID, or a
-  widened interface that receives the connection ID. Widen the interface in
-  `provider.go` and `issue.OpenerSource` together, and update the GitHub
-  provider to match.
+**4. Implement `Covers` and `ValidateRepository`.** Both run without network
+calls.
 
-**4. Uphold the security rule in `CompleteInstall`.** Never trust an account
+- `ValidateRepository` runs when a repository is linked to a project, so
+  reject names the tracker can't have.
+- `Covers(c, repo)` runs for every target of every report, to choose which
+  of the app's connections opens the issue. Return `true` only when `c`
+  could reach `repo`. For an OAuth token that reaches everything its user
+  can see, `true` is acceptable. Then the first connection on that tracker
+  wins, and the tracker's own error surfaces when access is missing. If the
+  tracker scopes a grant to a namespace (a GitLab group token, a Bitbucket
+  workspace), compare that namespace, as GitHub compares `AccountLogin`.
+
+**5. Uphold the security rule in `CompleteInstall`.** Never trust an account
 identifier from the callback query unless the tracker has confirmed it with
 credentials that belong to the user, such as the OAuth code exchange. The
-state is already single-use and tied to the owner by `provider.Service`.
+state is already single-use and tied to the owner and the app by
+`provider.Service`. The exclusion constraint on `provider_connections` stops
+two owners from holding the same `(tracker, external_id)`.
 
-**5. Set the tracker's callback URL** to
-`{public_url}/api/v1/providers/gitlab/callback`. The routes are generic over
+**6. Set the tracker's callback URL** to
+`{public_url}/api/v1/providers/gitlab/callback`. The routes
+(`GET /apps/{appID}/connect/{tracker}` and the callback) are generic over
 `{tracker}`, so no handler code is needed.
 
-**6. Test against an `httptest.Server`**, as `github_test.go` does: a forged
+**7. Test against an `httptest.Server`**, as `github_test.go` does: a forged
 identifier must be rejected, and repository and issue calls must carry the
 right token.
 
@@ -145,9 +162,12 @@ See [issue-service.md → Calling it](issue-service.md#calling-it). In short:
 1. Authenticate the SDK request with `app.Service.Authenticate(ctx, key)` →
    `appID`.
 2. Build an `issue.Draft` (title, body following FR-47, labels, fingerprint).
-3. Call `issue.Service.OpenForApp(ctx, appID, draft)`.
-4. Handle `issue.ErrNoTargets` and each `Result.Err`, for example by queuing
-   a retry on NATS JetStream.
+3. Call `issue.Service.OpenForApp(ctx, appID, draft)`. It uses that app's
+   own connections.
+4. Handle `issue.ErrNoTargets` and each `Result.Err`.
+   - `issue.ErrNoConnection` is a configuration problem: tell the owner.
+   - Other errors can be retried, for example by queuing a retry on NATS
+     JetStream.
 
 Run the open step asynchronously. The PRD requires the reporter to get a
 confirmation within 0.5 s, while opening an issue on GitHub can take
