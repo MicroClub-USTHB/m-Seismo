@@ -1,5 +1,9 @@
 # Testing
 
+The [live Sentry verification](live-sentry-verification.md) records a successful
+real browser crash test against self-hosted Sentry, in addition to the automated
+isolated suite below.
+
 ## Full isolated unit and integration suite
 
 From the repository root:
