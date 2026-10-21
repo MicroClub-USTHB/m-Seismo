@@ -65,8 +65,10 @@ recreated.
 1. On GitHub, go to Settings → Developer settings → GitHub Apps → New GitHub App.
 2. Under **Permissions**, set Repository → Issues to *Read and write* and
    Metadata to *Read-only*. Leave everything else at *No access*.
-3. Set the **Setup URL** to
-   `{SEISMO_SERVER_PUBLIC_URL}/api/v1/providers/github/callback`.
+3. Set the **Callback URL** to
+   `{SEISMO_SERVER_PUBLIC_URL}/api/v1/providers/github/callback`. GitHub
+   greys out the Setup URL once step 4 is ticked and redirects to the
+   Callback URL instead.
 4. Tick **Request user authorization (OAuth) during installation**. The
    callback uses the resulting code to check that the installing user really
    has access to the `installation_id` GitHub sends back. Without this, a

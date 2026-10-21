@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -95,5 +96,17 @@ func (c *Config) validate() error {
 	if c.Auth.JWTTTL <= 0 {
 		return fmt.Errorf("auth.jwt_ttl must be positive")
 	}
+	if _, err := c.SlogLevel(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// SlogLevel parses log_level (debug, info, warn or error).
+func (c *Config) SlogLevel() (slog.Level, error) {
+	var l slog.Level
+	if err := l.UnmarshalText([]byte(c.LogLevel)); err != nil {
+		return 0, fmt.Errorf("log_level %q must be debug, info, warn or error", c.LogLevel)
+	}
+	return l, nil
 }
