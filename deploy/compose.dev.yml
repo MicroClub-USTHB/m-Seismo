@@ -4,11 +4,12 @@
 #   curl http://localhost:8080/healthz
 #
 # Services: Postgres, Redis, NATS (JetStream), a one-shot dbmate migration,
-# a fake GitHub (so the GitHub connect flow and issue opening work without
-# real credentials) and the backend.
+# fakes of GitHub, GitLab and Bitbucket (so every connect flow and issue
+# opening works without real credentials) and the backend.
 #
-# To use a real GitHub App instead of the fake, set the SEISMO_GITHUB_*
-# variables in deploy/.env (see deploy/.env.example).
+# To use a real GitHub App, GitLab application or Bitbucket consumer
+# instead of a fake, set the SEISMO_GITHUB_*, SEISMO_GITLAB_* or
+# SEISMO_BITBUCKET_* variables in deploy/.env (see deploy/.env.example).
 
 name: m-seismo-dev
 
@@ -73,6 +74,26 @@ services:
     volumes:
       - github-app-key:/shared
 
+  fakegitlab:
+    build:
+      context: ../backend
+      target: fakegitlab
+    environment:
+      FAKEGITLAB_ADDR: ":9091"
+      FAKEGITLAB_PUBLIC_URL: http://localhost:${FAKEGITLAB_PORT:-9091}
+    ports:
+      - "${FAKEGITLAB_PORT:-9091}:9091"
+
+  fakebitbucket:
+    build:
+      context: ../backend
+      target: fakebitbucket
+    environment:
+      FAKEBITBUCKET_ADDR: ":9092"
+      FAKEBITBUCKET_PUBLIC_URL: http://localhost:${FAKEBITBUCKET_PORT:-9092}
+    ports:
+      - "${FAKEBITBUCKET_PORT:-9092}:9092"
+
   backend:
     build:
       context: ../backend
@@ -103,6 +124,20 @@ services:
       # GitHub rate-limit handling (see backend/docs/github.md#rate-limits)
       SEISMO_GITHUB_MIN_WRITE_INTERVAL: ${SEISMO_GITHUB_MIN_WRITE_INTERVAL:-1s}
       SEISMO_GITHUB_MAX_RATE_LIMIT_WAIT: ${SEISMO_GITHUB_MAX_RATE_LIMIT_WAIT:-30s}
+      # GitLab and Bitbucket: defaults point at the fakes. Each app runs its
+      # own OAuth flow; tokens are stored encrypted with this key (empty in
+      # development = a fixed development key).
+      SEISMO_SECRETS_ENCRYPTION_KEY: ${SEISMO_SECRETS_ENCRYPTION_KEY:-}
+      SEISMO_GITLAB_CLIENT_ID: ${SEISMO_GITLAB_CLIENT_ID:-fake-client}
+      SEISMO_GITLAB_CLIENT_SECRET: ${SEISMO_GITLAB_CLIENT_SECRET:-fake-secret}
+      SEISMO_GITLAB_WEB_URL: ${SEISMO_GITLAB_WEB_URL:-http://fakegitlab:9091/}
+      SEISMO_GITLAB_API_URL: ${SEISMO_GITLAB_API_URL:-http://fakegitlab:9091/api/v4/}
+      SEISMO_GITLAB_MAX_RATE_LIMIT_WAIT: ${SEISMO_GITLAB_MAX_RATE_LIMIT_WAIT:-30s}
+      SEISMO_BITBUCKET_CLIENT_ID: ${SEISMO_BITBUCKET_CLIENT_ID:-fake-client}
+      SEISMO_BITBUCKET_CLIENT_SECRET: ${SEISMO_BITBUCKET_CLIENT_SECRET:-fake-secret}
+      SEISMO_BITBUCKET_WEB_URL: ${SEISMO_BITBUCKET_WEB_URL:-http://fakebitbucket:9092/}
+      SEISMO_BITBUCKET_API_URL: ${SEISMO_BITBUCKET_API_URL:-http://fakebitbucket:9092/2.0/}
+      SEISMO_BITBUCKET_MAX_RATE_LIMIT_WAIT: ${SEISMO_BITBUCKET_MAX_RATE_LIMIT_WAIT:-30s}
       SEISMO_LIMITS_TEST_ISSUES_PER_MINUTE: ${SEISMO_LIMITS_TEST_ISSUES_PER_MINUTE:-10}
     volumes:
       - github-app-key:/shared:ro
@@ -114,6 +149,10 @@ services:
       nats:
         condition: service_healthy
       fakegithub:
+        condition: service_healthy
+      fakegitlab:
+        condition: service_healthy
+      fakebitbucket:
         condition: service_healthy
 
 volumes:
