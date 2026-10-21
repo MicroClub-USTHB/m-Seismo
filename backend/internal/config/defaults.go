@@ -3,7 +3,9 @@ package config
 import "github.com/spf13/viper"
 
 func setDefaults(v *viper.Viper) {
-	v.SetDefault("env", "development")
+	// Production unless told otherwise, so a deployment that forgets
+	// SEISMO_ENV never falls back to development-only settings.
+	v.SetDefault("env", "production")
 	v.SetDefault("log_level", "info")
 
 	v.SetDefault("server.host", "0.0.0.0")

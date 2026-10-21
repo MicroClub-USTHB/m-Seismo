@@ -73,7 +73,7 @@ sequenceDiagram
     API-->>UI: {"url": "https://github.com/apps/<slug>/installations/new?state=<s>"}
     UI->>B: navigate to url
     B->>GH: install App, pick account and repositories, authorise
-    GH-->>B: 302 to Setup URL ?installation_id=42&setup_action=install&code=<c>&state=<s>
+    GH-->>B: 302 to Callback URL ?installation_id=42&setup_action=install&code=<c>&state=<s>
     B->>API: GET /api/v1/providers/github/callback?...
     API->>R: GETDEL provider_state:<s> → "github:<ownerID>"
     API->>GH: POST /login/oauth/access_token (client_id, client_secret, code)
@@ -94,7 +94,7 @@ What happens at each step, and where in the code:
 2. The API returns the URL as **JSON**, not a redirect. A single-page app
    sending a bearer token can't follow a cross-origin redirect usefully, so it
    navigates the window to the URL itself.
-3. GitHub sends the browser to the App's **Setup URL** with the query
+3. GitHub sends the browser to the App's **Callback URL** with the query
    parameters. The browser carries no bearer token, so this route is public.
 4. **`provider.Service.FinishConnect`**:
    - takes the state with `GETDEL`, which makes it **single-use**: a replayed
@@ -288,7 +288,7 @@ table.
 | `github.min_write_interval` (`SEISMO_GITHUB_MIN_WRITE_INTERVAL`) | no | default `1s`; spacing between write requests per installation |
 | `github.max_rate_limit_wait` (`SEISMO_GITHUB_MAX_RATE_LIMIT_WAIT`) | no | default `30s`; longest single wait for a rate limit before failing with a retryable error. A negative value never waits. |
 | `limits.test_issues_per_minute` (`SEISMO_LIMITS_TEST_ISSUES_PER_MINUTE`) | no | default `10`; per-app throttle on `POST /apps/{id}/test-issue`. `0` turns it off. |
-| `server.public_url` | for setup | the base of the Setup URL you enter in GitHub; not used in code yet |
+| `server.public_url` | for setup | the base of the Callback URL you enter in GitHub; not used in code yet |
 | `server.frontend_url` | yes | where the callback redirects the browser |
 
 `github.FromConfig` fails startup when the App ID is set but the slug,
@@ -302,12 +302,12 @@ is then configured but broken, and a startup failure makes that obvious.
 1. Go to GitHub → Settings (yours or the org's) → Developer settings →
    GitHub Apps → **New GitHub App**.
 2. **Homepage URL**: anything, e.g. the repository URL.
-3. **Setup URL**: `{SEISMO_SERVER_PUBLIC_URL}/api/v1/providers/github/callback`.
-   - Tick **Redirect on update**, so changing repository selection also comes
-     back to m-Seismo.
+3. **Callback URL** (under *Identifying and authorizing users*):
+   `{SEISMO_SERVER_PUBLIC_URL}/api/v1/providers/github/callback`.
 4. Tick **Request user authorization (OAuth) during installation**.
-   **Required.**
-   - Callback URL (OAuth): the same callback URL.
+   **Required.** GitHub then greys out the **Setup URL** and sends the
+   browser to the Callback URL after the installation, with
+   `installation_id`, `setup_action`, `code` and `state`.
 5. **Webhook**: untick *Active* for now. Webhooks aren't handled yet.
 6. **Repository permissions**: Issues → *Read and write*, Metadata →
    *Read-only*. Leave everything else at *No access*.

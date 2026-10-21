@@ -56,7 +56,7 @@ Copy `deploy/.env.example` to `deploy/.env` and fill in the
 key as one line with `\n`, and the real `API_URL` / `WEB_URL`. Then run
 `make dev-up` again. Compose reads `deploy/.env` automatically.
 
-The App's Setup URL must reach your machine:
+The App's Callback URL must reach your machine:
 `http://localhost:8080/api/v1/providers/github/callback` works when you
 install from a browser on the same machine. See
 [backend/docs/github.md](../backend/docs/github.md#creating-the-github-app).

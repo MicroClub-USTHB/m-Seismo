@@ -179,7 +179,11 @@ and empty strings or zero for the secrets and IDs.
   development an empty secret falls back to the constant `devJWTSecret`, so a
   fresh checkout runs with no setup. Tokens signed with it are worthless
   anywhere else, and any other environment refuses to start without a real
-  secret.
+  secret. `env` defaults to `production`, so the fallback only applies when
+  `SEISMO_ENV=development` is set explicitly (`.env.example` and the dev
+  compose stack do).
+- `log_level` must be `debug`, `info`, `warn` or `error`; it sets the level
+  of the default `slog` logger.
 - `auth.jwt_ttl` must be positive.
 
 ---

@@ -38,8 +38,10 @@ type routerParams struct {
 // registered Routes under /api/v1.
 func NewRouter(p routerParams) http.Handler {
 	r := chi.NewRouter()
+	// No middleware.RealIP: it trusts X-Forwarded-For and friends from any
+	// client, so it would log spoofed addresses. Add a proxy-aware variant
+	// once the deployment's proxy is known.
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
@@ -62,6 +64,12 @@ func NewServer(lc fx.Lifecycle, cfg *config.Config, h http.Handler) *http.Server
 		Addr:              fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
+		// Bounds how long a client may take to send a whole request, so slow
+		// uploads cannot hold connections open forever.
+		ReadTimeout: 60 * time.Second,
+		IdleTimeout: 120 * time.Second,
+		// No WriteTimeout: opening issues may wait out a tracker rate limit
+		// (github.max_rate_limit_wait) before answering.
 	}
 
 	lc.Append(fx.Hook{
