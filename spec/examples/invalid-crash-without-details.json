@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "0192a5f3-1a20-7b5e-8c4d-6e7f8a9b0c13",
+  "installation_id": "5b8f2c1e-9a4d-4e7b-8c3f-1d2e6a9b0c47",
+  "session_id": "8e2f4a6c-1b3d-4e5f-9a7b-0c2d4e6f8a91",
+  "occurred_at": "2026-10-18T13:47:30.508Z",
+  "platform": "android",
+  "sdk": { "name": "mseismo-android", "version": "0.1.0" },
+  "environment": "production",
+  "release": { "version": "2.4.0", "build": "412" },
+  "mode": "production",
+  "trigger": "crash",
+  "consent": "given",
+  "device": { "os_name": "Android", "os_version": "14", "model": "Pixel 7" }
+}

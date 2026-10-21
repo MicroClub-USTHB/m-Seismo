@@ -1,0 +1,24 @@
+name: ExampleApp
+options:
+  bundleIdPrefix: com.microclub.mseismo
+  deploymentTarget:
+    iOS: "14.0"
+
+packages:
+  MSeismo:
+    path: ..
+
+targets:
+  ExampleApp:
+    type: application
+    platform: iOS
+    sources:
+      - ExampleApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.microclub.mseismo.example
+        GENERATE_INFOPLIST_FILE: true
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    dependencies:
+      - package: MSeismo

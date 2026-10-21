@@ -1,0 +1,4 @@
+# Shell scripts must keep LF endings, including on Windows checkouts,
+# or bash fails on the trailing \r.
+*.sh text eol=lf
+Dockerfile text eol=lf

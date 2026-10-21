@@ -1,0 +1,122 @@
+# Local development stack for the m-Seismo backend.
+#
+#   docker compose -f deploy/compose.dev.yml up --build -d
+#   curl http://localhost:8080/healthz
+#
+# Services: Postgres, Redis, NATS (JetStream), a one-shot dbmate migration,
+# a fake GitHub (so the GitHub connect flow and issue opening work without
+# real credentials) and the backend.
+#
+# To use a real GitHub App instead of the fake, set the SEISMO_GITHUB_*
+# variables in deploy/.env (see deploy/.env.example).
+
+name: m-seismo-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: seismo
+      POSTGRES_PASSWORD: seismo
+      POSTGRES_DB: seismo
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seismo -d seismo"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  nats:
+    image: nats:2-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    image: ghcr.io/amacneil/dbmate:2
+    environment:
+      DATABASE_URL: postgres://seismo:seismo@postgres:5432/seismo?sslmode=disable
+    command: ["--wait", "--no-dump-schema", "--migrations-dir", "/db/migrations", "up"]
+    volumes:
+      - ../backend/db:/db:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  fakegithub:
+    build:
+      context: ../backend
+      target: fakegithub
+    environment:
+      FAKEGITHUB_ADDR: ":9090"
+      FAKEGITHUB_KEY_PATH: /shared/github-app.pem
+      FAKEGITHUB_PUBLIC_URL: http://localhost:${FAKEGITHUB_PORT:-9090}
+    ports:
+      - "${FAKEGITHUB_PORT:-9090}:9090"
+    volumes:
+      - github-app-key:/shared
+
+  backend:
+    build:
+      context: ../backend
+      target: backend
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    environment:
+      SEISMO_ENV: development
+      SEISMO_LOG_LEVEL: debug
+      SEISMO_SERVER_HOST: 0.0.0.0
+      SEISMO_SERVER_PORT: "8080"
+      SEISMO_SERVER_PUBLIC_URL: http://localhost:${BACKEND_PORT:-8080}
+      SEISMO_SERVER_FRONTEND_URL: ${SEISMO_SERVER_FRONTEND_URL:-http://localhost:3000}
+      SEISMO_DATABASE_URL: postgres://seismo:seismo@postgres:5432/seismo?sslmode=disable
+      SEISMO_REDIS_URL: redis://redis:6379/0
+      SEISMO_NATS_URL: nats://nats:4222
+      SEISMO_AUTH_JWT_SECRET: ${SEISMO_AUTH_JWT_SECRET:-}
+      SEISMO_AUTH_JWT_TTL: ${SEISMO_AUTH_JWT_TTL:-24h}
+      # GitHub: defaults point at the fake; override all of them in deploy/.env for a real App.
+      SEISMO_GITHUB_APP_ID: ${SEISMO_GITHUB_APP_ID:-1}
+      SEISMO_GITHUB_APP_SLUG: ${SEISMO_GITHUB_APP_SLUG:-m-seismo-dev}
+      SEISMO_GITHUB_CLIENT_ID: ${SEISMO_GITHUB_CLIENT_ID:-fake-client}
+      SEISMO_GITHUB_CLIENT_SECRET: ${SEISMO_GITHUB_CLIENT_SECRET:-fake-secret}
+      SEISMO_GITHUB_PRIVATE_KEY: ${SEISMO_GITHUB_PRIVATE_KEY:-}
+      SEISMO_GITHUB_PRIVATE_KEY_PATH: /shared/github-app.pem
+      SEISMO_GITHUB_API_URL: ${SEISMO_GITHUB_API_URL:-http://fakegithub:9090/}
+      SEISMO_GITHUB_WEB_URL: ${SEISMO_GITHUB_WEB_URL:-http://fakegithub:9090/}
+      # GitHub rate-limit handling (see backend/docs/github.md#rate-limits)
+      SEISMO_GITHUB_MIN_WRITE_INTERVAL: ${SEISMO_GITHUB_MIN_WRITE_INTERVAL:-1s}
+      SEISMO_GITHUB_MAX_RATE_LIMIT_WAIT: ${SEISMO_GITHUB_MAX_RATE_LIMIT_WAIT:-30s}
+      SEISMO_LIMITS_TEST_ISSUES_PER_MINUTE: ${SEISMO_LIMITS_TEST_ISSUES_PER_MINUTE:-10}
+    volumes:
+      - github-app-key:/shared:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      fakegithub:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  nats-data:
+  github-app-key:
