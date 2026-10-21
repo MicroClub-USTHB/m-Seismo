@@ -12,13 +12,17 @@
 //	client secret      fake-secret
 //	OAuth code         fake-code-<N>  → user token fake-user-token-<N>,
 //	                                    who can access installation N only
-//	installation N     on "octo-org" (Organization), token fake-installation-token-<N>
+//	installation N     on "octo-org" (Organization), token fake-installation-token-<N>;
+//	                   N >= 100000000 is on "other-org" instead
 //	repositories       octo-org/seismo-test, octo-org/another,
 //	                   octo-org/broken     (issue creation always fails with 500)
 //	                   octo-org/slow-down  (first create per title: secondary rate
 //	                                        limit, 403 + Retry-After: 1)
 //	                   octo-org/exhausted  (create: primary quota exhausted,
 //	                                        403 + X-RateLimit-Remaining: 0, reset in 1h)
+//	                   other-org/tools
+//	                   An installation token only reaches its own account's
+//	                   repositories; others answer 404, as on GitHub.
 //	milestone          "v1.0" (number 1) in every repository
 //	rate-limit headers X-RateLimit-Limit/Remaining/Reset/Resource on every
 //	                   installation response (5000 per installation per hour)
@@ -57,15 +61,21 @@ const (
 	userTokenPrefix         = "fake-user-token-"
 	installationTokenPrefix = "fake-installation-token-"
 	accountLogin            = "octo-org"
+	otherAccountLogin       = "other-org"
 	brokenRepository        = "octo-org/broken"
 	slowDownRepository      = "octo-org/slow-down"
 	exhaustedRepository     = "octo-org/exhausted"
 	hourlyQuota             = 5000
+
+	// otherAccountFrom is the first installation ID on otherAccountLogin,
+	// far above the IDs the test scripts pick at random.
+	otherAccountFrom = 100000000
 )
 
 var repositories = []string{
 	"octo-org/seismo-test", "octo-org/another",
 	brokenRepository, slowDownRepository, exhaustedRepository,
+	"other-org/tools",
 }
 
 type storedIssue struct {
@@ -197,10 +207,12 @@ func (s *server) mintInstallationToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *server) installationRepos(w http.ResponseWriter, _ *http.Request) {
-	repos := make([]any, len(repositories))
-	for i, full := range repositories {
-		repos[i] = s.repo(full)
+func (s *server) installationRepos(w http.ResponseWriter, r *http.Request) {
+	repos := []any{}
+	for _, full := range repositories {
+		if strings.HasPrefix(full, tokenAccount(r)+"/") {
+			repos = append(repos, s.repo(full))
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"total_count": len(repos), "repositories": repos})
 }
@@ -425,8 +437,24 @@ func numericSuffix(s, prefix string) (string, bool) {
 func installation(id int) map[string]any {
 	return map[string]any{
 		"id":      id,
-		"account": map[string]any{"login": accountLogin, "type": "Organization"},
+		"account": map[string]any{"login": accountOf(id), "type": "Organization"},
 	}
+}
+
+// accountOf is the account installation id is on.
+func accountOf(id int) string {
+	if id >= otherAccountFrom {
+		return otherAccountLogin
+	}
+	return accountLogin
+}
+
+// tokenAccount is the account of the installation whose token made the
+// request.
+func tokenAccount(r *http.Request) string {
+	id, _ := numericSuffix(bearer(r), installationTokenPrefix)
+	n, _ := strconv.Atoi(id)
+	return accountOf(n)
 }
 
 func issueJSON(is *storedIssue) map[string]any {
@@ -439,9 +467,11 @@ func issueJSON(is *storedIssue) map[string]any {
 	}
 }
 
+// knownRepo returns the repository in the path, and whether it exists and
+// belongs to the requesting installation's account.
 func knownRepo(r *http.Request) (string, bool) {
 	full := r.PathValue("owner") + "/" + r.PathValue("repo")
-	return full, slices.Contains(repositories, full)
+	return full, slices.Contains(repositories, full) && r.PathValue("owner") == tokenAccount(r)
 }
 
 func notFound(w http.ResponseWriter) {
