@@ -83,7 +83,9 @@ func TestReportAccepted(t *testing.T) {
 		if json.Unmarshal(m.Data(), &got) == nil && got == msg {
 			found = true
 		}
-		m.Ack()
+		if err := m.Ack(); err != nil {
+			t.Error(err)
+		}
 	}
 	if !found {
 		t.Error("published message not received")
