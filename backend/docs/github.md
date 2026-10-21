@@ -1,12 +1,14 @@
 # GitHub integration
 
-This page explains how m-Seismo reaches an owner's GitHub repositories: why
-it uses a GitHub App, how the connect flow works and is secured, how tokens
-are handled, and how issues are opened. All the code is in
+This page explains how m-Seismo reaches GitHub repositories on behalf of an
+app. It covers why m-Seismo uses a GitHub App, who a connection belongs to,
+how the connect flow works and is secured, how tokens are handled, and how
+issues are opened. All the code is in
 `internal/provider/github/`, which is the only package that imports
 `google/go-github` and `bradleyfalzon/ghinstallation`.
 
 - [Why a GitHub App](#why-a-github-app)
+- [Who a connection belongs to](#who-a-connection-belongs-to)
 - [Credentials and token types](#credentials-and-token-types)
 - [The connect flow](#the-connect-flow)
 - [Why the callback needs the OAuth code](#why-the-callback-needs-the-oauth-code)
@@ -35,6 +37,58 @@ issues, read metadata". The two options compare like this:
 
 ---
 
+## Who a connection belongs to
+
+A connection belongs to an **app**, not to the owner. The chain is:
+
+```
+owner ─< app ─< provider_connection (tracker=github, external_id=<installation id>, account_login)
+          │
+          └─< app_projects >─ project ─< project_repository (tracker=github, repository=owner/name)
+```
+
+- **The GitHub side.** The m-Seismo GitHub App is *installed* on a GitHub
+  user or organisation. An installation reaches only that account's
+  repositories, and only those the installer selected. It is identified by
+  its **installation ID**.
+- **The m-Seismo side.** A `provider_connections` row says "this app may use
+  installation N", together with the account login it is on. The row is
+  created by the connect flow started for that app, or copied from another of
+  the owner's apps with *attach*.
+- **Projects have no credentials.** A project repository only names a
+  repository: `github` plus `octo-org/app`.
+- **Sending.** When an app reports, the issue service looks at each linked
+  project's default repository. It takes the first of the **app's** active
+  GitHub connections whose `account_login` is the repository's owner
+  (`Provider.Covers`) and opens the issue through that installation. If none
+  matches, that target fails with "no github connection on this app covers
+  octo-org/app", and the other targets go ahead.
+
+**Several apps, one installation.** A GitHub App is installed at most once per
+GitHub account, so two m-Seismo apps of the same owner that report into
+`octo-org` use the same installation. Each has its own connection row, which
+it can drop without affecting the other. They also share the same bot token
+and the same GitHub rate limits, because GitHub counts those per
+installation. With GitHub, separating apps is therefore about authorisation
+and configuration inside m-Seismo, not about separate secrets. GitLab and
+Bitbucket, which use per-user OAuth tokens, will have truly separate
+credentials per app.
+
+**Never across owners.** An installation can belong to only one owner. The
+database enforces this with the exclusion constraint
+`provider_connections_one_owner_per_account`. If a second owner completes the
+flow for an installation another owner already holds, they get "this github
+account is already connected by another owner", even when their GitHub user
+genuinely has access to it.
+
+**Who opens the issues.** API calls use an installation token minted from the
+App's private key, so issues and comments appear as `m-seismo[bot]`. The
+OAuth step during installation only proves *who installed* the App (see
+[Why the callback needs the OAuth code](#why-the-callback-needs-the-oauth-code)).
+Its user token is thrown away straight after.
+
+---
+
 ## Credentials and token types
 
 | Credential | Where it comes from | Lifetime | Used for |
@@ -45,11 +99,12 @@ issues, read metadata". The two options compare like this:
 | **Client ID / secret** | GitHub App settings | until rotated | exchanging the OAuth `code` at install time |
 | **User-to-server token** | `POST /login/oauth/access_token` | **used once, then dropped** | proving the installing user can access the installation |
 
-m-Seismo stores **no per-owner GitHub secret**. A `provider_connections` row
-holds only the installation ID and display data.
+m-Seismo stores **no GitHub secret per owner or per app**. A
+`provider_connections` row holds only the installation ID and display data.
 
-`Provider.installationClient(externalID)` keeps one `*github.Client` per
-installation ID in a mutex-guarded map. Each client wraps a
+`Provider.installation(externalID)` keeps one `*github.Client` per
+installation ID in a mutex-guarded map, shared by every app that uses that
+installation. Each client wraps a
 `ghinstallation.Transport` built with `NewFromAppsTransport`. The transport
 caches the installation token and refreshes it shortly before it expires, so
 repeated calls don't mint new tokens.
@@ -57,6 +112,9 @@ repeated calls don't mint new tokens.
 ---
 
 ## The connect flow
+
+The flow is started **for one app**. The Setup URL is the same for every app,
+because a GitHub App has exactly one. The app travels in the one-time state.
 
 ```mermaid
 sequenceDiagram
@@ -68,29 +126,33 @@ sequenceDiagram
     participant GH as github.com
     participant GAPI as api.github.com
 
-    UI->>API: GET /api/v1/providers/github/connect (Bearer JWT)
-    API->>R: SET provider_state:<random 32B> = "github:<ownerID>" EX 600
+    UI->>API: GET /api/v1/apps/{appID}/connect/github (Bearer JWT)
+    API->>API: GetApp(appID, owner) — 404 if not the owner's
+    API->>R: SET provider_state:<random 32B> = "github:<ownerID>:<appID>" EX 600
     API-->>UI: {"url": "https://github.com/apps/<slug>/installations/new?state=<s>"}
     UI->>B: navigate to url
     B->>GH: install App, pick account and repositories, authorise
     GH-->>B: 302 to Setup URL ?installation_id=42&setup_action=install&code=<c>&state=<s>
     B->>API: GET /api/v1/providers/github/callback?...
-    API->>R: GETDEL provider_state:<s> → "github:<ownerID>"
+    API->>R: GETDEL provider_state:<s> → "github:<ownerID>:<appID>"
     API->>GH: POST /login/oauth/access_token (client_id, client_secret, code)
     GH-->>API: {"access_token": "<user token>"}
     API->>GAPI: GET /user/installations (as the user)
     GAPI-->>API: [{id: 42, account: {login: "octo-org", type: "Organization"}}, …]
     API->>API: 42 in the list? yes → Account{42, octo-org, Organization}
-    API->>API: UpsertProviderConnection(owner, github, "42", …)
-    API-->>B: 302 {frontend_url}/settings/providers?status=connected&provider=github&connection_id=<uuid>
+    API->>API: UpsertProviderConnection(owner, app, github, "42", …)
+    API-->>B: 302 {frontend_url}/apps/{appID}/connections?status=connected&provider=github&connection_id=<uuid>
 ```
 
 What happens at each step, and where in the code:
 
-1. **`provider.Handler.connect`** calls `provider.Service.StartConnect`. It
-   generates 32 random bytes, encodes them as base64url (that's the state),
-   and stores `"<tracker>:<ownerID>"` in Redis under `provider_state:<state>`
-   with a **10-minute TTL**. It returns `Provider.InstallURL(state)`.
+1. **`app.Handler.connect`** calls `provider.Service.StartConnect(owner, app,
+   tracker)`:
+   - It checks that the app belongs to the owner (404 otherwise).
+   - It generates 32 random bytes, encoded as base64url: that is the state.
+   - It stores `"<tracker>:<ownerID>:<appID>"` in Redis under
+     `provider_state:<state>`, with a **10-minute TTL**.
+   - It returns `Provider.InstallURL(state)`.
 2. The API returns the URL as **JSON**, not a redirect. A single-page app
    sending a bearer token can't follow a cross-origin redirect usefully, so it
    navigates the window to the URL itself.
@@ -99,24 +161,45 @@ What happens at each step, and where in the code:
 4. **`provider.Service.FinishConnect`**:
    - takes the state with `GETDEL`, which makes it **single-use**: a replayed
      callback fails with "unknown or expired state";
-   - checks that the tracker stored in the state matches the path tracker;
-   - recovers the owner ID from the state, not from the request;
+   - checks that the state has all three parts and that its tracker matches
+     the path tracker;
+   - recovers the owner and the app from the state, not from the request;
    - calls `Provider.CompleteInstall` to verify the installation (next
      section);
-   - upserts the connection. If the installation already belongs to another
-     owner, the result is 409 "this account is already connected to another
-     owner".
-5. **`provider.Handler.callback`** always redirects to
-   `{server.frontend_url}/settings/providers` with
-   - `status=connected&provider=github&connection_id=…`, or
-   - `status=error&provider=github&reason=<client-safe message>`.
+   - upserts the connection for that app. The same installation on the same
+     app updates the existing row. If another owner already holds the
+     installation, the result is 409 "this github account is already
+     connected by another owner".
+5. **`provider.Handler.callback`** always redirects:
+   - to `{server.frontend_url}/apps/{appID}/connections` with
+     `status=connected&provider=github&connection_id=…`, or with
+     `status=error&provider=github&reason=<client-safe message>` when the
+     state was valid but something later failed;
+   - to `{server.frontend_url}/apps` with `status=error` when the state was
+     missing, unknown or malformed, because the app is unknown then.
 
    Internal errors are logged, and the reason is always "internal error".
 
 Re-installing, or changing which repositories the installation covers, runs
 the same flow. The upsert refreshes the login and type and clears
-`suspended_at`. The connection ID stays the same, so linked project
-repositories are kept.
+`suspended_at`. The connection ID stays the same.
+
+### Sharing an installation: attach
+
+Running the install flow again for an App that is already installed on an
+account only shows GitHub's settings page. To give a second app the same
+installation, the owner **attaches** an existing connection:
+
+```http
+POST /api/v1/apps/{appB}/connections
+{"connection_id": "<a connection of app A>"}
+```
+
+`provider.Service.AttachConnection` loads app B and the source connection as
+the same owner, refuses a suspended source, and upserts a copy for app B.
+There is no OAuth round trip, because the owner already proved access when
+the source connection was made. `GET /api/v1/providers/connections` lists
+every connection of every app of the owner, to choose from.
 
 ---
 
@@ -162,16 +245,25 @@ installation id".
 
 ## Listing and verifying repositories
 
-- **`ListRepositories(externalID)`** calls `GET /installation/repositories`
+- **`ListRepositories(c)`** calls `GET /installation/repositories`
   (`Apps.ListRepos`) as the installation, 100 per page, following
   `NextPage`. It returns `{full_name, private, url}` for each repository.
-  Exposed at `GET /api/v1/providers/connections/{id}/repositories`.
-- **`HasRepository(externalID, "owner/name")`** calls `GET /repos/{owner}/{name}`
-  as the installation. A 404 means the installation can't see the repository
+  Exposed at `GET /api/v1/apps/{appID}/connections/{id}/repositories`.
+- **`HasRepository(c, "owner/name")`** calls `GET /repos/{owner}/{name}` as
+  the installation. A 404 means the installation can't see the repository
   (not selected, or doesn't exist) and returns `false`. Other errors are
-  returned as errors. `project.Service.LinkRepository` uses this, through
-  `provider.Service.VerifyRepository`, so a project can only point at
-  repositories the connection can actually write to.
+  returned as errors. Nothing calls it on the request path any more. It is
+  kept for a future "check this app's targets against GitHub" action.
+- **`ValidateRepository("owner/name")`** checks the format only.
+  `project.Service.LinkRepository` calls it, so linking a repository to a
+  project needs no credentials and no GitHub call.
+- **`Covers(c, "owner/name")`** is true when `owner` equals the connection's
+  `account_login`, ignoring case, because an installation only ever reaches
+  its own account's repositories. The issue service uses it to choose the
+  app's connection for each target, without calling GitHub. A repository
+  that matches but wasn't selected for the installation fails when the issue
+  is opened (GitHub answers 404), and `GET /apps/{id}/targets` shows it as
+  covered.
 
 Repository names must be `owner/name`. `splitRepository` rejects anything
 else with 422.
@@ -180,8 +272,8 @@ else with 422.
 
 ## Opening issues
 
-`Provider.Opener(externalID)` returns an `opener` bound to the installation
-client. It implements `issue.Opener`:
+`Provider.Opener(c)` returns an `opener` bound to the installation client for
+`c.ExternalID`. It implements `issue.Opener`:
 
 | Method | GitHub call | Notes |
 |---|---|---|
@@ -330,8 +422,9 @@ is then configured but broken, and a startup failure makes that obvious.
 | State expired (more than 10 minutes on GitHub) or reused | redirect with `status=error&reason=unknown or expired state` |
 | Org install awaiting approval | `reason=installation requested; an organization owner must approve it first` |
 | User authorization not enabled on the App | `reason=missing authorization code: enable …` |
-| Installation already linked to another owner | `reason=this account is already connected to another owner` |
-| Linking a repository the installation can't see | `422 repository octo/x is not reachable through this connection` |
+| Installation already held by another owner | `reason=this github account is already connected by another owner` |
+| The app has no connection on the repository's account | target error `no github connection on this app covers octo-org/x`; `GET /apps/{id}/targets` shows it before anything is sent |
+| The installation doesn't include the repository | target error with GitHub's 404 when the issue is opened |
 | App uninstalled on GitHub, connection still in m-Seismo | Repository and issue calls fail. `issue.Service` reports the error for that target; HTTP calls return 500 and log the GitHub 404. Disconnect and reconnect to fix it. |
 | GitHub down | that target's `Result.Err` is set; the other targets go ahead |
 | GitHub rate limit | waited out when short; otherwise `429` / `*issue.RateLimitError`, see [Rate limits](#rate-limits) |
@@ -343,8 +436,9 @@ is then configured but broken, and a startup failure makes that obvious.
 - **Webhooks** (`installation.deleted`, `installation.suspend`,
   `installation_repositories`). These are needed to set `suspended_at` and
   clean up automatically. The column and the filters already exist.
-- **Uninstall on disconnect.** `DELETE /providers/connections/{id}` only
-  forgets the connection. The owner removes the App on GitHub themselves.
+- **Uninstall on disconnect.** `DELETE /apps/{id}/connections/{connectionID}`
+  only removes that app's connection; other apps sharing the installation
+  keep theirs. The owner removes the App on GitHub themselves.
 - **Retries / outbox.** A target that fails with a rate-limit error that is
   too long to wait for, or with any other error, is not retried later yet
   (FR-62). `*issue.RateLimitError.Wait` gives the delay. The NATS JetStream
