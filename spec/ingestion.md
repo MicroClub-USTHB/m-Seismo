@@ -72,6 +72,9 @@ A retried report counts against the rate limits like any other request.
 - **Enums are strict.** An unknown value for `platform`, `mode`, `trigger`,
   `consent`, `category`, `severity` or any other enum is rejected (`400`).
 - **Absent and `null`** mean the same thing: no value.
+- **UUIDs** (`id`, `installation_id`) are accepted in either case, since
+  iOS writes them uppercase. The backend lowercases them, so the same ID in
+  another case is the same report for idempotency.
 - **Crash reports.** When `trigger` is `crash` or `non_fatal`, `crash` is
   required. `session_id`, `logs` and `breadcrumbs` must come from the
   session that crashed, not from the launch that sends the report.

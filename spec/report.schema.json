@@ -203,8 +203,9 @@
   ],
   "$defs": {
     "uuid": {
+      "description": "UUID in its 36-character form, in either case (iOS writes uppercase). The backend compares and stores it lowercase.",
       "type": "string",
-      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
     },
     "timestamp": {
       "description": "RFC 3339 in UTC with milliseconds, e.g. 2026-10-18T14:03:12.123Z.",
