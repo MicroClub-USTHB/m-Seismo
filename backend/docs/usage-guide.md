@@ -17,7 +17,7 @@ Reference pages: [api.md](api.md) lists every endpoint;
 - **Part A: HTTP API**
   - [A1. Authentication lifecycle](#a1-authentication-lifecycle)
   - [A2. Onboarding workflow, end to end](#a2-onboarding-workflow-end-to-end)
-  - [A3. Handling the GitHub connect redirect in a frontend](#a3-handling-the-github-connect-redirect-in-a-frontend)
+  - [A3. Handling the connect redirect in a frontend](#a3-handling-the-connect-redirect-in-a-frontend)
   - [A4. Errors, retries and idempotency](#a4-errors-retries-and-idempotency)
   - [A5. A minimal client](#a5-a-minimal-client)
 - **Part B: Go interfaces**
@@ -101,22 +101,25 @@ flowchart TD
 |---|---|---|
 | 1 | `POST /auth/login {"email","password"}` | `token.access_token` |
 | 2 | `POST /apps {"name","platform":"ios","bundle_id"}` then `POST /apps/{appId}/keys` | `id`; and `secret`, which is **shown once**, so configure it in the SDK now |
-| 3 | `GET /apps/{appId}/connect/github`, then send the browser to `url` | after the redirect: `connection_id` (see A3) |
+| 3 | `GET /apps/{appId}/connect/github` (or `gitlab`, `bitbucket`), then send the browser to `url` | after the redirect: `connection_id` (see A3) |
 | 4 | `GET /apps/{appId}/connections/{connection_id}/repositories` | a `full_name`, e.g. `octo-org/shop-ios` |
 | 5 | `POST /projects {"name":"Shop Mobile"}` | `id` |
-| 6 | `POST /projects/{id}/repositories {"tracker":"github","repository":"octo-org/shop-ios"}` | the first one becomes the default automatically |
+| 6 | `POST /projects/{id}/repositories {"tracker":"github","repository":"octo-org/shop-ios"}` (GitLab: `"group/sub/project"`; Bitbucket: `"workspace/repo"`) | the first one becomes the default automatically |
 | 7 | `PUT /apps/{appId}/projects/{id}` | — (204) |
 | 8 | `GET /apps/{appId}/targets` | every entry should have a `connection_id` and no `error` |
-| 9 | `POST /apps/{appId}/test-issue` | `results[].url`: open it and check the issue on GitHub |
+| 9 | `POST /apps/{appId}/test-issue` | `results[].url`: open it and check the issue on the tracker |
 
 **A second app.** It needs its own connection before it can report:
 
-- If it reports into the same GitHub account as the first app, **attach**
-  the first app's connection: `POST /apps/{app2}/connections
+- **GitHub:** if it reports into the same GitHub account as the first app,
+  **attach** the first app's connection: `POST /apps/{app2}/connections
   {"connection_id": "<first app's connection>"}`. No GitHub round trip is
   needed. `GET /providers/connections` lists every connection you have to
-  choose from.
-- If it reports into a different account, run step 3 for it.
+  choose from. For a different account, run step 3 for it.
+- **GitLab and Bitbucket:** always run step 3 for the second app. The OAuth
+  authorization belongs to the app that made it, so attaching is refused
+  with 422. The same GitLab or Bitbucket user may authorise both apps; each
+  app gets its own token.
 
 Variations:
 
@@ -131,13 +134,17 @@ Variations:
 - **Several GitHub organisations:** connect the app once per organisation
   (step 3 again). The issue service picks the connection whose account owns
   each repository.
+- **Several trackers:** one project can have repositories on GitHub, GitLab
+  and Bitbucket. Only the default receives issues, so give the app a
+  connection on the default repository's tracker. One app can report into
+  projects on different trackers, each through its own connection there.
 - **Separate credentials per app:** because connections are per app, two
   apps feeding the same project can use different installations, or one of
   them can have none. A target without a connection fails with
   `no github connection on this app covers …`, and the other targets still
   go through.
 
-## A3. Handling the GitHub connect redirect in a frontend
+## A3. Handling the connect redirect in a frontend
 
 `GET /apps/{appId}/connect/github` returns JSON, not a redirect, because a
 page that sends a bearer token cannot follow a cross-origin redirect
@@ -470,13 +477,13 @@ func (s *Service) ListRepositories(ctx, ownerID, appID, connectionID uuid.UUID) 
 ## B5. Implementing a tracker: `provider.Provider`
 
 The method-by-method contract (step-by-step recipe in
-[extending.md](extending.md#add-a-tracker-gitlab-bitbucket)):
+[extending.md](extending.md#add-a-tracker)):
 
 | Method | Must | Must not |
 |---|---|---|
 | `Tracker()` | return a `db.Tracker` enum value | — |
 | `InstallURL(state)` | return the tracker's authorise/install URL carrying `state` unchanged | — |
-| `CompleteInstall(ctx, query)` | **verify** the grant with the tracker, using credentials that belong to the user (e.g. an OAuth code exchange); return `ExternalID`, `Login` and `Type`; return `apperr.Invalid` for user errors | trust IDs in `query` without verifying them |
+| `CompleteInstall(ctx, query)` | **verify** the grant with the tracker, using credentials that belong to the user (e.g. an OAuth code exchange); return `ExternalID`, `Login`, `Type`, and the credentials to keep in `Secret` (OAuth trackers; `provider.Service` stores them encrypted per connection); return `apperr.Invalid` for user errors | trust IDs in `query` without verifying them; return a token anywhere but `Secret` |
 | `ListRepositories(ctx, c)` | return every reachable repository (paginate); return `[]`, not nil, when empty | — |
 | `HasRepository(ctx, c, repo)` | return `false, nil` when the repository is not reachable; an error only for real failures; `apperr.Invalid` for malformed names | report "not found" as an error |
 | `ValidateRepository(repo)` | check the tracker's name format; `apperr.Invalid` when wrong | call the tracker |
@@ -584,5 +591,5 @@ a release.
 | GitHub writes | serialised per installation, at least `github.min_write_interval` apart |
 | Rate limits | waited out when the wait is ≤ `github.max_rate_limit_wait` and fits the context; otherwise a typed `*issue.RateLimitError` |
 | No duplicate issues from retries | only rate-limited (unprocessed) requests are retried automatically |
-| Secrets | passwords bcrypt-hashed; SDK keys SHA-256-hashed and shown once; no GitHub token stored (per owner or per app) |
+| Secrets | passwords bcrypt-hashed; SDK keys SHA-256-hashed and shown once; no GitHub token stored; GitLab and Bitbucket tokens AES-256-GCM-encrypted per app connection and never returned |
 | Partial delivery | one failing target never blocks the others; every target has its own `Result` |

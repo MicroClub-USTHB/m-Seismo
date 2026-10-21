@@ -32,6 +32,7 @@ erDiagram
     project_repositories ||--o{ issues : "contains"
     apps |o--o{ issues : "reported by"
     provider_connections |o--o{ issues : "opened through"
+    provider_connections ||--o| connection_secrets : "OAuth token (GitLab, Bitbucket)"
 
     owners {
         uuid id PK
@@ -75,6 +76,12 @@ erDiagram
         text account_login
         text account_type "User|Organization"
         timestamptz suspended_at "nullable"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    connection_secrets {
+        uuid provider_connection_id PK,FK
+        bytea ciphertext "AES-256-GCM(token JSON)"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -187,7 +194,7 @@ and its tracker connections.
 An **app's** link to a tracker account. On GitHub, one row means "this app
 uses this GitHub App installation", and the installation is on one user or
 organisation. An app can have several connections, on one tracker or on
-several, such as two GitHub organisations plus a GitLab group later.
+several, such as two GitHub organisations plus a GitLab account.
 
 | Column | Notes |
 |---|---|
@@ -210,10 +217,32 @@ Constraints:
   is SQLSTATE `23P01`, which `apperr.Classify` maps to 409.
 - Index on `app_id`; the old `owner_id` index stays for the owner-wide list.
 
-No token is stored. GitHub access uses installation tokens, minted on demand
-from the App's private key (see [github.md](github.md)). GitLab and Bitbucket
-will need stored OAuth tokens. The plan is a separate encrypted table keyed by
-`provider_connections.id` (see [extending.md](extending.md)).
+A GitHub connection stores no token: GitHub access uses installation
+tokens, minted on demand from the App's private key (see
+[github.md](github.md)). A GitLab or Bitbucket connection has its OAuth token
+in `connection_secrets`, next.
+
+| Tracker | `external_id` | `account_login` |
+|---|---|---|
+| `github` | App installation ID | the user or organisation it is installed on |
+| `gitlab` | GitLab user ID | GitLab username |
+| `bitbucket` | Bitbucket user UUID (`{…}`) | Bitbucket username |
+
+### `connection_secrets`
+
+The credentials of connections that need them: GitLab and Bitbucket OAuth
+tokens. There is at most one row per connection.
+
+| Column | Notes |
+|---|---|
+| `provider_connection_id` | Primary key, FK → `provider_connections ON DELETE CASCADE`. Removing the connection, its app or its owner removes the token. |
+| `ciphertext` | `nonce ‖ AES-256-GCM(token JSON)`, with the connection ID as associated data, so a ciphertext copied into another row fails to decrypt. The key is `secrets.encryption_key`; the database never sees the plaintext. |
+| `created_at`, `updated_at` | `updated_at` changes on every reconnect and every token refresh. |
+
+The token JSON is `{"access_token", "refresh_token", "expiry"}`
+(`oauth.Token`). Only `provider.SecretStore` writes the table:
+`provider.Service` on connect, `oauth.Tokens` after a refresh. See
+[gitlab-bitbucket.md → Token storage](gitlab-bitbucket.md#token-storage-and-encryption).
 
 ### `app_keys`
 
@@ -281,25 +310,28 @@ DELETE owner
      ├─ app_keys            CASCADE
      ├─ app_projects        CASCADE
      ├─ provider_connections CASCADE
+     │   ├─ connection_secrets CASCADE
      │   └─ issues.provider_connection_id SET NULL
      └─ issues.app_id       SET NULL
 
-DELETE provider_connection → only that app loses it. Other apps sharing the same tracker
-                             account keep their own rows; project repositories are untouched;
-                             issues it opened keep provider_connection_id = NULL.
+DELETE provider_connection → only that app loses it, with its stored token. Other apps
+                             sharing the same tracker account keep their own rows; project
+                             repositories are untouched; issues it opened keep
+                             provider_connection_id = NULL.
 DELETE project_repository  → its issues are removed; if it was the default, the project has none
                              until another is set with PUT …/default.
 DELETE app                 → keys, links and connections removed; issues keep app_id = NULL
                              and provider_connection_id = NULL.
 ```
 
-Deleting rows in m-Seismo never deletes anything on GitHub.
+Deleting rows in m-Seismo never deletes anything on GitHub, GitLab or
+Bitbucket, and does not revoke the OAuth grant there.
 
 ---
 
 ## The migrations
 
-There are two migrations, in dbmate format (`-- migrate:up` /
+There are three migrations for these features, in dbmate format (`-- migrate:up` /
 `-- migrate:down`).
 
 ### `20261017120000_owners_apps_providers.sql`
@@ -372,8 +404,17 @@ the second app. After `up`, each app had its own copy, the issue pointed at
 the second app's copy, and that app could still open issues. After `down`
 and `up` again, the result was the same.
 
-`db/schema.sql` is the pg_dump snapshot sqlc reads. It was regenerated from
-the dev database with `dbmate dump` after applying this migration. The
+### `20261022120000_connection_secrets.sql`
+
+Creates `connection_secrets`. The down migration drops it, along with every
+stored GitLab and Bitbucket token; those apps then have to reconnect. Both
+directions were run on the dev database.
+
+`20261018120000_create_reports.sql` (ingestion, from `main`) runs between
+these migrations and doesn't touch connections.
+
+`db/schema.sql` is the pg_dump snapshot sqlc reads. It is regenerated from
+the dev database with `dbmate dump` after applying the migrations. The
 `\restrict` lines that pg_dump 18 adds are stripped, as `make db-up` does.
 
 ---
@@ -470,6 +511,16 @@ owner's data from another (see
 | `LinkAppProject` | `:exec` | `ON CONFLICT DO NOTHING` |
 | `UnlinkAppProject` | `:execrows` | |
 | `ListAppProjects` | `:many` | the projects joined through `app_projects` |
+
+### `connection_secrets.sql`
+
+| Query | Kind | Notes |
+|---|---|---|
+| `UpsertConnectionSecret` | `:exec` | insert or replace the ciphertext of a connection; used on connect and after a token refresh |
+| `GetConnectionSecret` | `:one` | the ciphertext; no row means the connection has no secret (`provider.ErrNoSecret`) |
+
+Both are only called through `provider.SecretStore`, which encrypts and
+decrypts.
 
 ### `issues.sql`
 

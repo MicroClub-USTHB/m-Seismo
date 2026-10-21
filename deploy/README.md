@@ -11,6 +11,8 @@
 | `nats` | `nats:2-alpine` (JetStream on) | — | queue, connected but not used yet |
 | `migrate` | `ghcr.io/amacneil/dbmate:2` | — | applies `backend/db/migrations`, then exits |
 | `fakegithub` | built from `backend/Dockerfile` (target `fakegithub`) | `9090` (`FAKEGITHUB_PORT`) | stand-in for github.com and api.github.com |
+| `fakegitlab` | built from `backend/Dockerfile` (target `fakegitlab`) | `9091` (`FAKEGITLAB_PORT`) | stand-in for gitlab.com (OAuth and API v4) |
+| `fakebitbucket` | built from `backend/Dockerfile` (target `fakebitbucket`) | `9092` (`FAKEBITBUCKET_PORT`) | stand-in for bitbucket.org and api.bitbucket.org |
 | `backend` | built from `backend/Dockerfile` (target `backend`) | `8080` (`BACKEND_PORT`) | the API |
 
 ```sh
@@ -23,8 +25,8 @@ make dev-reset       # stop and delete the database and NATS volumes
 ```
 
 Startup order is enforced with health checks: Postgres → `migrate` (must
-exit 0) → backend. The backend also waits for Redis, NATS and the fake
-GitHub to be healthy.
+exit 0) → backend. The backend also waits for Redis, NATS and the three
+fakes to be healthy.
 
 ### Fake GitHub
 
@@ -53,6 +55,24 @@ opening work without a GitHub App, credentials or a browser:
 The fake is for development and tests only. It doesn't verify JWT
 signatures.
 
+### Fake GitLab and fake Bitbucket
+
+The backend's GitLab and Bitbucket providers point at `fakegitlab` and
+`fakebitbucket` by default. They are the same code the provider unit tests
+use:
+
+- OAuth code `fake-code-N` authorises as user `N`; `fake-code-N-short` gives
+  a token that expires at once, which exercises the refresh.
+- Repositories `seismo-group/…` (GitLab, including `sub/nested`) and
+  `seismo-ws/…` (Bitbucket), each with a `broken`, `limited` and `exhausted`
+  repository, as on the fake GitHub.
+- `GET /_fake/issues`, `GET /_fake/stats` and `POST /_fake/revoke?user=N`.
+
+The tokens they hand out are stored encrypted with
+`SEISMO_SECRETS_ENCRYPTION_KEY`. It is empty in the dev stack, so a fixed
+development key is used. See
+[backend/docs/gitlab-bitbucket.md](../backend/docs/gitlab-bitbucket.md#the-fakes).
+
 ### Using a real GitHub App
 
 Copy `deploy/.env.example` to `deploy/.env` and fill in the
@@ -65,6 +85,14 @@ The App's Callback URL must reach your machine:
 install from a browser on the same machine. See
 [backend/docs/github.md](../backend/docs/github.md#creating-the-github-app).
 
+### Using a real GitLab application or Bitbucket consumer
+
+Set `SEISMO_GITLAB_*` or `SEISMO_BITBUCKET_*` in `deploy/.env` (client ID and
+secret, plus the real web and API URLs), and an encryption key. The
+callback URLs to register are
+`http://localhost:8080/api/v1/providers/gitlab/callback` and
+`…/providers/bitbucket/callback`. See `deploy/.env.example`.
+
 ### Image
 
 `backend/Dockerfile` is multi-stage:
@@ -73,7 +101,8 @@ install from a browser on the same machine. See
    mounted.
 2. The runtime stage is `alpine:3.22`, running as non-root user `seismo`
    (uid 10001), with a `wget`-based `HEALTHCHECK`.
-3. There are two final targets, `backend` (default) and `fakegithub`.
+3. The final targets are `backend` (default), `fakegithub`, `fakegitlab`
+   and `fakebitbucket`.
 
 Build only the backend image:
 

@@ -12,6 +12,7 @@ The work came in three rounds, and the sections follow them:
 2. The dev stack, test-issue action and rate limits.
 3. App-scoped connections, which moved tracker connections from the owner to
    the app.
+4. GitLab and Bitbucket, reached with per-app OAuth tokens.
 
 Where round 3 changed a file described earlier, the earlier entry is updated
 and points to the [last section](#app-scoped-connections).
@@ -35,6 +36,7 @@ them**. Change the SQL and regenerate.
 - [`internal/app`](#internalapp)
 - [Dev stack, test-issue action and rate limits](#dev-stack-test-issue-action-and-rate-limits)
 - [App-scoped connections](#app-scoped-connections)
+- [GitLab and Bitbucket](#gitlab-and-bitbucket)
 
 ---
 
@@ -934,3 +936,142 @@ the connection used.
 | `internal/provider/github/github_test.go` | `Covers` (case, other accounts, malformed names); `ValidateRepository` |
 | `internal/httpx/httpx_test.go` | `23P01` → 409 |
 | `scripts/api/providers.sh`, `issues.sh`, `lib.sh` | see [test-scripts.md](test-scripts.md) |
+
+---
+
+## GitLab and Bitbucket
+
+Round 4 added GitLab (gitlab.com or self-managed) and Bitbucket Cloud. Each
+app runs its own OAuth flow, and its token is stored encrypted for that
+app's connection. The model is explained in
+[gitlab-bitbucket.md](gitlab-bitbucket.md).
+
+### `internal/secrets/secrets.go` (new)
+
+- `Cipher`: AES-256-GCM. `Seal(plaintext, aad)` prepends a random nonce;
+  `Open(ciphertext, aad)` refuses a wrong key, wrong associated data or
+  tampering.
+- `New(key)` takes a 32-byte key, or nil for a keyless cipher whose every
+  call returns `ErrNoKey`.
+- `FromConfig` decodes `secrets.encryption_key` (base64). In development, an
+  empty key becomes a fixed development key, with a warning.
+- `Module` provides `*Cipher`.
+
+### `db/migrations/20261022120000_connection_secrets.sql`, `db/queries/connection_secrets.sql` (new)
+
+- The `connection_secrets` table: one ciphertext per connection, cascading
+  with it.
+- `UpsertConnectionSecret` and `GetConnectionSecret`.
+- `schema.sql` and `internal/db` are regenerated.
+
+### `internal/provider/secrets.go` (new)
+
+- `SecretStore` (`Load` / `Save` per connection) and `ErrNoSecret`.
+- `NewDBSecretStore(q, cipher)` seals with the connection ID as associated
+  data. `provider.Module` provides it.
+
+### `internal/provider/provider.go`, `service.go`, `handler.go` (changed)
+
+- `Account.Secret` carries the credentials to keep.
+- `Service.upsert` saves a non-nil `Secret` for the connection.
+  `NewService` takes the `SecretStore`.
+- `AttachConnection` refuses a source connection that has a stored secret,
+  answering 422 "… cannot be shared".
+
+### `internal/provider/oauth/token.go` (new)
+
+- `Token` (JSON-encoded for storage), with `Encode` and `DecodeToken`.
+- `Endpoint`: `AuthCodeURL`, `Exchange` and `Refresh`. Client credentials go
+  in the form body or with HTTP Basic. A rejected code is `apperr.Invalid`;
+  a rejected refresh is `ErrRevoked` "…; connect the app again". A refresh
+  without a new refresh token keeps the old one.
+- `Store`: the subset of `provider.SecretStore` it needs, declared locally
+  so `oauth` does not import `provider`.
+- `Tokens`: a per-connection lock, refresh within a minute of expiry, save
+  after a refresh, and `Renew(rejected)` after a 401 that refreshes only if
+  nobody already did.
+
+### `internal/provider/oauth/client.go` (new)
+
+- `Auth` (`Tokens.For(connectionID)`, `StaticToken`).
+- `Client.Do(ctx, auth, method, path, in, out)`:
+  - JSON in and out;
+  - relative paths keep `%2F`;
+  - absolute URLs only on the API host;
+  - one renew-and-retry on 401;
+  - 429 waited out or turned into `*issue.RateLimitError`.
+- `APIError` and `IsStatus` read GitLab and Bitbucket error bodies.
+
+### `internal/provider/gitlab/gitlab.go`, `opener.go` (new)
+
+- `FromConfig` / `New` / `Options`.
+- The `Provider` methods:
+  - the authorize URL with scope `api`;
+  - `CompleteInstall`: denied, missing code, exchange, `GET /user`, and the
+    token as `Secret`;
+  - project listing with `X-Next-Page`;
+  - `HasRepository`, `ValidateRepository` (nested paths) and `Covers`
+    (any valid path).
+- The opener: labels as a comma-separated list, milestone by title,
+  assignees by username, notes, and `state == "opened"`. Project paths are
+  URL-encoded.
+
+### `internal/provider/gitlab/fakegitlab/fakegitlab.go` (new)
+
+The fake GitLab, as an importable package: OAuth grants with rotating
+refresh tokens, the API v4 endpoints the provider uses, special projects and
+inspection endpoints. See
+[test-scripts.md → contracts](test-scripts.md#the-fake-gitlab-and-bitbucket-contracts).
+
+### `internal/provider/bitbucket/bitbucket.go`, `opener.go` (new)
+
+- The same shape for Bitbucket Cloud: HTTP Basic client credentials, no
+  scope parameter, `GET /user` (uuid), and `next`-link pagination.
+- The opener puts labels at the end of the body, sends `kind: bug`, skips
+  assignees, and maps the open/closed states.
+
+### `internal/provider/bitbucket/fakebitbucket/fakebitbucket.go` (new)
+
+The fake Bitbucket (OAuth and API 2.0 on one host), including a repository
+with its issue tracker turned off.
+
+### `cmd/fakegitlab/main.go`, `cmd/fakebitbucket/main.go` (new)
+
+These serve the fakes on `:9091` and `:9092`.
+
+### `internal/config/*` (changed)
+
+- `OAuthTrackerConfig` for `gitlab` and `bitbucket`, and `SecretsConfig`.
+- The redirect URLs are derived from `server.public_url`.
+- `validate` requires `secrets.encryption_key` outside development once
+  either tracker is configured.
+
+### `main.go`, `Dockerfile`, `deploy/compose.dev.yml`, `deploy/.env.example` (changed)
+
+- `secrets.Module`, `gitlab.Module` and `bitbucket.Module` are in the graph.
+- Two image targets and two compose services. The backend's defaults point
+  at the fakes and it waits for them to be healthy.
+- The env example documents real GitLab and Bitbucket setups and the
+  encryption key.
+
+### Scripts (new / changed)
+
+- `scripts/api/oauth_suite.sh`: the shared OAuth tracker suite.
+- `gitlab.sh` and `bitbucket.sh`: fixtures plus tracker-specific checks.
+- `lib.sh`: `start_connect`, `tracker_callback`, `tracker_connect` and
+  `fake_tracker_*`.
+- `all.sh` runs eight scripts.
+- `providers.sh` uses `jira` as its unknown tracker and expects all three
+  providers.
+
+See [test-scripts.md](test-scripts.md).
+
+### Tests
+
+| File | Covers |
+|---|---|
+| `internal/secrets/secrets_test.go` | round trip, nonces, wrong row/key, tampering, keyless, dev key, config |
+| `internal/provider/oauth/oauth_test.go` | exchange (body and Basic), refresh and rotation, concurrent refresh once, renew after 401, revoked, 429 handling, error bodies, host check |
+| `internal/provider/gitlab/gitlab_test.go`, `internal/provider/bitbucket/bitbucket_test.go` | every provider and opener method against the in-process fake, refresh, revocation, two apps of one user, failures and rate limits |
+| `internal/provider/service_test.go` | token saved on connect, attach refused for OAuth connections, `NewDBSecretStore` encryption and row binding |
+| `internal/config/config_test.go` | tracker settings, derived redirects, the encryption key rule |

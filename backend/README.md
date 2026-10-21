@@ -16,7 +16,8 @@ owner ──< project ──< project_repository  (tracker + owner/name, one def
   │          │
   └──< app >─┘  (app_projects, many-to-many)
         ├──< app_key              (SDK keys, stored hashed)
-        └──< provider_connection  (the app's credentials: a GitHub App installation, …)
+        └──< provider_connection  (the app's credentials: a GitHub App installation,
+                                    a GitLab or Bitbucket OAuth token, stored encrypted)
 issue  ── opened in a project_repository, by an app, through one of its connections
 ```
 
@@ -27,18 +28,22 @@ issue  ── opened in a project_repository, by an app, through one of its conn
   credentials.
 - An **app** is a source of issues. It holds the SDK keys, links to any
   number of the owner's projects, and has its **own provider connections**.
-  On GitHub, a connection is an installation of the m-Seismo GitHub App.
-  Apps of one owner may share an installation; two owners can't.
+  On GitHub, a connection is an installation of the m-Seismo GitHub App,
+  and apps of one owner may share an installation. On GitLab and Bitbucket,
+  each app runs its own OAuth flow and keeps its own encrypted token. Two
+  owners never share a tracker account.
 - `issue.Service.OpenForApp` opens an issue in the default repository of
   every linked project, each **through the app's own connection** whose
   account covers that repository. Two apps feeding one project therefore
   use their own credentials, and a target the app has no connection for
   fails on its own. See [docs/github.md](docs/github.md#who-a-connection-belongs-to).
 
-Trackers plug in under `internal/provider/<tracker>/`. Each one implements
-`provider.Provider` (the connect flow, repository listing and `issue.Opener`)
-and adds itself to the `providers` fx group. GitLab and Bitbucket go there
-later.
+Trackers plug in under `internal/provider/<tracker>/`: `github`, `gitlab`
+and `bitbucket`. Each one implements `provider.Provider` (the connect flow,
+repository listing and `issue.Opener`) and adds itself to the `providers` fx
+group. GitLab and Bitbucket share the OAuth and REST plumbing in
+`internal/provider/oauth`. See
+[docs/gitlab-bitbucket.md](docs/gitlab-bitbucket.md).
 
 ## Running
 
@@ -87,6 +92,17 @@ owner's apps.
 6. Set `SEISMO_GITHUB_*` in `.env`. If `SEISMO_GITHUB_APP_ID` is unset, the
    GitHub provider is disabled and the rest of the API still runs.
 
+## GitLab and Bitbucket setup
+
+Create a GitLab application (scope `api`) and/or a Bitbucket OAuth consumer
+(Account Read, Repositories Read, Issues Write). Their callback URLs are
+`{SEISMO_SERVER_PUBLIC_URL}/api/v1/providers/gitlab/callback` and
+`…/bitbucket/callback`. Then set `SEISMO_GITLAB_CLIENT_ID` / `_SECRET`,
+`SEISMO_BITBUCKET_CLIENT_ID` / `_SECRET`, and `SEISMO_SECRETS_ENCRYPTION_KEY`
+(`openssl rand -base64 32`; required outside development). Unset client IDs
+turn the tracker off. Step by step in
+[docs/gitlab-bitbucket.md](docs/gitlab-bitbucket.md#setting-up-a-real-gitlab-application).
+
 ## API (`/api/v1`)
 
 Every route except register, login and the provider callback needs
@@ -99,7 +115,7 @@ Every route except register, login and the provider callback needs
 | GET / PATCH / DELETE | `/owners/me` | changing the email or password requires `current_password` |
 | POST / GET | `/projects` | `{name, slug?}` |
 | GET / PATCH / DELETE | `/projects/{id}` | |
-| GET / POST | `/projects/{id}/repositories` | `{tracker: "github", repository: "owner/name", is_default}` (no credentials) |
+| GET / POST | `/projects/{id}/repositories` | `{tracker: "github"\|"gitlab"\|"bitbucket", repository, is_default}` (no credentials) |
 | PUT | `/projects/{id}/repositories/{repoID}/default` | |
 | DELETE | `/projects/{id}/repositories/{repoID}` | |
 | POST / GET | `/apps` | `{name, platform: ios\|android\|flutter\|react_native, bundle_id}` |
@@ -109,7 +125,7 @@ Every route except register, login and the provider callback needs
 | GET | `/apps/{id}/projects` | |
 | PUT / DELETE | `/apps/{id}/projects/{projectID}` | link / unlink |
 | GET | `/apps/{id}/connect/{tracker}` | → `{url}`; send the browser there to connect **this app** |
-| GET / POST | `/apps/{id}/connections` | list; or `{connection_id}` to attach another of your apps' connections |
+| GET / POST | `/apps/{id}/connections` | list; or `{connection_id}` to attach another of your apps' GitHub connections (GitLab and Bitbucket can't be shared) |
 | DELETE | `/apps/{id}/connections/{connectionID}` | only this app loses it; the App stays installed on GitHub |
 | GET | `/apps/{id}/connections/{connectionID}/repositories` | |
 | GET | `/apps/{id}/targets` | where the app's issues would go, and through which connection |

@@ -156,6 +156,9 @@ Projects hold no credentials, so each target is paired with one of the
    which `OpenerSource.Covers(conn, repository)` is true.
    - GitHub: the repository owner equals the installation's `account_login`,
      ignoring case.
+   - GitLab and Bitbucket: any valid repository name. An OAuth token reaches
+     whatever its user can see, so the app's first connection on that
+     tracker is used.
    - A connection on a tracker this deployment doesn't configure covers
      nothing.
 3. No match: the target's `Err` wraps `ErrNoConnection`, for example

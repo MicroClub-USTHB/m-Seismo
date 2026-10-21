@@ -29,8 +29,10 @@ hands each message to one of them.
    requests. Network request bodies are never included, and an `@` in
    reporter-written text can't notify anyone on GitHub.
 5. Opens the issue in each target that doesn't have it yet, through
-   `issue.Service.OpenInRepository`, and records each one in
-   `report_deliveries`.
+   `issue.Service.OpenInRepository(ctx, appID, repositoryID, draft)`, and
+   records each one in `report_deliveries`. Each issue goes through the
+   reporting **app's own connection** for that repository's tracker (see
+   [issue-service.md](issue-service.md#which-connection-opens-it)).
 6. Sets `processed_at` once every target has its issue, then acknowledges
    the message.
 
@@ -67,6 +69,7 @@ worker that stopped loses its messages to another one.
 | Permanent: report gone, unreadable, app with no target | logs a warning and terminates the message |
 | Tracker rate limit (`issue.RateLimitError`) | hands the message back to come again after the tracker's wait |
 | Other error (tracker down, network, database) | hands it back after 5 s, 30 s, 2 min, 10 min, then every 30 min |
+| The app has no connection for a target (`issue.ErrNoConnection`) | treated like any other error: retried on the same schedule, so the issue still opens if the owner connects the app in time, then terminated at `worker.max_attempts` |
 | `worker.max_attempts` reached | logs an error and terminates the message; the report keeps `processed_at` empty |
 | Shutdown | waits for the reports in progress; past the shutdown timeout their work is cancelled and their messages come back at once |
 

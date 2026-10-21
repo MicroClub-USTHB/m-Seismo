@@ -213,9 +213,12 @@ Repository object:
 
 → `201` repository.
 
-- `tracker` must be configured on this deployment (`GET /providers`). The
-  name format is checked for that tracker (`owner/name` on GitHub). The
-  tracker itself is **not** called, so the repository doesn't have to be
+- `tracker` must be configured on this deployment (`GET /providers`): one
+  of `github`, `gitlab`, `bitbucket`.
+- The name format is checked for that tracker: `owner/name` on GitHub,
+  `group/project` or `group/subgroup/…/project` on GitLab, and
+  `workspace/repo_slug` on Bitbucket.
+- The tracker itself is **not** called, so the repository doesn't have to be
   reachable yet. `GET /apps/{appID}/targets` shows, per app, whether it is.
 - `is_default: true` moves the default to this repository.
 - **The first repository linked to a project always becomes the default**,
@@ -225,8 +228,8 @@ Repository object:
 |---|---|
 | project not yours / missing | 404 |
 | `tracker` missing | 422 `tracker is required` |
-| `tracker` not configured | 404 `provider gitlab is not available` |
-| `repository` empty / not `owner/name` | 422 |
+| `tracker` unknown or not configured | 404 `provider jira is not available` |
+| `repository` empty, or not in the tracker's format | 422 |
 | `connection_id` sent (the old body) | 422 (unknown field) |
 | already linked | 409 `repository is already linked to this project` |
 
@@ -302,10 +305,17 @@ each through the app's own connection (see
 ## App connections
 
 An app's connections are the tracker accounts it can open issues through:
-its credentials. On GitHub, a connection is one installation of the m-Seismo
-GitHub App on a user or organisation. An app can have several connections,
-for example one per GitHub organisation. Apps of the same owner may share an
-installation, each with its own connection; two owners never can.
+its credentials. An app can have several connections, on several trackers.
+
+- **GitHub:** one installation of the m-Seismo GitHub App on a user or
+  organisation, for example one per GitHub organisation. Apps of the same
+  owner may share an installation, each with its own connection.
+- **GitLab, Bitbucket:** one user's OAuth authorization, made **by this
+  app**. The token is stored encrypted for this connection only and never
+  returned. Each app authorises on its own, and these connections cannot be
+  attached to another app (see
+  [gitlab-bitbucket.md](gitlab-bitbucket.md#the-oauth-authorization-belongs-to-the-app)).
+- Two owners never share a tracker account.
 
 Connection object:
 
@@ -319,18 +329,24 @@ Connection object:
 
 ### `GET /apps/{appID}/connect/{tracker}`
 
-→ `200` `{"url": "https://github.com/apps/m-seismo/installations/new?state=…"}`.
+→ `200` `{"url": …}`, where `url` is:
+
+| Tracker | `url` |
+|---|---|
+| `github` | `https://github.com/apps/m-seismo/installations/new?state=…` |
+| `gitlab` | `https://gitlab.com/oauth/authorize?client_id=…&redirect_uri=…&response_type=code&scope=api&state=…` |
+| `bitbucket` | `https://bitbucket.org/site/oauth2/authorize?client_id=…&redirect_uri=…&response_type=code&state=…` |
 
 - Send the browser to `url`. The state inside it is valid for 10 minutes,
   can be used once, and remembers the owner **and the app**.
-- When the install finishes, GitHub calls the
+- When the install or authorization finishes, the tracker calls the
   [callback](#get-providerstrackercallback-public-called-by-github), which
   saves the connection on this app.
 
 | Failure | Error |
 |---|---|
 | app not yours / missing | 404 `app not found` |
-| tracker not configured | 404 `provider gitlab is not available` |
+| tracker unknown or not configured | 404 `provider jira is not available` |
 
 ### `GET /apps/{appID}/connections`
 
@@ -344,9 +360,11 @@ Connection object:
 
 → `201` connection: this app's own connection to the same tracker account.
 
-- Use this to share an installation between apps without going through
-  GitHub again. On GitHub, re-installing an App that is already installed only
-  shows its settings page.
+- Use this to share a GitHub installation between apps without going
+  through GitHub again. On GitHub, re-installing an App that is already
+  installed only shows its settings page.
+- GitLab and Bitbucket connections can't be attached: each app runs its own
+  OAuth flow with `GET /apps/{appID}/connect/{tracker}`.
 - It is idempotent: attaching the same account again returns the app's
   existing connection.
 
@@ -354,6 +372,7 @@ Connection object:
 |---|---|
 | app or source connection not yours / missing | 404 |
 | source connection suspended | 422 `connection is suspended` |
+| source is a GitLab or Bitbucket connection | 422 `gitlab connections use the app's own OAuth authorization and cannot be shared; …` |
 
 ### `DELETE /apps/{appID}/connections/{connectionID}`
 
@@ -481,14 +500,19 @@ just takes longer. See [github.md → Rate limits](github.md#rate-limits).
 
 ### `GET /providers`
 
-→ `200` `{"providers": ["github"]}`: the trackers configured on this
-deployment. The list is empty when no GitHub App is configured.
+→ `200` `{"providers": ["bitbucket", "github", "gitlab"]}`: the trackers
+configured on this deployment, sorted. A tracker is left out when its
+credentials aren't set (`github.app_id`, `gitlab.client_id`,
+`bitbucket.client_id`).
 
 ### `GET /providers/{tracker}/callback` (public, called by GitHub)
 
-This isn't for API clients. GitHub redirects the browser here after the
-install started by [`GET /apps/{appID}/connect/{tracker}`](#get-appsappidconnecttracker),
-and the API answers with `302` to:
+This isn't for API clients. The tracker redirects the browser here after
+the install or authorization started by
+[`GET /apps/{appID}/connect/{tracker}`](#get-appsappidconnecttracker). GitHub
+sends `installation_id` and `code`; GitLab and Bitbucket send `code`, or
+`error` when the user denied access. Every case carries `state`. The API
+answers with `302` to:
 
 ```
 {server.frontend_url}/apps/<appID>/connections?provider=github&status=connected&connection_id=<uuid>
@@ -496,9 +520,11 @@ and the API answers with `302` to:
 {server.frontend_url}/apps?provider=github&status=error&reason=<message>   (state unknown, so no app)
 ```
 
-There is one callback URL for every app: the GitHub App has a single
-Callback URL. The app comes from the one-time state. The possible `reason` values are
-listed in [github.md → Failure modes](github.md#failure-modes).
+There is one callback URL per tracker for every app, because the GitHub
+App, GitLab application and Bitbucket consumer each register a single
+callback URL. The app comes from the one-time state. The possible `reason`
+values are listed in [github.md → Failure modes](github.md#failure-modes) and
+[gitlab-bitbucket.md → Failure modes](gitlab-bitbucket.md#failure-modes).
 
 ### `GET /providers/connections`
 

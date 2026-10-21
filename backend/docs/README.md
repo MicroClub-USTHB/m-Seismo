@@ -1,7 +1,8 @@
 # Backend documentation
 
 In-depth documentation for the m-Seismo backend: owners, projects, apps,
-each app's tracker connections (GitHub), and the issue service. For setup and a quick
+each app's tracker connections (GitHub, GitLab, Bitbucket), and the issue
+service. For setup and a quick
 route list, start with [../README.md](../README.md).
 
 ## Reading order
@@ -12,15 +13,16 @@ route list, start with [../README.md](../README.md).
 | 2 | [usage-guide.md](usage-guide.md) | **use** the backend: the HTTP workflow end to end, auth and retries for clients, and the Go service interfaces with examples |
 | 3 | [data-model.md](data-model.md) | learn the tables, constraints, cascades, the migration and the sqlc setup |
 | 4 | [github.md](github.md) | see **who a connection belongs to** (the app), how GitHub access works, why it is secure, how **rate limits** are handled, and how to create the GitHub App |
-| 5 | [issue-service.md](issue-service.md) | see how an app's issue is targeted, matched to one of the app's connections, opened and recorded |
-| 6 | [worker.md](worker.md) | see how an accepted report becomes an issue: the queue, retries and idempotency |
-| 7 | [api.md](api.md) | look up an endpoint, its body, responses and errors |
-| 8 | [files.md](files.md) | find out what a specific file does |
-| 9 | [extending.md](extending.md) | add a tracker, a resource, a query or a setting |
-| 10 | [testing.md](testing.md) | run and write tests (unit, API scripts, e2e) |
-| 11 | [test-scripts.md](test-scripts.md) | the bash API test suite: every `lib.sh` function, the state file, token handling and the fake GitHub contract |
+| 5 | [gitlab-bitbucket.md](gitlab-bitbucket.md) | see how GitLab and Bitbucket are reached with **per-app OAuth tokens**: the connect flow, encrypted token storage, refresh and rotation, issue field mapping, and how to set up a real GitLab application or Bitbucket consumer |
+| 6 | [issue-service.md](issue-service.md) | see how an app's issue is targeted, matched to one of the app's connections, opened and recorded |
+| 7 | [worker.md](worker.md) | see how an accepted report becomes an issue: the queue, retries and idempotency |
+| 8 | [api.md](api.md) | look up an endpoint, its body, responses and errors |
+| 9 | [files.md](files.md) | find out what a specific file does |
+| 10 | [extending.md](extending.md) | add a tracker, a resource, a query or a setting |
+| 11 | [testing.md](testing.md) | run and write tests (unit, API scripts, e2e) |
+| 12 | [test-scripts.md](test-scripts.md) | the bash API test suite: every `lib.sh` function, the state file, token handling and the fakes' contracts |
 
-The local stack (Docker Compose, fake GitHub) is described in
+The local stack (Docker Compose, fake GitHub, GitLab and Bitbucket) is described in
 [deploy/README.md](../../deploy/README.md).
 
 ## Glossary
@@ -42,6 +44,8 @@ The local stack (Docker Compose, fake GitHub) is described in
 | **Opener** | `issue.Opener`, which opens, comments on and checks issues on one connection. |
 | **Draft** | `issue.Draft`, an issue before its repository is chosen. |
 | **Ref** | `issue.Ref`, the tracker's reference to an opened issue (`owner/name#N` + URL). |
+| **OAuth tracker** | A tracker reached with a per-connection OAuth token (GitLab, Bitbucket), as opposed to GitHub's App installations. |
+| **Connection secret** | An OAuth tracker connection's token, stored AES-256-GCM-encrypted in `connection_secrets`, bound to that connection. |
 | **State** | A random, single-use, 10-minute token that ties a tracker callback to the owner who started it. |
 
 ## Feature map against the PRD
@@ -56,7 +60,7 @@ The local stack (Docker Compose, fake GitHub) is described in
 | FR-58 / FR-59: routing, default repository | default repository done; rules will use `OpenInRepository(appID, repositoryID, …)` |
 | Per-app tracker credentials | done: connections belong to apps; `GET /apps/{id}/targets` previews the routing |
 | FR-62: failed-delivery retries | the worker retries with backoff and waits out rate limits; no admin view yet |
-| FR-70: other trackers | plug-in model ready; only GitHub implemented |
+| FR-70: other trackers | GitHub, GitLab (gitlab.com or self-managed) and Bitbucket Cloud implemented |
 | §3.4: least-privilege GitHub access | GitHub App with Issues R/W + Metadata R |
 
 ## Known gaps and follow-ups
@@ -78,10 +82,13 @@ These are deliberate omissions or limitations in the current code:
 - **Linking the first repository at the same moment from two requests** can
   have both try to become the default. The partial unique index stops it, but
   the loser gets a misleading "already linked" 409.
-- **No OAuth token storage yet.** GitHub needs none (installation tokens),
-  but GitLab and Bitbucket will need per-connection tokens, so per app. The
-  plan is an encrypted table keyed by `provider_connections.id` (see
-  [extending.md](extending.md#add-a-tracker-gitlab-bitbucket)).
+- **OAuth refreshes are serialised per process only.** Two backend
+  instances could refresh the same GitLab token at once; one would get
+  `invalid_grant` and the app would have to reconnect. Add a Postgres
+  advisory lock before scaling out (see
+  [gitlab-bitbucket.md → Limitations](gitlab-bitbucket.md#limitations)).
+- **No key rotation** for `secrets.encryption_key`, and revoked OAuth
+  connections are not suspended automatically.
 - **`Covers` is a local check.** On GitHub it compares the repository owner
   with the installation's account. A repository on that account that wasn't
   selected for the installation looks covered in `GET /apps/{id}/targets`,

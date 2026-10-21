@@ -1,7 +1,8 @@
 # GitHub integration
 
 This page explains how m-Seismo reaches GitHub repositories on behalf of an
-app. It covers why m-Seismo uses a GitHub App, who a connection belongs to,
+app. GitLab and Bitbucket, which use per-app OAuth tokens instead, are
+covered in [gitlab-bitbucket.md](gitlab-bitbucket.md). It covers why m-Seismo uses a GitHub App, who a connection belongs to,
 how the connect flow works and is secured, how tokens are handled, and how
 issues are opened. All the code is in
 `internal/provider/github/`, which is the only package that imports
@@ -71,8 +72,8 @@ it can drop without affecting the other. They also share the same bot token
 and the same GitHub rate limits, because GitHub counts those per
 installation. With GitHub, separating apps is therefore about authorisation
 and configuration inside m-Seismo, not about separate secrets. GitLab and
-Bitbucket, which use per-user OAuth tokens, will have truly separate
-credentials per app.
+Bitbucket use per-app OAuth tokens and so have truly separate credentials
+per app (see [gitlab-bitbucket.md](gitlab-bitbucket.md)).
 
 **Never across owners.** An installation can belong to only one owner. The
 database enforces this with the exclusion constraint

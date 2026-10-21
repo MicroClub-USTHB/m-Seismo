@@ -24,7 +24,7 @@ happens during a request, and the conventions every package follows.
 flowchart LR
     subgraph Clients
         Admin["Owner / admin console<br/>(bearer JWT)"]
-        Browser["Owner's browser<br/>(GitHub redirect)"]
+        Browser["Owner's browser<br/>(tracker redirect)"]
         SDK["Mobile SDK<br/>(app key, future)"]
     end
 
@@ -35,6 +35,8 @@ flowchart LR
         App["app"]
         Provider["provider"]
         GH["provider/github"]
+        GL["provider/gitlab"]
+        BB["provider/bitbucket"]
         Issue["issue.Service"]
     end
 
@@ -42,6 +44,8 @@ flowchart LR
     Redis[(Redis)]
     NATS[(NATS JetStream)]
     GitHub[(GitHub API)]
+    GitLab[(GitLab API)]
+    Bitbucket[(Bitbucket API)]
 
     Admin --> Router
     Browser --> Router
@@ -49,9 +53,11 @@ flowchart LR
     Router --> Owner & Project & App & Provider
     Project --> Provider
     App --> Provider & Issue
-    Provider --> GH
+    Provider --> GH & GL & BB
     Issue --> Provider
     GH --> GitHub
+    GL --> GitLab
+    BB --> Bitbucket
     Owner & Project & App & Provider & Issue --> PG
     Provider --> Redis
     Backend -. "connected, not used yet" .-> NATS
@@ -111,9 +117,12 @@ See [data-model.md](data-model.md) for the tables.
 ├────────────────────────────────────────────────────────────────────┤
 │ provider.Registry        tracker-agnostic lookup                   │  integration
 │ provider/github          the only code that talks to GitHub        │
+│ provider/gitlab, …/bitbucket  same for GitLab and Bitbucket        │
+│ provider/oauth           OAuth flow, token refresh, REST client    │
 ├────────────────────────────────────────────────────────────────────┤
 │ internal/db (sqlc)       generated, type-safe SQL                  │  persistence
 │ internal/infra           pgx pool, Redis, NATS                     │
+│ internal/secrets         AES-256-GCM for stored OAuth tokens       │
 ├────────────────────────────────────────────────────────────────────┤
 │ internal/config          viper: defaults → file → SEISMO_* env     │  config
 └────────────────────────────────────────────────────────────────────┘
@@ -128,8 +137,10 @@ Rules the layers follow:
 2. **Services never import `net/http`.** They return `apperr` errors, and
    `httpx.Error` turns those into status codes. That keeps services callable
    from places other than HTTP, such as a NATS consumer or a CLI.
-3. **Only `internal/provider/<tracker>` imports a vendor SDK.** Nothing else
-   imports `go-github` or `ghinstallation`.
+3. **Only `internal/provider/<tracker>` talks to a tracker.** Nothing else
+   imports `go-github` or `ghinstallation`, or knows GitLab or Bitbucket
+   URLs. GitLab and Bitbucket use no SDK: they share the small REST and
+   OAuth client in `internal/provider/oauth`.
 4. **Generated code is never edited.** `internal/db` comes from
    `db/queries/*.sql` and `db/schema.sql`.
 
@@ -141,13 +152,17 @@ An arrow means "imports". Test files are not shown.
 
 ```mermaid
 flowchart TD
-    main --> config & infra & httpx & auth & owner & project & app & provider & github["provider/github"] & issue
+    main --> config & infra & httpx & auth & owner & project & app & secrets & provider & github["provider/github"] & gitlab["provider/gitlab"] & bitbucket["provider/bitbucket"] & issue
 
     owner --> auth & httpx & db & apperr
     project --> provider & httpx & db & apperr
     app --> provider & issue & httpx & db & apperr
     provider --> issue & httpx & db & apperr & config
     github --> provider & issue & db & apperr & config
+    gitlab & bitbucket --> oauth["provider/oauth"] & provider & issue & db & apperr & config
+    oauth --> issue & apperr
+    provider --> secrets
+    secrets --> config
     issue --> db
     auth --> httpx & config
     httpx --> apperr & config
@@ -188,8 +203,11 @@ fx.Options(
     owner.Module,    // *owner.Service, owner.Handler → group "routes"
     project.Module,  // *project.Service, project.Handler → group "routes"
     app.Module,      // *app.Service, app.Handler (incl. /apps/{id}/connections…) → group "routes"
-    provider.Module, // *provider.Registry, issue.OpenerSource, provider.StateStore, *provider.Service, provider.Handler → group "routes"
+    secrets.Module,  // *secrets.Cipher (secrets.encryption_key)
+    provider.Module, // *provider.Registry, issue.OpenerSource, provider.StateStore, provider.SecretStore, *provider.Service, provider.Handler → group "routes"
     github.Module,   // []provider.Provider → group "providers" (empty when GitHub is not configured)
+    gitlab.Module,   // same, empty when gitlab.client_id is unset
+    bitbucket.Module, // same, empty when bitbucket.client_id is unset
     issue.Module,    // *issue.Service
 )
 ```
@@ -202,11 +220,12 @@ list:
 | `routes` | `httpx.Routes` (`Mount(chi.Router)`) | `httpx.AsRoutes(NewHandler)` | `httpx.NewRouter`, which mounts each one under `/api/v1` |
 | `providers` | `provider.Provider` | `provider.AsProvider(FromConfig)` (flattened slice) | `provider.NewRegistry` |
 
-The `providers` group is *flattened*: `github.FromConfig` returns a
-`[]provider.Provider`, and when `github.app_id` is unset that slice is empty.
-The server then runs without GitHub. `GET /providers` returns an empty list.
-`GET /apps/{id}/connect/github`, and linking a `github` repository to a
-project, return 404 "provider github is not available".
+The `providers` group is *flattened*: each tracker's `FromConfig` returns a
+`[]provider.Provider`, and that slice is empty when the tracker is not
+configured (`github.app_id`, `gitlab.client_id` or `bitbucket.client_id`
+unset). The server then runs without that tracker: `GET /providers` doesn't
+list it, and `GET /apps/{id}/connect/<tracker>` and linking a repository on
+it return 404 "provider <tracker> is not available".
 
 Lifecycle hooks:
 
@@ -332,8 +351,12 @@ There are two separate credentials.
 - App keys are stored only as SHA-256 hashes, with the first 12 characters
   kept for display. Key entropy is 256 bits, so a fast hash is enough; bcrypt
   is for low-entropy passwords.
-- The GitHub connect flow uses its own credential, a one-time **state**
+- Every connect flow uses its own credential, a one-time **state**
   stored in Redis. It is described in [github.md](github.md).
+- GitLab and Bitbucket connections hold an **OAuth token per app
+  connection**, encrypted with AES-256-GCM under `secrets.encryption_key`
+  and bound to the connection ID. It is never returned by the API (see
+  [gitlab-bitbucket.md](gitlab-bitbucket.md#token-storage-and-encryption)).
 
 ---
 
@@ -406,8 +429,11 @@ and `AccountLogin`.
 - `Covers` lets the issue service choose among an app's connections without
   calling the tracker.
 
-Adding GitLab means adding `internal/provider/gitlab` and one line in
-`main.go`. See [extending.md](extending.md).
+Three trackers implement it: `provider/github` (GitHub App installations),
+`provider/gitlab` and `provider/bitbucket` (OAuth tokens per app connection,
+on top of `provider/oauth`). Adding another means adding
+`internal/provider/<tracker>` and one line in `main.go`. See
+[extending.md](extending.md).
 
 ---
 
