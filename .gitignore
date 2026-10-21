@@ -33,3 +33,8 @@ local.properties
 # Flutter, React Native
 node_modules/
 .dart_tool/
+
+# Nix
+.direnv/
+.envrc
+shell.nix
