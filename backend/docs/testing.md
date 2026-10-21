@@ -33,9 +33,9 @@ token handling and real-GitHub mode.
 | `backend` (main) | `TestGraph` | `fx.ValidateApp(Options())`: every dependency is provided, and no constructor runs |
 | `auth` | password and token tests | real bcrypt and JWT; injected clock for expiry |
 | `httpx` | `TestErrorStatus`, `TestAuthMiddleware` | `httptest` against the real router and middleware |
-| `issue` | `OpenForApp` / `OpenInRepository` cases | fake `Querier` and `OpenerSource` |
-| `provider` | connect flow, state replay, cross-owner conflict, `VerifyRepository` | in-memory `StateStore`, fake `Provider` and `Querier` |
-| `provider/github` | install URL, verified install, repositories, opener | `httptest.Server` imitating github.com and api.github.com; real RSA key; checks auth headers |
+| `issue` | `Targets` / `OpenForApp` / `OpenInRepository`: connection chosen per app, `ErrNoConnection`, two apps on one project, rate-limit skip | fake `Querier` (per-app connections) and `OpenerSource` |
+| `provider` | per-app connect flow, state replay and shape, another owner's app, cross-owner conflict (`23P01`), same installation on two apps, attach, app-scoped repository listing, registry `Covers` | in-memory `StateStore`, fake `Provider` and a `Querier` that enforces the one-owner rule |
+| `provider/github` | install URL, verified install, repositories, `Covers`, `ValidateRepository`, opener, rate limits | `httptest.Server` imitating github.com and api.github.com; real RSA key; checks auth headers |
 | `app` | key lifecycle, platform validation | fake `Querier` |
 | `project` | slug derivation and validation | pure functions |
 
@@ -79,9 +79,11 @@ Prerequisites:
 
 1. Postgres, Redis and NATS running, and `make db-up` applied.
 2. `.env` with a working GitHub App (see [github.md](github.md#creating-the-github-app)).
-3. Through the API: an owner, an app linked to a project, a GitHub connection,
-   and a default repository on that project (the curl walkthrough in
-   [api.md](api.md#walkthrough-with-curl) does all of this).
+3. Through the API: an owner, an app with its own GitHub connection, a
+   project with a default repository on that connection's account, and the
+   app linked to the project. The curl walkthrough in
+   [api.md](api.md#walkthrough-with-curl) does all of this, and
+   `GET /apps/{id}/targets` should show a `connection_id` for every target.
 4. `SEISMO_E2E_APP_ID=<app uuid> go test -tags e2e -run TestOpenForAppE2E -v .`
 
 It logs every opened issue, labelled `m-seismo-e2e`. Close them afterwards.

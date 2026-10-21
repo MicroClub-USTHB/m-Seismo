@@ -11,8 +11,11 @@ JSON (`Content-Type: application/json`).
 - [Apps](#apps)
 - [App keys](#app-keys)
 - [App ↔ project links](#app--project-links)
+- [App connections](#app-connections)
+- [Targets](#targets)
 - [Test issue](#test-issue)
 - [Providers](#providers)
+- [Removed routes](#removed-routes)
 - [Health](#health)
 
 ---
@@ -67,23 +70,33 @@ TOKEN=$(curl -s $API/auth/register -d '{"email":"lead@example.com","password":"s
   | jq -r .token.access_token)
 AUTH="Authorization: Bearer $TOKEN"
 
-# 2. create a project and an app, and link them
-PROJECT=$(curl -s -H "$AUTH" $API/projects -d '{"name":"Shop Mobile"}' | jq -r .id)
+# 2. create an app and connect it to GitHub: open the returned URL in a browser
+#    and install the App (the browser comes back to {frontend_url}/apps/$APP/connections)
 APP=$(curl -s -H "$AUTH" $API/apps -d '{"name":"Shop iOS","platform":"ios","bundle_id":"com.example.shop"}' | jq -r .id)
+curl -s -H "$AUTH" $API/apps/$APP/connect/github | jq -r .url
+
+# 3. after the redirect, find the app's connection and the repositories it reaches
+CONN=$(curl -s -H "$AUTH" $API/apps/$APP/connections | jq -r '.[0].id')
+curl -s -H "$AUTH" $API/apps/$APP/connections/$CONN/repositories
+
+# 4. create a project, say where its code lives (the first repository becomes the default),
+#    and link the app to it
+PROJECT=$(curl -s -H "$AUTH" $API/projects -d '{"name":"Shop Mobile"}' | jq -r .id)
+curl -s -H "$AUTH" $API/projects/$PROJECT/repositories \
+  -d '{"tracker":"github","repository":"octo-org/shop-ios"}'
 curl -s -X PUT -H "$AUTH" $API/apps/$APP/projects/$PROJECT
 
-# 3. connect GitHub: open the returned URL in a browser and install the App
-curl -s -H "$AUTH" $API/providers/github/connect | jq -r .url
+# 5. check where the app's issues will go, then send a test issue
+curl -s -H "$AUTH" $API/apps/$APP/targets
+curl -s -X POST -H "$AUTH" $API/apps/$APP/test-issue
 
-# 4. after the redirect, find the connection and its repositories
-CONN=$(curl -s -H "$AUTH" $API/providers/connections | jq -r '.[0].id')
-curl -s -H "$AUTH" $API/providers/connections/$CONN/repositories
+# 6. a second app reporting into the same project brings its own connection;
+#    reuse the installation without going through GitHub again
+APP2=$(curl -s -H "$AUTH" $API/apps -d '{"name":"Shop Android","platform":"android","bundle_id":"com.example.shop"}' | jq -r .id)
+curl -s -H "$AUTH" $API/apps/$APP2/connections -d "{\"connection_id\":\"$CONN\"}"
+curl -s -X PUT -H "$AUTH" $API/apps/$APP2/projects/$PROJECT
 
-# 5. send the project's issues to one of them (the first repository becomes the default)
-curl -s -H "$AUTH" $API/projects/$PROJECT/repositories \
-  -d "{\"connection_id\":\"$CONN\",\"repository\":\"octo-org/shop-ios\"}"
-
-# 6. create an SDK key for the app (the secret is shown only once)
+# 7. create an SDK key for each app (the secret is shown only once)
 curl -s -X POST -H "$AUTH" $API/apps/$APP/keys
 ```
 
@@ -145,7 +158,7 @@ owner. A duplicate email gives `409`.
 
 ### `DELETE /owners/me`
 
-→ `204`. **This permanently deletes** the owner's projects, apps, keys,
+→ `204`. **This permanently deletes** the owner's projects, apps, keys, app
 connections and issue records. Nothing on GitHub is deleted.
 
 ---
@@ -175,12 +188,15 @@ A duplicate gives `409 a project with this slug already exists`.
 
 ## Project repositories
 
+A project repository says where the project's code lives. It carries **no
+credentials**: each app reporting into the project reaches the repository
+through its own connections (see [App connections](#app-connections)).
+
 Repository object:
 
 ```json
 {
-  "id": "…", "project_id": "…", "connection_id": "…",
-  "tracker": "github", "account_login": "octo-org",
+  "id": "…", "project_id": "…", "tracker": "github",
   "repository": "octo-org/shop-ios", "is_default": true, "created_at": "…"
 }
 ```
@@ -192,24 +208,27 @@ Repository object:
 ### `POST /projects/{projectID}/repositories`
 
 ```json
-{ "connection_id": "…", "repository": "octo-org/shop-ios", "is_default": false }
+{ "tracker": "github", "repository": "octo-org/shop-ios", "is_default": false }
 ```
 
 → `201` repository.
 
-- The connection must be one of yours and not suspended. The tracker is asked
-  whether the connection can reach the repository.
+- `tracker` must be configured on this deployment (`GET /providers`). The
+  name format is checked for that tracker (`owner/name` on GitHub). The
+  tracker itself is **not** called, so the repository doesn't have to be
+  reachable yet. `GET /apps/{appID}/targets` shows, per app, whether it is.
 - `is_default: true` moves the default to this repository.
 - **The first repository linked to a project always becomes the default**,
   whatever `is_default` says.
 
 | Failure | Error |
 |---|---|
-| project or connection not yours / missing | 404 |
+| project not yours / missing | 404 |
+| `tracker` missing | 422 `tracker is required` |
+| `tracker` not configured | 404 `provider gitlab is not available` |
 | `repository` empty / not `owner/name` | 422 |
-| connection suspended | 422 `connection is suspended` |
-| repository not visible to the installation | 422 `repository … is not reachable through this connection` |
-| already linked through that connection | 409 `repository is already linked to this project` |
+| `connection_id` sent (the old body) | 422 (unknown field) |
+| already linked | 409 `repository is already linked to this project` |
 
 ### `PUT /projects/{projectID}/repositories/{repositoryID}/default`
 
@@ -238,7 +257,7 @@ App object:
 | `GET /apps` | — | `200` `[app]`, newest first |
 | `GET /apps/{appID}` | — | `200` app |
 | `PATCH /apps/{appID}` | `{"name"?, "platform"?, "bundle_id"?}` | `200` app |
-| `DELETE /apps/{appID}` | — | `204` (keys and links removed; recorded issues keep a null `app_id`) |
+| `DELETE /apps/{appID}` | — | `204` (keys, project links and connections removed; recorded issues keep a null `app_id` and `provider_connection_id`) |
 
 `platform` must be one of `ios`, `android`, `flutter`, `react_native`
 (otherwise 422). `bundle_id` is 1–255 characters.
@@ -274,8 +293,124 @@ one.
 | `PUT /apps/{appID}/projects/{projectID}` | `204`; idempotent. `404 project not found` if the project isn't yours. |
 | `DELETE /apps/{appID}/projects/{projectID}` | `204`; `404 app is not linked to this project` |
 
-An app's issues go to the **default repository of every linked project**
-(see [issue-service.md](issue-service.md)).
+An app's issues go to the **default repository of every linked project**,
+each through the app's own connection (see
+[issue-service.md](issue-service.md)).
+
+---
+
+## App connections
+
+An app's connections are the tracker accounts it can open issues through:
+its credentials. On GitHub, a connection is one installation of the m-Seismo
+GitHub App on a user or organisation. An app can have several connections,
+for example one per GitHub organisation. Apps of the same owner may share an
+installation, each with its own connection; two owners never can.
+
+Connection object:
+
+```json
+{
+  "id": "…", "app_id": "…", "tracker": "github",
+  "account_login": "octo-org", "account_type": "Organization",
+  "suspended_at": null, "created_at": "…", "updated_at": "…"
+}
+```
+
+### `GET /apps/{appID}/connect/{tracker}`
+
+→ `200` `{"url": "https://github.com/apps/m-seismo/installations/new?state=…"}`.
+
+- Send the browser to `url`. The state inside it is valid for 10 minutes,
+  can be used once, and remembers the owner **and the app**.
+- When the install finishes, GitHub calls the
+  [callback](#get-providerstrackercallback-public-called-by-github), which
+  saves the connection on this app.
+
+| Failure | Error |
+|---|---|
+| app not yours / missing | 404 `app not found` |
+| tracker not configured | 404 `provider gitlab is not available` |
+
+### `GET /apps/{appID}/connections`
+
+→ `200` `[connection]`, oldest first.
+
+### `POST /apps/{appID}/connections`
+
+```json
+{ "connection_id": "<a connection of another of your apps>" }
+```
+
+→ `201` connection: this app's own connection to the same tracker account.
+
+- Use this to share an installation between apps without going through
+  GitHub again. On GitHub, re-installing an App that is already installed only
+  shows its settings page.
+- It is idempotent: attaching the same account again returns the app's
+  existing connection.
+
+| Failure | Error |
+|---|---|
+| app or source connection not yours / missing | 404 |
+| source connection suspended | 422 `connection is suspended` |
+
+### `DELETE /apps/{appID}/connections/{connectionID}`
+
+→ `204`. Only this app loses the connection:
+
+- other apps sharing the same installation keep theirs;
+- project repositories are untouched;
+- recorded issues keep a null `provider_connection_id`.
+
+The GitHub App stays installed; remove it on GitHub if you want to.
+
+### `GET /apps/{appID}/connections/{connectionID}/repositories`
+
+→ `200`
+
+```json
+[ { "full_name": "octo-org/shop-ios", "private": true, "url": "https://github.com/octo-org/shop-ios" } ]
+```
+
+These are the repositories the installation was granted. A suspended
+connection gives `422 connection is suspended`.
+
+---
+
+## Targets
+
+### `GET /apps/{appID}/targets`
+
+Previews where the app's issues would be opened, **without opening any**.
+There is one entry per linked project that has a default repository, with the
+app connection that will be used:
+
+```json
+[
+  {
+    "project_id": "…", "project_repository_id": "…",
+    "repository": "octo-org/shop-ios", "tracker": "github",
+    "connection_id": "…", "account_login": "octo-org"
+  },
+  {
+    "project_id": "…", "project_repository_id": "…",
+    "repository": "pay/sdk", "tracker": "gitlab",
+    "connection_id": null,
+    "error": "no gitlab connection on this app covers pay/sdk"
+  }
+]
+```
+
+- The connection is the first active one of the app, on the same tracker,
+  that covers the repository. On GitHub, "covers" means the installation is
+  on the repository's owner.
+- GitHub is not called. A repository the installation wasn't granted still
+  shows as covered, and fails only when an issue is opened.
+- An app with no linked project, or none with a default repository, returns
+  `[]`.
+
+---
 
 ## Test issue
 
@@ -303,19 +438,28 @@ repository:
     {
       "project_id": "…", "project_repository_id": "…",
       "repository": "octo-org/shop-ios", "tracker": "github",
+      "connection_id": "…",
       "issue_id": "…", "ref": "octo-org/shop-ios#12",
       "url": "https://github.com/octo-org/shop-ios/issues/12"
     },
     {
       "project_id": "…", "project_repository_id": "…",
       "repository": "octo-org/broken", "tracker": "github",
+      "connection_id": "…",
       "error": "issue: open on github octo-org/broken: …"
+    },
+    {
+      "project_id": "…", "project_repository_id": "…",
+      "repository": "other-org/tools", "tracker": "github",
+      "error": "issue: app has no connection for the repository: no github connection on this app covers other-org/tools"
     }
   ]
 }
 ```
 
-A rate-limited target also has `"retry_after_seconds": 3600`. On `502` the
+`connection_id` is the app connection the target went through. It is absent
+when the app has no connection covering the repository. A rate-limited
+target also has `"retry_after_seconds": 3600`. On `502` the
 body has `"error": "no issue could be opened"`, and on a tracker `429` it has
 `"error": "rate limited by the issue tracker; retry later"`. A per-target
 `error` contains the tracker's error message, which is useful for diagnosing
@@ -335,60 +479,47 @@ just takes longer. See [github.md → Rate limits](github.md#rate-limits).
 
 ## Providers
 
-Connection object:
-
-```json
-{
-  "id": "…", "tracker": "github", "account_login": "octo-org", "account_type": "Organization",
-  "suspended_at": null, "created_at": "…", "updated_at": "…"
-}
-```
-
 ### `GET /providers`
 
 → `200` `{"providers": ["github"]}`: the trackers configured on this
 deployment. The list is empty when no GitHub App is configured.
 
-### `GET /providers/{tracker}/connect`
-
-→ `200` `{"url": "https://github.com/apps/m-seismo/installations/new?state=…"}`.
-Send the browser to `url`. The state inside it is valid for 10 minutes and
-can be used once. Returns `404 provider gitlab is not available` for a
-tracker that isn't configured.
-
 ### `GET /providers/{tracker}/callback` (public, called by GitHub)
 
-This isn't for API clients. GitHub redirects the browser here and the API
-answers with `302` to:
+This isn't for API clients. GitHub redirects the browser here after the
+install started by [`GET /apps/{appID}/connect/{tracker}`](#get-appsappidconnecttracker),
+and the API answers with `302` to:
 
 ```
-{server.frontend_url}/settings/providers?provider=github&status=connected&connection_id=<uuid>
-{server.frontend_url}/settings/providers?provider=github&status=error&reason=<message>
+{server.frontend_url}/apps/<appID>/connections?provider=github&status=connected&connection_id=<uuid>
+{server.frontend_url}/apps/<appID>/connections?provider=github&status=error&reason=<message>
+{server.frontend_url}/apps?provider=github&status=error&reason=<message>   (state unknown, so no app)
 ```
 
-The possible `reason` values are listed in
-[github.md → Failure modes](github.md#failure-modes).
+There is one callback URL for every app: the GitHub App has a single
+Callback URL. The app comes from the one-time state. The possible `reason` values are
+listed in [github.md → Failure modes](github.md#failure-modes).
 
 ### `GET /providers/connections`
 
-→ `200` `[connection]`, oldest first.
+→ `200` `[connection]`, oldest first: the connections of **all** your apps,
+each with its `app_id`. Use it to pick one to
+[attach](#post-appsappidconnections) to another app. It is read-only; manage
+connections under `/apps/{appID}/connections`.
 
-### `DELETE /providers/connections/{id}`
+---
 
-→ `204`. m-Seismo forgets the connection, **and every project repository
-linked through it** (with their issue records). The GitHub App stays
-installed; remove it on GitHub if you want to.
+## Removed routes
 
-### `GET /providers/connections/{id}/repositories`
+The move of connections from the owner to the app removed these routes. They
+now answer `404`.
 
-→ `200`
-
-```json
-[ { "full_name": "octo-org/shop-ios", "private": true, "url": "https://github.com/octo-org/shop-ios" } ]
-```
-
-These are the repositories the installation was granted. `422 connection is
-suspended` for suspended connections.
+| Removed | Use instead |
+|---|---|
+| `GET /providers/{tracker}/connect` | `GET /apps/{appID}/connect/{tracker}` |
+| `DELETE /providers/connections/{id}` | `DELETE /apps/{appID}/connections/{connectionID}` |
+| `GET /providers/connections/{id}/repositories` | `GET /apps/{appID}/connections/{connectionID}/repositories` |
+| `connection_id` in `POST /projects/{id}/repositories` | `tracker` (the connection comes from each app) |
 
 ---
 

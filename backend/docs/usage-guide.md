@@ -25,6 +25,7 @@ Reference pages: [api.md](api.md) lists every endpoint;
   - [B2. Opening issues: issue.Service](#b2-opening-issues-issueservice)
   - [B3. Authenticating SDK keys: app.Service](#b3-authenticating-sdk-keys-appservice)
   - [B4. Working with an existing issue: issue.Opener](#b4-working-with-an-existing-issue-issueopener)
+  - [B4b. Managing an app's connections: provider.Service](#b4b-managing-an-apps-connections-providerservice)
   - [B5. Implementing a tracker: provider.Provider](#b5-implementing-a-tracker-providerprovider)
   - [B6. Returning errors: apperr](#b6-returning-errors-apperr)
   - [B7. Writing an HTTP handler: httpx](#b7-writing-an-http-handler-httpx)
@@ -39,6 +40,7 @@ Reference pages: [api.md](api.md) lists every endpoint;
 |---|---|---|---|
 | REST API `/api/v1` | HTTP + JSON, bearer JWT | admin console, scripts | [api.md](api.md) |
 | `issue.Service` | Go service | ingestion, future jobs | `internal/issue/service.go` |
+| `provider.Service` | Go service | anything managing app connections | `internal/provider/service.go` |
 | `app.Service.Authenticate` | Go method | the future ingestion endpoint (SDK keys) | `internal/app/service.go` |
 | `issue.Opener` / `issue.OpenerSource` | Go interfaces | dedup, status sync | `internal/issue/` |
 | `issue.RateLimitError` | Go error type | anyone handling tracker failures | `internal/issue/issue.go` |
@@ -80,67 +82,93 @@ stateDiagram-v2
 
 ## A2. Onboarding workflow, end to end
 
-The order matters: each step uses an ID from an earlier one.
+Credentials belong to **apps**, and projects only say where code lives. The
+order matters, because each step uses an ID from an earlier one.
 
 ```mermaid
 flowchart TD
-    A[1. Register / log in] --> B[2. Connect GitHub<br/>GET /providers/github/connect → browser → callback]
-    B --> C[3. Pick repositories<br/>GET /providers/connections/:id/repositories]
-    A --> D[4. Create project<br/>POST /projects]
-    C & D --> E[5. Link repository as default<br/>POST /projects/:id/repositories]
-    A --> F[6. Create app + SDK key<br/>POST /apps, POST /apps/:id/keys]
+    A[1. Register / log in] --> F[2. Create app + SDK key<br/>POST /apps, POST /apps/:id/keys]
+    F --> B[3. Connect the app to GitHub<br/>GET /apps/:id/connect/github → browser → callback]
+    B --> C[4. Pick repositories<br/>GET /apps/:id/connections/:cid/repositories]
+    A --> D[5. Create project<br/>POST /projects]
+    C & D --> E[6. Link repository as default<br/>POST /projects/:id/repositories]
     E & F --> G[7. Link app to project<br/>PUT /apps/:id/projects/:projectId]
-    G --> H[8. Verify end to end<br/>POST /apps/:id/test-issue]
+    G --> P[8. Preview<br/>GET /apps/:id/targets]
+    P --> H[9. Verify end to end<br/>POST /apps/:id/test-issue]
 ```
 
 | Step | Request | Keep from the response |
 |---|---|---|
 | 1 | `POST /auth/login {"email","password"}` | `token.access_token` |
-| 2 | `GET /providers/github/connect`, then send the browser to `url` | after the redirect: `connection_id` (see A3) |
-| 3 | `GET /providers/connections/{connection_id}/repositories` | a `full_name`, e.g. `octo-org/shop-ios` |
-| 4 | `POST /projects {"name":"Shop Mobile"}` | `id` |
-| 5 | `POST /projects/{id}/repositories {"connection_id","repository":"octo-org/shop-ios"}` | the first one becomes the default automatically |
-| 6 | `POST /apps {"name","platform":"ios","bundle_id"}` then `POST /apps/{appId}/keys` | `secret`: **shown once**, configure it in the SDK now |
+| 2 | `POST /apps {"name","platform":"ios","bundle_id"}` then `POST /apps/{appId}/keys` | `id`; and `secret`, which is **shown once**, so configure it in the SDK now |
+| 3 | `GET /apps/{appId}/connect/github`, then send the browser to `url` | after the redirect: `connection_id` (see A3) |
+| 4 | `GET /apps/{appId}/connections/{connection_id}/repositories` | a `full_name`, e.g. `octo-org/shop-ios` |
+| 5 | `POST /projects {"name":"Shop Mobile"}` | `id` |
+| 6 | `POST /projects/{id}/repositories {"tracker":"github","repository":"octo-org/shop-ios"}` | the first one becomes the default automatically |
 | 7 | `PUT /apps/{appId}/projects/{id}` | — (204) |
-| 8 | `POST /apps/{appId}/test-issue` | `results[].url`: open it and check the issue on GitHub |
+| 8 | `GET /apps/{appId}/targets` | every entry should have a `connection_id` and no `error` |
+| 9 | `POST /apps/{appId}/test-issue` | `results[].url`: open it and check the issue on GitHub |
+
+**A second app.** It needs its own connection before it can report:
+
+- If it reports into the same GitHub account as the first app, **attach**
+  the first app's connection: `POST /apps/{app2}/connections
+  {"connection_id": "<first app's connection>"}`. No GitHub round trip is
+  needed. `GET /providers/connections` lists every connection you have to
+  choose from.
+- If it reports into a different account, run step 3 for it.
 
 Variations:
 
 - **One central triage repository:** link every app to one project whose
-  default is the triage repository.
+  default is the triage repository, and give each app a connection on that
+  repository's account.
 - **One repository per app:** one project per app, each with its own
   default.
 - **Fan-out:** link one app to several projects. Every report opens an issue
-  in each project's default repository.
-- **Several trackers:** a project can have repositories on different
-  connections, but only the default receives issues today.
+  in each project's default repository, each through the app's connection
+  for that repository.
+- **Several GitHub organisations:** connect the app once per organisation
+  (step 3 again). The issue service picks the connection whose account owns
+  each repository.
+- **Separate credentials per app:** because connections are per app, two
+  apps feeding the same project can use different installations, or one of
+  them can have none. A target without a connection fails with
+  `no github connection on this app covers …`, and the other targets still
+  go through.
 
 ## A3. Handling the GitHub connect redirect in a frontend
 
-`GET /providers/github/connect` returns JSON, not a redirect, because a page
-that sends a bearer token cannot follow a cross-origin redirect usefully:
+`GET /apps/{appId}/connect/github` returns JSON, not a redirect, because a
+page that sends a bearer token cannot follow a cross-origin redirect
+usefully:
 
 ```js
-const { url } = await api('GET', '/providers/github/connect');
+const { url } = await api('GET', `/apps/${appId}/connect/github`);
 window.location.assign(url);           // the user installs the App on GitHub
 ```
 
 GitHub then sends the browser to the backend's callback, which redirects to
-`{server.frontend_url}/settings/providers` with query parameters. Your page
-at that path reads them:
+`{server.frontend_url}/apps/{appId}/connections` with query parameters.
+That's the same app the flow was started for, because the backend keeps it in
+the one-time state. Your page at that path reads them:
 
 | Parameter | Value |
 |---|---|
 | `provider` | `github` |
 | `status` | `connected` or `error` |
-| `connection_id` | on success: the new or updated connection |
-| `reason` | on error: a readable message (URL-encoded), e.g. `this account is already connected to another owner` |
+| `connection_id` | on success: the app's new or updated connection |
+| `reason` | on error: a readable message (URL-encoded), e.g. `this github account is already connected by another owner` |
 
 ```js
 const q = new URLSearchParams(location.search);
 if (q.get('status') === 'connected') showToast('GitHub connected');
 else showError(q.get('reason') ?? 'GitHub connection failed');
 ```
+
+If the state is missing, unknown or expired, the backend can't tell which app
+the flow was for. It redirects to `{server.frontend_url}/apps` with
+`status=error` instead.
 
 The state behind the flow expires after **10 minutes** and works **once**.
 If the user takes longer, start again from `connect`.
@@ -153,7 +181,7 @@ Every error is `{"error": "<message>"}` with these statuses:
 |---|---|
 | `401` | see A1: re-login only for token errors |
 | `404` | not found **or not yours**. They look the same on purpose; don't retry. |
-| `409` | duplicate (email, slug, repository link, installation): show the message |
+| `409` | duplicate (email, slug, repository link), or a GitHub installation that another owner holds: show the message |
 | `422` | fix the input; the message names the problem. Unknown JSON fields are rejected, so check spelling. |
 | `429` | **wait `Retry-After` seconds**, then retry. This comes from m-Seismo's own throttle or from GitHub's rate limits. |
 | `500` | server bug or outage; retry later with backoff; report with the time of the request |
@@ -164,7 +192,7 @@ Every error is `{"error": "<message>"}` with these statuses:
 | Request | Safe? | Why |
 |---|---|---|
 | `GET` anything | yes | read-only |
-| `PUT /apps/{id}/projects/{pid}`, `PUT …/default` | yes | idempotent |
+| `PUT /apps/{id}/projects/{pid}`, `PUT …/default`, `POST /apps/{id}/connections` (attach) | yes | idempotent |
 | `DELETE …` | yes; a repeat may return `404` | the first one already deleted it |
 | `PATCH …` | yes, if you send the full intended values | last write wins |
 | `POST /projects`, `/apps`, `/apps/{id}/keys`, `…/repositories` | **no**: list first | may create a duplicate (or 409 for slugs and links) |
@@ -257,8 +285,9 @@ Then add `ingest.Module` to `Options()` in `main.go`. `go test .` runs
 
 | You need | Ask fx for |
 |---|---|
-| open issues for an app | `*issue.Service` |
+| open issues for an app, or see where they would go | `*issue.Service` |
 | check an SDK key | `*app.Service` |
+| manage an app's connections | `*provider.Service` |
 | act on one tracker connection | `issue.OpenerSource` (or `*provider.Registry`) |
 | raw SQL queries | `db.Querier` (or `*db.Queries` + `*pgxpool.Pool` for transactions) |
 | a throttle | `*ratelimit.Limiter` |
@@ -268,7 +297,8 @@ Then add `ingest.Module` to `Options()` in `main.go`. `go test .` runs
 
 ```go
 func (s *Service) OpenForApp(ctx context.Context, appID uuid.UUID, d issue.Draft) ([]issue.Result, error)
-func (s *Service) OpenInRepository(ctx context.Context, projectRepositoryID uuid.UUID, appID *uuid.UUID, d issue.Draft) (issue.Result, error)
+func (s *Service) OpenInRepository(ctx context.Context, appID, projectRepositoryID uuid.UUID, d issue.Draft) (issue.Result, error)
+func (s *Service) Targets(ctx context.Context, appID uuid.UUID) ([]issue.Target, error)
 ```
 
 **Input: `issue.Draft`**
@@ -281,10 +311,19 @@ func (s *Service) OpenInRepository(ctx context.Context, projectRepositoryID uuid
 | `Milestone` | no | a **title**; the provider resolves it (cached); unknown → opened without it, plus a warning in the log |
 | `Fingerprint` | no | stored with the issue for future dedup (FR-54) |
 
-**Where it goes.** `OpenForApp` targets the **default repository of every
-project linked to the app**, skipping projects without a default and
-suspended connections. `OpenInRepository` targets one repository you chose,
-e.g. from routing rules.
+**Where it goes, and through what.**
+
+- `OpenForApp` targets the **default repository of every project linked to
+  the app**. Projects without a default are skipped.
+- `OpenInRepository` targets one repository you chose, for example from
+  routing rules, in a project the app is linked to.
+- In both cases each repository is opened through **the app's own
+  connection** for it: the first active connection on the same tracker that
+  covers the repository (on GitHub, the installation is on the repository's
+  owner).
+- A repository no connection covers gets an error wrapping
+  `issue.ErrNoConnection`, and the tracker is not called.
+- `Targets` runs the same resolution without opening anything.
 
 **Output.** One `Result` per target, in link order:
 
@@ -305,7 +344,9 @@ for _, r := range results {           // read every result, even when err == nil
     var rl *issue.RateLimitError
     switch {
     case r.Err == nil:
-        log.Printf("opened %s (%s), row %s", r.Ref.ID, r.Ref.URL, r.IssueID)
+        log.Printf("opened %s (%s) through connection %s, row %s", r.Ref.ID, r.Ref.URL, r.ConnectionID, r.IssueID)
+    case errors.Is(r.Err, issue.ErrNoConnection):
+        notifyAdmin(appID, r.Tracker, r.Repository) // configuration, not a transient failure
     case errors.As(r.Err, &rl):
         retryLater(r.ProjectRepositoryID, rl.Wait) // GitHub refused; nothing was created
     default:
@@ -368,11 +409,13 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 ## B4. Working with an existing issue: `issue.Opener`
 
 To comment on an issue or check its state later (dedup, status sync), ask
-the registry for an opener bound to the issue's connection:
+the registry for an opener bound to the connection that opened the issue.
+`issues.provider_connection_id` records it:
 
 ```go
 type OpenerSource interface {
-    Opener(ctx context.Context, tracker db.Tracker, externalID string) (issue.Opener, error)
+    Opener(ctx context.Context, c issue.Connection) (issue.Opener, error)
+    Covers(c issue.Connection, repository string) bool
 }
 
 type Opener interface {
@@ -383,7 +426,11 @@ type Opener interface {
 ```
 
 ```go
-op, err := openers.Opener(ctx, db.TrackerGithub, connection.ExternalID)
+// row is an issues row; its provider_connection_id names the connection that opened it.
+conn, err := q.GetOwnerConnection(ctx, db.GetOwnerConnectionParams{ID: *row.ProviderConnectionID, OwnerID: ownerID})
+if err != nil { return err } // gone: pick another connection of an app that Covers the repository
+
+op, err := openers.Opener(ctx, issue.ConnectionFromRow(conn))
 if err != nil { return err }
 
 ref := issue.Ref{ID: row.ExternalID, URL: row.Url}  // from the issues table
@@ -396,9 +443,29 @@ if err == nil && !open {
 - `Ref.ID` is opaque outside the provider. For GitHub it is `owner/name#N`.
   Store it as you got it, in `issues.external_id`.
 - Openers are cheap and safe to reuse. The GitHub one shares the
-  installation's cached client, token and write pacer.
+  installation's cached client, token and write pacer, even across apps.
 - Every method can return `*issue.RateLimitError`. Treat it as "try again
   after `Wait`".
+
+## B4b. Managing an app's connections: `provider.Service`
+
+```go
+func (s *Service) StartConnect(ctx, ownerID, appID uuid.UUID, tracker db.Tracker) (url string, err error)
+func (s *Service) FinishConnect(ctx, tracker db.Tracker, query url.Values) (appID uuid.UUID, c Connection, err error)
+func (s *Service) AttachConnection(ctx, ownerID, appID, fromConnectionID uuid.UUID) (Connection, error)
+func (s *Service) ListConnections(ctx, ownerID, appID uuid.UUID) ([]Connection, error)
+func (s *Service) ListOwnerConnections(ctx, ownerID uuid.UUID) ([]Connection, error)
+func (s *Service) Disconnect(ctx, ownerID, appID, connectionID uuid.UUID) error
+func (s *Service) ListRepositories(ctx, ownerID, appID, connectionID uuid.UUID) ([]Repository, error)
+```
+
+- Every method checks ownership in SQL. Another owner's app or connection is
+  `apperr.NotFound`.
+- `FinishConnect` returns the app ID even on error, whenever the state was
+  valid, so the caller can send the browser back to that app.
+- `AttachConnection` is idempotent and needs no tracker call. Connecting a
+  tracker account that another owner holds is `apperr.Conflict` (the
+  database's exclusion constraint, SQLSTATE `23P01`).
 
 ## B5. Implementing a tracker: `provider.Provider`
 
@@ -410,9 +477,11 @@ The method-by-method contract (step-by-step recipe in
 | `Tracker()` | return a `db.Tracker` enum value | — |
 | `InstallURL(state)` | return the tracker's authorise/install URL carrying `state` unchanged | — |
 | `CompleteInstall(ctx, query)` | **verify** the grant with the tracker, using credentials that belong to the user (e.g. an OAuth code exchange); return `ExternalID`, `Login` and `Type`; return `apperr.Invalid` for user errors | trust IDs in `query` without verifying them |
-| `ListRepositories(ctx, ext)` | return every reachable repository (paginate); return `[]`, not nil, when empty | — |
-| `HasRepository(ctx, ext, repo)` | return `false, nil` when the repository is not reachable; an error only for real failures; `apperr.Invalid` for malformed names | report "not found" as an error |
-| `Opener(ctx, ext)` | return a reusable `issue.Opener` | do network I/O just to construct it |
+| `ListRepositories(ctx, c)` | return every reachable repository (paginate); return `[]`, not nil, when empty | — |
+| `HasRepository(ctx, c, repo)` | return `false, nil` when the repository is not reachable; an error only for real failures; `apperr.Invalid` for malformed names | report "not found" as an error |
+| `ValidateRepository(repo)` | check the tracker's name format; `apperr.Invalid` when wrong | call the tracker |
+| `Covers(c, repo)` | say whether connection `c` could reach `repo` at all (GitHub: the repository owner is `c.AccountLogin`); `true` when it can't be told locally | call the tracker; it runs for every target of every report |
+| `Opener(ctx, c)` | return a reusable `issue.Opener`; load per-connection secrets by `c.ID` if the tracker has them | do network I/O just to construct it |
 | any call | return `*issue.RateLimitError` when the tracker rate-limits and you can't wait; never retry non-idempotent writes after an unknown failure | retry a failed POST blindly (duplicates) |
 
 Register it with `provider.AsProvider(FromConfig)`, returning an empty slice
@@ -510,9 +579,10 @@ a release.
 | Topic | Guarantee |
 |---|---|
 | Owner isolation | owner-scoped SQL; another owner's IDs behave as non-existent (404) |
+| Credentials per app | an app opens issues only through its own connections; a tracker account never spans two owners (database constraint) |
 | Concurrency | all services are safe for concurrent use; provider caches and pacers are mutex-guarded |
 | GitHub writes | serialised per installation, at least `github.min_write_interval` apart |
 | Rate limits | waited out when the wait is ≤ `github.max_rate_limit_wait` and fits the context; otherwise a typed `*issue.RateLimitError` |
 | No duplicate issues from retries | only rate-limited (unprocessed) requests are retried automatically |
-| Secrets | passwords bcrypt-hashed; SDK keys SHA-256-hashed and shown once; no GitHub token stored |
+| Secrets | passwords bcrypt-hashed; SDK keys SHA-256-hashed and shown once; no GitHub token stored (per owner or per app) |
 | Partial delivery | one failing target never blocks the others; every target has its own `Result` |

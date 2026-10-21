@@ -1,7 +1,7 @@
 # Backend documentation
 
 In-depth documentation for the m-Seismo backend: owners, projects, apps,
-tracker connections (GitHub), and the issue service. For setup and a quick
+each app's tracker connections (GitHub), and the issue service. For setup and a quick
 route list, start with [../README.md](../README.md).
 
 ## Reading order
@@ -11,8 +11,8 @@ route list, start with [../README.md](../README.md).
 | 1 | [architecture.md](architecture.md) | understand the layers, package graph, fx wiring, request flow, error and auth model |
 | 2 | [usage-guide.md](usage-guide.md) | **use** the backend: the HTTP workflow end to end, auth and retries for clients, and the Go service interfaces with examples |
 | 3 | [data-model.md](data-model.md) | learn the tables, constraints, cascades, the migration and the sqlc setup |
-| 4 | [github.md](github.md) | see how GitHub access works, why it is secure, how **rate limits** are handled, and how to create the GitHub App |
-| 5 | [issue-service.md](issue-service.md) | see how an app's issue is targeted, opened and recorded |
+| 4 | [github.md](github.md) | see **who a connection belongs to** (the app), how GitHub access works, why it is secure, how **rate limits** are handled, and how to create the GitHub App |
+| 5 | [issue-service.md](issue-service.md) | see how an app's issue is targeted, matched to one of the app's connections, opened and recorded |
 | 6 | [worker.md](worker.md) | see how an accepted report becomes an issue: the queue, retries and idempotency |
 | 7 | [api.md](api.md) | look up an endpoint, its body, responses and errors |
 | 8 | [files.md](files.md) | find out what a specific file does |
@@ -27,16 +27,18 @@ The local stack (Docker Compose, fake GitHub) is described in
 
 | Term | Meaning |
 |---|---|
-| **Owner** | An account that manages projects, apps and connections. Logs in with email and password. |
-| **Project** | A set of tracker repositories that receive issues. Has exactly one *default repository*. |
-| **App** | A mobile app that reports bugs, the *source* of issues. Holds SDK keys and links to projects (many-to-many). |
+| **Owner** | An account that manages projects and apps. Logs in with email and password. |
+| **Project** | Where code lives: a set of tracker repositories that receive issues. Has exactly one *default repository*. Holds no credentials. |
+| **App** | A mobile app that reports bugs, the *source* of issues. Holds SDK keys and its own provider connections, and links to projects (many-to-many). |
 | **App key** | The SDK credential (`msk_…`). Only its SHA-256 hash is stored. |
 | **Tracker** | An issue tracker product: `github`, `gitlab` or `bitbucket`. |
 | **Provider** | The code integration for one tracker (`provider.Provider`). |
-| **Provider connection** | An owner's grant on a tracker account. On GitHub, one App installation. |
+| **Provider connection** | An **app's** grant on a tracker account: its credentials. On GitHub, one App installation. Apps of one owner may share an installation (one row each); two owners never can. |
+| **Attach** | Giving an app a connection the owner already has on another app, without a new install. |
 | **External ID** | The tracker's identifier for a connection (GitHub: the installation ID). Opaque outside the provider. |
-| **Project repository** | A repository linked to a project through one connection. |
-| **Issue target** | A (repository, tracker, external ID) triple that `issue.Service` opens an issue in. |
+| **Project repository** | A repository linked to a project, named by tracker and full name. |
+| **Issue target** | A project's default repository paired with the reporting app's connection that covers it (`issue.Target`). |
+| **Covers** | `Provider.Covers(connection, repository)`: whether a connection can reach a repository at all, decided without a network call. On GitHub, the repository owner is the installation's account. |
 | **Opener** | `issue.Opener`, which opens, comments on and checks issues on one connection. |
 | **Draft** | `issue.Draft`, an issue before its repository is chosen. |
 | **Ref** | `issue.Ref`, the tracker's reference to an opened issue (`owner/name#N` + URL). |
@@ -51,7 +53,8 @@ The local stack (Docker Compose, fake GitHub) is described in
 | FR-49: labels, assignees, milestone | carried by `Draft`; GitHub resolves milestones by title |
 | FR-51: two-way status | schema and `Opener.IsOpen` ready; no sync job yet |
 | FR-55: comment on a duplicate | schema, fingerprint and `Opener.Comment` ready; logic not built |
-| FR-58 / FR-59: routing, default repository | default repository done; rules will use `OpenInRepository` |
+| FR-58 / FR-59: routing, default repository | default repository done; rules will use `OpenInRepository(appID, repositoryID, …)` |
+| Per-app tracker credentials | done: connections belong to apps; `GET /apps/{id}/targets` previews the routing |
 | FR-62: failed-delivery retries | the worker retries with backoff and waits out rate limits; no admin view yet |
 | FR-70: other trackers | plug-in model ready; only GitHub implemented |
 | §3.4: least-privilege GitHub access | GitHub App with Issues R/W + Metadata R |
@@ -75,8 +78,19 @@ These are deliberate omissions or limitations in the current code:
 - **Linking the first repository at the same moment from two requests** can
   have both try to become the default. The partial unique index stops it, but
   the loser gets a misleading "already linked" 409.
-- **Disconnecting a provider** removes its project repositories, so projects
-  may be left without a default and no warning is given.
+- **No OAuth token storage yet.** GitHub needs none (installation tokens),
+  but GitLab and Bitbucket will need per-connection tokens, so per app. The
+  plan is an encrypted table keyed by `provider_connections.id` (see
+  [extending.md](extending.md#add-a-tracker-gitlab-bitbucket)).
+- **`Covers` is a local check.** On GitHub it compares the repository owner
+  with the installation's account. A repository on that account that wasn't
+  selected for the installation looks covered in `GET /apps/{id}/targets`,
+  and fails only when the issue is opened.
+- **Apps sharing an installation share its GitHub rate limits**, because
+  GitHub counts per installation, not per m-Seismo app.
+- **The connection migration's down path is lossy**: copies collapse to one
+  per installation, and project repositories that no connection's account
+  owns are deleted.
 - **No Go-level DB tests.** Owner isolation and SQL behaviour are covered
   by the API scripts against the dev stack, not by `go test`
   (see [testing.md](testing.md)).
