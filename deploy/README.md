@@ -35,12 +35,16 @@ opening work without a GitHub App, credentials or a browser:
 - On start it writes a fresh RSA key to the shared `github-app-key` volume,
   and the backend reads it as the App's private key.
 - OAuth code `fake-code-N` grants access to installation `N`, for any
-  positive N.
+  positive N. Installation `N` is on `octo-org`; from `100000000` up it is
+  on `other-org`.
 - Repositories: `octo-org/seismo-test`, `octo-org/another`, plus three
   that misbehave on purpose:
   - `octo-org/broken`: issue creation always returns 500.
   - `octo-org/slow-down`: GitHub's secondary rate limit, once per title.
   - `octo-org/exhausted`: the hourly quota is used up.
+
+  There is also `other-org/tools`. As on GitHub, an installation token only
+  reaches its own account's repositories.
 - Every response carries GitHub's `X-RateLimit-*` headers.
 - `GET http://localhost:9090/_fake/issues` lists every issue opened;
   `DELETE` clears the list. `GET /_fake/stats` counts rate-limited
