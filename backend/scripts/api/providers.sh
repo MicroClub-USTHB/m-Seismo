@@ -21,8 +21,10 @@ section "provider list"
 api GET /providers
 expect_status 200 "GET /providers"
 expect_match "$(jget .providers)" 'github' "github is configured"
-api GET "/apps/$app_a/connect/gitlab"
-expect_status 404 "unconfigured tracker -> 404"
+expect_match "$(jget .providers)" 'gitlab' "gitlab is configured"
+expect_match "$(jget .providers)" 'bitbucket' "bitbucket is configured"
+api GET "/apps/$app_a/connect/jira"
+expect_status 404 "unknown tracker -> 404"
 http GET "/apps/$app_a/connect/github"
 expect_status 401 "connect requires a bearer token"
 api GET /apps/00000000-0000-0000-0000-000000000000/connect/github
@@ -158,8 +160,8 @@ api POST "/projects/$project_id/repositories" \
   "{\"repository\":\"$GITHUB_TEST_REPO\"}"
 expect_status 422 "missing tracker -> 422"
 api POST "/projects/$project_id/repositories" \
-  "{\"tracker\":\"gitlab\",\"repository\":\"$GITHUB_TEST_REPO\"}"
-expect_status 404 "unconfigured tracker -> 404"
+  "{\"tracker\":\"jira\",\"repository\":\"$GITHUB_TEST_REPO\"}"
+expect_status 404 "unknown tracker -> 404"
 api POST "/projects/$project_id/repositories" \
   "{\"connection_id\":\"$conn_a\",\"repository\":\"$GITHUB_TEST_REPO\"}"
 expect_status 422 "the old connection_id field is rejected"

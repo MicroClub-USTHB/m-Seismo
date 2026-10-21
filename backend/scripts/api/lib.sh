@@ -4,6 +4,8 @@
 # Environment:
 #   API_URL           backend API base           (default http://localhost:8080/api/v1)
 #   FAKE_GITHUB_URL   fake GitHub, for checks    (default http://localhost:9090)
+#   FAKE_GITLAB_URL   fake GitLab, for checks    (default http://localhost:9091)
+#   FAKE_BITBUCKET_URL fake Bitbucket, for checks (default http://localhost:9092)
 #   GITHUB_MODE       fake | real                (default fake)
 #   GITHUB_TEST_REPO  repository to open issues in (default octo-org/seismo-test; required for real)
 #   STATE_FILE        where the token and IDs are saved (default scripts/api/.env.test)
@@ -21,6 +23,8 @@ API_URL="${API_URL:-http://localhost:8080/api/v1}"
 API_URL="${API_URL%/}"
 BASE_URL="${API_URL%/api/v1}"
 FAKE_GITHUB_URL="${FAKE_GITHUB_URL:-http://localhost:9090}"
+FAKE_GITLAB_URL="${FAKE_GITLAB_URL:-http://localhost:9091}"
+FAKE_BITBUCKET_URL="${FAKE_BITBUCKET_URL:-http://localhost:9092}"
 GITHUB_MODE="${GITHUB_MODE:-fake}"
 GITHUB_TEST_REPO="${GITHUB_TEST_REPO:-octo-org/seismo-test}"
 STATE_FILE="${STATE_FILE:-$LIB_DIR/.env.test}"
@@ -439,6 +443,67 @@ attach_connection() {
   api POST "/apps/$1/connections" "{\"connection_id\":\"$2\"}"
   [[ $STATUS == 201 ]] || { fail "attach connection $2 to app $1"; return 1; }
   CREATED_ID=$(jget .id)
+}
+
+# ------------------------------------------------- GitLab and Bitbucket --
+
+# fake_tracker_url TRACKER: prints the base URL of the fake for TRACKER.
+fake_tracker_url() {
+  case $1 in
+    github) echo "$FAKE_GITHUB_URL" ;;
+    gitlab) echo "$FAKE_GITLAB_URL" ;;
+    bitbucket) echo "$FAKE_BITBUCKET_URL" ;;
+    *) fatal "no fake for tracker $1" ;;
+  esac
+}
+
+# start_connect APP_ID TRACKER: GET /apps/{APP_ID}/connect/{TRACKER}; sets
+# INSTALL_URL and STATE (the one-time state inside it).
+start_connect() {
+  INSTALL_URL="" STATE=""
+  api GET "/apps/$1/connect/$2"
+  [[ $STATUS == 200 ]] || return 1
+  INSTALL_URL=$(jget .url)
+  STATE=$(query_param "$INSTALL_URL" state)
+}
+
+# tracker_callback TRACKER QUERY: calls /providers/{TRACKER}/callback?QUERY
+# the way the tracker's redirect would; sets LOCATION (the redirect).
+tracker_callback() {
+  http GET "/providers/$1/callback?$2"
+  LOCATION=$(header Location)
+}
+
+# tracker_connect APP_ID TRACKER [CODE]: runs a whole OAuth connect flow for
+# the app against the fake tracker (CODE defaults to a fresh
+# fake-code-N) and sets CONNECTION_ID (not saved). Fails the check when the
+# callback does not end in status=connected.
+tracker_connect() {
+  local app=$1 tracker=$2 code=${3:-fake-code-$(fake_install_id)}
+  CONNECTION_ID=""
+  start_connect "$app" "$tracker" || { fail "GET /apps/$app/connect/$tracker" "is the $tracker provider configured?"; return 1; }
+  tracker_callback "$tracker" "code=$code&state=$STATE"
+  if [[ $STATUS != 302 || $(query_param "$LOCATION" status) != connected ]]; then
+    fail "connect $tracker ($code) to app $app" "callback redirected to: $LOCATION"
+    return 1
+  fi
+  CONNECTION_ID=$(query_param "$LOCATION" connection_id)
+}
+
+# fake_tracker_issues TRACKER: GET {fake}/_fake/issues into BODY.
+fake_tracker_issues() { http GET "$(fake_tracker_url "$1")/_fake/issues"; }
+
+# fake_tracker_stat TRACKER NAME: prints one counter of the fake's
+# /_fake/stats (exchanges, refreshes, rate_limited, issues).
+fake_tracker_stat() {
+  http GET "$(fake_tracker_url "$1")/_fake/stats"
+  jget ".$2"
+}
+
+# fake_tracker_up TRACKER: returns 0 when the fake for TRACKER answers.
+fake_tracker_up() {
+  http GET "$(fake_tracker_url "$1")/healthz"
+  [[ $STATUS == 200 ]]
 }
 
 # fake_issue_count TITLE: prints how many issues with that title the fake
