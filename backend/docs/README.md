@@ -15,11 +15,12 @@ See [crash-providers.md](crash-providers.md) for per-app Sentry/Crashlytics sele
 | 3 | [data-model.md](data-model.md) | learn the tables, constraints, cascades, the migration and the sqlc setup |
 | 4 | [github.md](github.md) | see how GitHub access works, why it is secure, how **rate limits** are handled, and how to create the GitHub App |
 | 5 | [issue-service.md](issue-service.md) | see how an app's issue is targeted, opened and recorded |
-| 6 | [api.md](api.md) | look up an endpoint, its body, responses and errors |
-| 7 | [files.md](files.md) | find out what a specific file does |
-| 8 | [extending.md](extending.md) | add a tracker, a resource, a query or a setting |
-| 9 | [testing.md](testing.md) | run and write tests (unit, API scripts, e2e) |
-| 10 | [test-scripts.md](test-scripts.md) | the bash API test suite: every `lib.sh` function, the state file, token handling and the fake GitHub contract |
+| 6 | [worker.md](worker.md) | see how an accepted report becomes an issue: the queue, retries and idempotency |
+| 7 | [api.md](api.md) | look up an endpoint, its body, responses and errors |
+| 8 | [files.md](files.md) | find out what a specific file does |
+| 9 | [extending.md](extending.md) | add a tracker, a resource, a query or a setting |
+| 10 | [testing.md](testing.md) | run and write tests (unit, API scripts, e2e) |
+| 11 | [test-scripts.md](test-scripts.md) | the bash API test suite: every `lib.sh` function, the state file, token handling and the fake GitHub contract |
 
 The local stack (Docker Compose, fake GitHub) is described in
 [deploy/README.md](../../deploy/README.md).
@@ -48,12 +49,12 @@ The local stack (Docker Compose, fake GitHub) is described in
 | PRD item | Status in this backend |
 |---|---|
 | FR-01 / FR-04: project keys, create, rotate, revoke | done, as **app keys** (`/apps/{id}/keys`) |
-| FR-46: issue opened automatically | `issue.Service` done; ingestion stores/queues reports, but the consumer is pending |
+| FR-46: issue opened automatically | done: the worker opens the issue of every accepted report |
 | FR-49: labels, assignees, milestone | carried by `Draft`; GitHub resolves milestones by title |
 | FR-51: two-way status | schema and `Opener.IsOpen` ready; no sync job yet |
 | FR-55: comment on a duplicate | schema, fingerprint and `Opener.Comment` ready; logic not built |
 | FR-58 / FR-59: routing, default repository | default repository done; rules will use `OpenInRepository` |
-| FR-62: failed-delivery retries | per-target errors returned; no retry queue yet |
+| FR-62: failed-delivery retries | the worker retries with backoff and waits out rate limits; no admin view yet |
 | FR-70: other trackers | plug-in model ready; only GitHub implemented |
 | §3.4: least-privilege GitHub access | GitHub App with Issues R/W + Metadata R |
 
@@ -61,7 +62,6 @@ The local stack (Docker Compose, fake GitHub) is described in
 
 These are deliberate omissions or limitations in the current code:
 
-- **No report-to-issue worker.** Ingestion stores and queues reports, but no consumer calls `issue.Service` for accepted reports yet.
 - **No GitHub webhooks.** `suspended_at` is never set, and an uninstalled App
   is only detected when a call fails.
 - **JWTs can't be revoked.** Changing a password doesn't log out other
@@ -69,9 +69,8 @@ These are deliberate omissions or limitations in the current code:
 - **No rate limiting** on `/auth/login`, `/auth/register` or the provider
   callback. `*ratelimit.Limiter` is ready for this; today it throttles
   `POST /apps/{id}/test-issue` and `POST /reports`.
-- **No retry queue yet** for issues that failed or were rate-limited for too
-  long. `*issue.RateLimitError.Wait` and the per-target results are the hooks
-  for it (FR-62).
+- **No view of failed deliveries.** A report the worker gave up on keeps
+  `processed_at` empty and is only in the logs (see [worker.md](worker.md)).
 - **The access log contains full URLs**, including the one-time OAuth
   `code` and `state` on the callback. Both are single-use and short-lived,
   but consider redacting query strings on that route.

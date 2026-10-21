@@ -18,8 +18,10 @@ app. This does not change which GitHub repositories receive issues.
 - No crash-provider connection is required to submit a normal bug report.
 - The existing iOS SDK still uses its older transport format. Mobile integrations
   must send the shared multipart contract directly until that SDK is migrated.
-- The report-to-GitHub worker is not implemented in this repository. This change
-  adds report crash resolution; it does not claim automatic issue enrichment.
+- The report worker includes a crash section, exact Sentry event ID and a Sentry
+  link for connected apps. Available event titles and stack frames enrich the
+  issue; processing delays or provider outages retain the reference/link and do
+  not prevent GitHub issue publication.
 
 ## Operator setup
 
@@ -31,8 +33,8 @@ openssl rand -base64 32
 ```
 
 The key encrypts Sentry auth tokens with AES-256-GCM, bound to the app ID. Keep it
-stable across deployments and keep a backup separate from the database. Changing
-it requires reconnecting existing Sentry apps. An empty key disables Sentry setup
+available across deployments and keep a backup separate from the database. For
+rotation, retain old keys temporarily using the process below. An empty key disables Sentry setup
 without disabling the server or apps using no provider/Crashlytics.
 
 `SEISMO_CRASH_PROVIDERS_SENTRY_ORIGINS` is a space-separated list of allowed HTTPS
@@ -41,6 +43,33 @@ An operator can add a self-hosted Sentry origin. Paths, userinfo, query strings,
 fragments and HTTP origins are rejected. The host must use a trusted TLS certificate.
 API calls never follow redirects. Owners cannot introduce arbitrary destinations.
 Use the origin appropriate to the Sentry account's region.
+
+## Encryption-key rotation
+
+Token replacement through the owner API and encryption-key rotation are separate.
+The backend can decrypt with its active key and up to five space-separated
+`SEISMO_CRASH_PROVIDERS_PREVIOUS_ENCRYPTION_KEYS`; all writes use the active key.
+Existing ciphertext remains compatible.
+
+1. Generate a new key and distribute it as a **previous** key to every backend
+   instance first, keeping the old active key. This lets old and new instances
+   read each other's credentials during the rolling change.
+2. Promote the new key to `SEISMO_CRASH_PROVIDERS_ENCRYPTION_KEY`, retaining the
+   old key in `SEISMO_CRASH_PROVIDERS_PREVIOUS_ENCRYPTION_KEYS`. Wait until every
+   instance writes with the new active key.
+3. From `backend/`, with the same database and key configuration, run:
+
+   ```sh
+   go run ./cmd/rotate-crash-credentials
+   ```
+
+4. After the command succeeds, remove the old key from all instances and retain
+   the necessary backup keys for restoring older database backups.
+
+The command does not contact Sentry or print tokens. It uses conditional updates
+so a concurrent token replacement cannot be overwritten. A partial or interrupted
+run is safe to repeat; a concurrent update asks the operator to retry. Do not
+remove old keys before the command completes successfully.
 
 ## Owner API
 
@@ -138,7 +167,9 @@ retention expiry, or a reference to the wrong project; it is never guessed into
 a match. Resolution uses the app's **current** connection; disconnecting or
 switching projects can make older references unavailable.
 
-Invalid credentials return 422, upstream rate limits return 429 with `Retry-After`,
+Sentry token rejection (upstream 400, 401 or 403) returns 422 and asks the owner
+to check/reconnect the provider. The owner JWT remains valid. Other invalid
+credentials return 422, upstream rate limits return 429 with `Retry-After`,
 and provider transport/server failures return 503. All are separate from report
 acceptance: Sentry failures cannot reject an already accepted m-Seismo report.
 

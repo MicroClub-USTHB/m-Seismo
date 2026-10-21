@@ -59,7 +59,7 @@ func newSentryClient(origins []string) (*sentryClient, error) {
 func normalizeOrigin(raw string) (string, error) {
 	u, err := url.Parse(strings.TrimRight(strings.TrimSpace(raw), "/"))
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-		return "", fmt.Errorf("Sentry base_url must be an HTTPS origin without a path, credentials, query or fragment")
+		return "", fmt.Errorf("sentry base_url must be an HTTPS origin without a path, credentials, query or fragment")
 	}
 	u.Host = strings.ToLower(u.Host)
 	return u.String(), nil
@@ -101,12 +101,12 @@ func (c *sentryClient) get(ctx context.Context, s SentrySettings, token, suffix 
 		// Do not propagate request headers, tokens, or upstream bodies.
 		return apperr.Unavailable("Sentry is unavailable; retry later")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusNotFound:
 		return apperr.NotFound("Sentry project or event not found")
-	case http.StatusUnauthorized, http.StatusForbidden:
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden:
 		return apperr.Invalid("Sentry rejected the connection; check the token and project:read permission")
 	case http.StatusTooManyRequests:
 		wait := 60 * time.Second

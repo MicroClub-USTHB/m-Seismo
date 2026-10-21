@@ -196,6 +196,7 @@ type Report struct {
 	ReceivedAt     time.Time  `json:"received_at"`
 	QueuedAt       *time.Time `json:"queued_at"`
 	Payload        []byte     `json:"payload"`
+	ProcessedAt    *time.Time `json:"processed_at"`
 }
 
 type ReportAttachment struct {
@@ -204,6 +205,14 @@ type ReportAttachment struct {
 	ContentType string    `json:"content_type"`
 	Data        []byte    `json:"data"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+type ReportDelivery struct {
+	ReportID            uuid.UUID  `json:"report_id"`
+	ProjectRepositoryID uuid.UUID  `json:"project_repository_id"`
+	IssueID             *uuid.UUID `json:"issue_id"`
+	Url                 string     `json:"url"`
+	CreatedAt           time.Time  `json:"created_at"`
 }
 
 type SchemaMigration struct {

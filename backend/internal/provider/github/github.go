@@ -232,7 +232,7 @@ func (p *Provider) exchangeCode(ctx context.Context, code string) (string, error
 	if err != nil {
 		return "", fmt.Errorf("github: exchange code: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var body struct {
 		AccessToken      string `json:"access_token"`

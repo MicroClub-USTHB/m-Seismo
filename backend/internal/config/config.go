@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -34,10 +35,16 @@ func Load(configPath string) (*Config, error) {
 		}
 	}
 
+	maxConns := v.GetInt("database.max_conns")
+	if maxConns < 0 || maxConns > math.MaxInt32 {
+		return nil, fmt.Errorf("config: database.max_conns %d is out of range", maxConns)
+	}
+
 	cfg := &Config{
 		CrashProviders: CrashProvidersConfig{
-			EncryptionKey: v.GetString("crash_providers.encryption_key"),
-			SentryOrigins: v.GetStringSlice("crash_providers.sentry_origins"),
+			EncryptionKey:          v.GetString("crash_providers.encryption_key"),
+			PreviousEncryptionKeys: v.GetStringSlice("crash_providers.previous_encryption_keys"),
+			SentryOrigins:          v.GetStringSlice("crash_providers.sentry_origins"),
 		},
 		Env:      v.GetString("env"),
 		LogLevel: v.GetString("log_level"),
@@ -47,7 +54,7 @@ func Load(configPath string) (*Config, error) {
 		},
 		Database: DatabaseConfig{
 			URL:      v.GetString("database.url"),
-			MaxConns: int32(v.GetInt("database.max_conns")),
+			MaxConns: int32(maxConns),
 		},
 		Redis: RedisConfig{
 			URL: v.GetString("redis.url"),
@@ -80,6 +87,11 @@ func Load(configPath string) (*Config, error) {
 			InstallationPerMinute: v.GetFloat64("ingest.installation_per_minute"),
 			InstallationBurst:     v.GetInt("ingest.installation_burst"),
 		},
+		Worker: WorkerConfig{
+			Enabled:     v.GetBool("worker.enabled"),
+			Concurrency: v.GetInt("worker.concurrency"),
+			MaxAttempts: v.GetInt("worker.max_attempts"),
+		},
 	}
 
 	cfg.Server.PublicURL = v.GetString("server.public_url")
@@ -94,7 +106,7 @@ func Load(configPath string) (*Config, error) {
 
 // devJWTSecret is used only when env is "development" and no secret is set,
 // so a fresh checkout runs without extra setup.
-const devJWTSecret = "m-seismo-development-only-secret"
+const devJWTSecret = "m-seismo-development-only-secret" //nolint:gosec // known on purpose, refused outside development
 
 func (c *Config) validate() error {
 	if c.Auth.JWTSecret == "" {
@@ -112,6 +124,9 @@ func (c *Config) validate() error {
 	if c.Ingest.AppPerMinute <= 0 || c.Ingest.AppBurst < 1 ||
 		c.Ingest.InstallationPerMinute <= 0 || c.Ingest.InstallationBurst < 1 {
 		return fmt.Errorf("ingest rate limits must be positive")
+	}
+	if c.Worker.Concurrency < 1 || c.Worker.MaxAttempts < 1 {
+		return fmt.Errorf("worker.concurrency and worker.max_attempts must be at least 1")
 	}
 	return nil
 }

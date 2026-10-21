@@ -25,7 +25,11 @@ bound only to localhost, applies all migrations, and runs:
 - `TestCrashProviderHTTPIntegration`: the production dependency graph and real
   owner/SDK HTTP routes, including a JavaScript adapter upload, encrypted tokens,
   Sentry failures/recovery, screenshots, queue publication and access isolation.
-- Go vet and the five dependency-free web adapter tests.
+- `TestSentryReportQueueToIssueIntegration`: a persisted Sentry-only report moves
+  through the real JetStream consumer and processor into a crash issue draft with
+  the exact event ID, resolved stack and Sentry URL. The tracker write boundary
+  and Sentry API are simulated.
+- Go vet and the six dependency-free web adapter tests.
 - Every existing API script against a compiled backend and fake GitHub.
 
 Only external Sentry and GitHub are simulated. No vendor credentials are needed.
@@ -37,9 +41,21 @@ Optional `--go`, `--postgres-image`, `--redis-image` and `--nats-image` argument
 select installed tooling or cached service images. Defaults match the development
 stack: PostgreSQL 17, Redis 7 and NATS 2 with JetStream.
 
+To verify upgrading an existing pre-Sentry database using the same migration
+tracking as deployment, also supply dbmate:
+
+```sh
+python3 backend/scripts/test-integration.py --dbmate /path/to/dbmate
+```
+
+This applies the existing migrations first (including report deliveries), then
+upgrades to the Sentry migration, rolls it back, reapplies it and checks a repeat
+upgrade is a no-op. It verifies both tables coexist and rejects duplicate migration
+versions. All operations use the runner's disposable database.
+
 The iOS suite requires a macOS/Xcode host and is separate from this runner. The
-Rust agent is still a placeholder with zero tests; `cd agent && cargo test` checks
-its current build/test target.
+Rust agent has its own checks (`make agent-check`); its optional Docker integration
+tests are run with `make agent-integration`.
 
 To use existing **isolated test services**, apply migrations and supply
 `SEISMO_TEST_DATABASE_URL`, `SEISMO_TEST_REDIS_URL` and `SEISMO_TEST_NATS_URL`:

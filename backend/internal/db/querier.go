@@ -17,6 +17,7 @@ type Querier interface {
 	CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue, error)
 	CreateOwner(ctx context.Context, arg CreateOwnerParams) (Owner, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
+	CreateReportDelivery(ctx context.Context, arg CreateReportDeliveryParams) error
 	DeleteApp(ctx context.Context, arg DeleteAppParams) (int64, error)
 	DeleteAppCrashProvider(ctx context.Context, appID uuid.UUID) error
 	DeleteOwner(ctx context.Context, id uuid.UUID) (int64, error)
@@ -33,12 +34,14 @@ type Querier interface {
 	GetProject(ctx context.Context, arg GetProjectParams) (Project, error)
 	GetProjectRepository(ctx context.Context, arg GetProjectRepositoryParams) (ProjectRepository, error)
 	GetProviderConnection(ctx context.Context, arg GetProviderConnectionParams) (ProviderConnection, error)
+	GetReport(ctx context.Context, id uuid.UUID) (Report, error)
 	GetReportByReportID(ctx context.Context, arg GetReportByReportIDParams) (Report, error)
 	// Returns no row when the app already sent a report with this report_id.
 	InsertReport(ctx context.Context, arg InsertReportParams) (Report, error)
 	InsertReportAttachment(ctx context.Context, arg InsertReportAttachmentParams) error
 	LinkAppProject(ctx context.Context, arg LinkAppProjectParams) error
 	LinkProjectRepository(ctx context.Context, arg LinkProjectRepositoryParams) (ProjectRepository, error)
+	ListAppCrashProviderCredentials(ctx context.Context) ([]ListAppCrashProviderCredentialsRow, error)
 	ListAppKeys(ctx context.Context, appID uuid.UUID) ([]AppKey, error)
 	ListAppProjects(ctx context.Context, appID uuid.UUID) ([]Project, error)
 	ListApps(ctx context.Context, ownerID uuid.UUID) ([]App, error)
@@ -47,8 +50,12 @@ type Querier interface {
 	ListProjectRepositories(ctx context.Context, projectID uuid.UUID) ([]ListProjectRepositoriesRow, error)
 	ListProjects(ctx context.Context, ownerID uuid.UUID) ([]Project, error)
 	ListProviderConnections(ctx context.Context, ownerID uuid.UUID) ([]ProviderConnection, error)
+	ListReportAttachmentNames(ctx context.Context, reportID uuid.UUID) ([]string, error)
+	ListReportDeliveries(ctx context.Context, reportID uuid.UUID) ([]ReportDelivery, error)
+	MarkReportProcessed(ctx context.Context, id uuid.UUID) error
 	MarkReportQueued(ctx context.Context, id uuid.UUID) error
 	RevokeAppKey(ctx context.Context, arg RevokeAppKeyParams) (int64, error)
+	RotateAppCrashProviderCredentials(ctx context.Context, arg RotateAppCrashProviderCredentialsParams) (int64, error)
 	SetAppCrashProvider(ctx context.Context, arg SetAppCrashProviderParams) (AppCrashProvider, error)
 	SetDefaultProjectRepository(ctx context.Context, arg SetDefaultProjectRepositoryParams) (int64, error)
 	SetIssueState(ctx context.Context, arg SetIssueStateParams) error

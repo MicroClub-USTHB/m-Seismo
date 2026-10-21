@@ -84,6 +84,7 @@ func TestCrashProviderHTTPIntegration(t *testing.T) {
 	}))
 	defer sentry.Close()
 	t.Setenv("SEISMO_CRASH_PROVIDERS_SENTRY_ORIGINS", sentry.URL)
+	t.Setenv("SEISMO_WORKER_ENABLED", "false")
 	// Trust only this test server in addition to the regular roots. Production
 	// TLS verification remains enabled; no insecure transport is added to code.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -129,7 +130,7 @@ func TestCrashProviderHTTPIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		data, err := io.ReadAll(response.Body)
 		if err != nil {
 			t.Fatal(err)
@@ -246,7 +247,7 @@ func TestCrashProviderHTTPIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		body, err := io.ReadAll(response.Body)
 		if err != nil {
 			t.Fatal(err)
@@ -305,6 +306,10 @@ func TestCrashProviderHTTPIntegration(t *testing.T) {
 	if len(frames) != 1 || frames[0] != "render (app.js:12)" {
 		t.Fatalf("incorrect stack: %+v", frames)
 	}
+	for _, status := range []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden} {
+		upstreamStatus.Store(int64(status))
+		request("GET", crashPath, token, nil, 422)
+	}
 	upstreamStatus.Store(http.StatusTooManyRequests)
 	request("GET", crashPath, token, nil, 429)
 	upstreamStatus.Store(http.StatusOK)
@@ -345,6 +350,7 @@ func TestCrashProviderHTTPIntegration(t *testing.T) {
 		defer cancel()
 		// Run the real web adapter with Node's fetch/FormData implementations.
 		// Test credentials are passed through the environment, never argv.
+		//nolint:gosec // Node is resolved from PATH; the script and arguments are fixed test code.
 		command := exec.CommandContext(ctx, node, "--input-type=module", "-e", `
 import { createReporter } from '../sdks/web/index.js';
 const reporter = createReporter({

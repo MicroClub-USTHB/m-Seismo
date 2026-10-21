@@ -431,8 +431,8 @@ for apps selecting Crashlytics. Provider outages must not block report acceptanc
 `[INT-05]` — v1
 
 > **Implementation status (2026-10-21):** Sentry project connection and lazy
-> report-event resolution are implemented. The Crashlytics export adapter and
-> automatic report-to-GitHub worker remain pending. The existing iOS SDK transport
+> report-event resolution and report-to-GitHub enrichment are implemented.
+> The Crashlytics export adapter remains pending. The existing iOS SDK transport
 > also needs migration to the shared ingestion contract; mobile apps can use that
 > HTTP contract directly in the meantime.
 

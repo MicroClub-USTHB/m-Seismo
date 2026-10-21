@@ -60,3 +60,15 @@ func TestLoadLogLevel(t *testing.T) {
 		t.Error("Load with log_level=verbose: want an error")
 	}
 }
+
+func TestPreviousCredentialKeysLoadFromEnvironment(t *testing.T) {
+	t.Setenv("SEISMO_AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("SEISMO_CRASH_PROVIDERS_PREVIOUS_ENCRYPTION_KEYS", "old-key-a old-key-b")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keys := cfg.CrashProviders.PreviousEncryptionKeys; len(keys) != 2 || keys[0] != "old-key-a" || keys[1] != "old-key-b" {
+		t.Fatalf("previous keys not parsed: %v", keys)
+	}
+}

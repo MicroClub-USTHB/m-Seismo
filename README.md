@@ -10,4 +10,12 @@ m-Seismo is an open-source internal tool from MicroClub that turns mobile and we
 - `deploy/`: local development stack and deployment configuration
 
 ## Status
-Backend management, report ingestion, GitHub issue opening, and per-app Sentry event resolution are implemented. The automatic report-to-issue worker, Crashlytics export adapter, and Rust agent are still pending. See [crash-provider setup](backend/docs/crash-providers.md).
+Backend management, report ingestion, automatic GitHub issue publishing, and per-app Sentry event resolution are implemented. The Crashlytics export adapter remains pending. See [crash-provider setup](backend/docs/crash-providers.md).
+
+## Make commands
+
+Run these commands from the repository root.
+
+- `make fmt`: format the Go backend and Rust agent.
+- `make lint`: run the Go and Rust linters.
+- `make check`: check formatting and linting, then build and test the Go backend and Rust agent.

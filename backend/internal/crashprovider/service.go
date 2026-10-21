@@ -50,7 +50,7 @@ type Service struct {
 }
 
 func NewService(q db.Querier, cfg *config.Config) (*Service, error) {
-	v, err := newVault(cfg.CrashProviders.EncryptionKey)
+	v, err := newVault(cfg.CrashProviders.EncryptionKey, cfg.CrashProviders.PreviousEncryptionKeys...)
 	if err != nil {
 		return nil, err
 	}
@@ -205,15 +205,7 @@ func (s *Service) ReportCrash(ctx context.Context, ownerID, appID, reportID uuid
 	if r.Sentry == nil {
 		return Link{Status: "no_reference", Provider: "sentry"}, nil
 	}
-	var settings SentrySettings
-	if err := json.Unmarshal(saved.Settings, &settings); err != nil {
-		return Link{}, err
-	}
-	token, err := s.vault.open(appID, saved.Credentials)
-	if err != nil {
-		return Link{}, err
-	}
-	event, err := s.sentry.event(ctx, settings, token, r.Sentry.EventID)
+	event, err := s.resolveSentry(ctx, saved, r.Sentry.EventID)
 	if kind, _ := apperr.Classify(err); err != nil && kind == apperr.KindNotFound {
 		return Link{Status: "event_not_found", Provider: "sentry"}, nil
 	}
@@ -221,4 +213,50 @@ func (s *Service) ReportCrash(ctx context.Context, ownerID, appID, reportID uuid
 		return Link{}, err
 	}
 	return Link{Status: "linked", Provider: "sentry", Event: event}, nil
+}
+
+// ForReport enriches an already stored report for the internal worker. It is not
+// an owner API: the worker supplies the app ID from the persisted report row.
+// A validated reference is returned even when Sentry is processing the event or
+// unavailable, so issue publication retains the exact event ID and a useful link.
+func (s *Service) ForReport(ctx context.Context, appID uuid.UUID, report *ingest.Report) (*Event, error) {
+	if report.Sentry == nil {
+		return nil, nil
+	}
+	saved, err := s.q.GetAppCrashProvider(ctx, appID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if saved.Provider != "sentry" {
+		return nil, nil
+	}
+	return s.resolveSentry(ctx, saved, report.Sentry.EventID)
+}
+
+func (s *Service) resolveSentry(ctx context.Context, saved db.AppCrashProvider, eventID string) (*Event, error) {
+	var settings SentrySettings
+	if err := json.Unmarshal(saved.Settings, &settings); err != nil {
+		return nil, err
+	}
+	if err := s.sentry.validate(&settings); err != nil {
+		return nil, err
+	}
+	if !eventPattern.MatchString(eventID) {
+		return nil, apperr.Invalid("invalid Sentry event ID")
+	}
+	eventID = strings.ToLower(eventID)
+	reference := &Event{Provider: "sentry", EventID: eventID,
+		URL: settings.BaseURL + "/organizations/" + settings.Organization + "/issues/?query=" + eventID}
+	token, err := s.vault.open(saved.AppID, saved.Credentials)
+	if err != nil {
+		return reference, apperr.Unavailable("Sentry credentials cannot be decrypted; reconnect the app or check the encryption keys")
+	}
+	event, err := s.sentry.event(ctx, settings, token, eventID)
+	if err != nil {
+		return reference, err
+	}
+	return event, nil
 }

@@ -1,6 +1,7 @@
 package crashprovider
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -107,6 +108,32 @@ func TestPostgresReportCrashIntegration(t *testing.T) {
 	}
 	if _, err := s.ReportCrash(ctx, uuid.New(), app.ID, uuid.MustParse(report.ID)); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("cross-owner report exposed: %v", err)
+	}
+
+	newKey := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{2}, 32))
+	rotating, err := NewService(q, &config.Config{CrashProviders: config.CrashProvidersConfig{
+		EncryptionKey: newKey, PreviousEncryptionKeys: []string{base64.StdEncoding.EncodeToString(make([]byte, 32))}, SentryOrigins: []string{upstream.URL},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, err := rotating.RotateCredentials(ctx); err != nil || count < 1 {
+		t.Fatalf("database rotation: %d %v", count, err)
+	}
+	refreshed, err := q.GetAppCrashProvider(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshVault, err := newVault(newKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token, err := freshVault.open(app.ID, refreshed.Credentials); err != nil || token != "private-token" {
+		t.Fatalf("rotated token unavailable: %v", err)
+	}
+	changed, err := q.RotateAppCrashProviderCredentials(ctx, db.RotateAppCrashProviderCredentialsParams{AppID: app.ID, OldCredentials: connection.Credentials, NewCredentials: []byte("stale-writer")})
+	if err != nil || changed != 0 {
+		t.Fatalf("stale writer replaced rotated token: %d %v", changed, err)
 	}
 	if _, err := q.DeleteApp(ctx, db.DeleteAppParams{ID: app.ID, OwnerID: owner.ID}); err != nil {
 		t.Fatal(err)

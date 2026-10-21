@@ -67,3 +67,7 @@ reverse proxy for browser ingestion. App keys grant submission only; owner JWTs
 and Sentry API tokens belong in your management/backend flow.
 
 Run tests with `npm test` (Node 20+, no npm dependencies).
+
+The bridge classifies exceptions with `mechanism.handled === false` (including
+unhandled promise rejections) as `crash`. Handled exceptions and events without
+that signal remain `non_fatal`. The original Sentry event is preserved.

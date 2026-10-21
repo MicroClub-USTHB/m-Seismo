@@ -37,6 +37,55 @@ func (q *Queries) GetAppCrashProvider(ctx context.Context, appID uuid.UUID) (App
 	return i, err
 }
 
+const listAppCrashProviderCredentials = `-- name: ListAppCrashProviderCredentials :many
+SELECT app_id, credentials FROM app_crash_providers
+WHERE provider = 'sentry' ORDER BY app_id
+`
+
+type ListAppCrashProviderCredentialsRow struct {
+	AppID       uuid.UUID `json:"app_id"`
+	Credentials []byte    `json:"credentials"`
+}
+
+func (q *Queries) ListAppCrashProviderCredentials(ctx context.Context) ([]ListAppCrashProviderCredentialsRow, error) {
+	rows, err := q.db.Query(ctx, listAppCrashProviderCredentials)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAppCrashProviderCredentialsRow
+	for rows.Next() {
+		var i ListAppCrashProviderCredentialsRow
+		if err := rows.Scan(&i.AppID, &i.Credentials); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const rotateAppCrashProviderCredentials = `-- name: RotateAppCrashProviderCredentials :execrows
+UPDATE app_crash_providers SET credentials = $1, updated_at = now()
+WHERE app_id = $2 AND provider = 'sentry' AND credentials = $3
+`
+
+type RotateAppCrashProviderCredentialsParams struct {
+	NewCredentials []byte    `json:"new_credentials"`
+	AppID          uuid.UUID `json:"app_id"`
+	OldCredentials []byte    `json:"old_credentials"`
+}
+
+func (q *Queries) RotateAppCrashProviderCredentials(ctx context.Context, arg RotateAppCrashProviderCredentialsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rotateAppCrashProviderCredentials, arg.NewCredentials, arg.AppID, arg.OldCredentials)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setAppCrashProvider = `-- name: SetAppCrashProvider :one
 INSERT INTO app_crash_providers (app_id, provider, settings, credentials)
 VALUES ($1, $2, $3, $4)

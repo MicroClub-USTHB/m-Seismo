@@ -12,7 +12,7 @@ func TestSentryReferencesForMobileAndWeb(t *testing.T) {
 			m := loadExample(t, "shake-report.json")
 			m["platform"] = platform
 			m["trigger"] = "crash"
-			m["sentry"] = map[string]any{"event_id": strings.Repeat("A", 32), "auth_token": "must-not-be-stored"}
+			m["sentry"] = map[string]any{"event_id": strings.Repeat("A", 32), "auth_token": "must-not-be-stored"} //nolint:gosec // Deliberate sentinel verifies credentials are discarded.
 			if err := validate(t, m); err != nil {
 				t.Fatal(err)
 			}

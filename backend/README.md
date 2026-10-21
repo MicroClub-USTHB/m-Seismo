@@ -1,8 +1,7 @@
-# backend
+# Backend
 
 Go service: ingestion, enrichment, deduplication, GitHub publishing. Status:
-owner accounts, projects, apps, GitHub connections and the issue service are
-in place. The ingestion endpoint accepts reports and queues them. Per-app Sentry connections and event resolution are available; the report-to-issue worker and Crashlytics export adapter remain pending.
+owner accounts, projects, apps, GitHub connections, report ingestion and the report-to-issue worker are in place. Per-app Sentry connections and event resolution are available; the Crashlytics export adapter remains pending.
 
 **In-depth documentation:** [docs/](docs/README.md). It covers the
 architecture, data model, GitHub integration, issue service, API reference,
@@ -117,3 +116,14 @@ SEISMO_E2E_APP_ID=<app uuid> go test -tags e2e -run TestOpenForAppE2E .
 ## Crash providers
 
 Each app independently selects Sentry, Crashlytics, or no crash provider. See [docs/crash-providers.md](docs/crash-providers.md) for owner endpoints, credential setup, mobile/web integration, and current limitations.
+
+## Commands
+
+Run these commands from the repository root:
+
+- `make backend-fmt`: format Go source files with `gofmt`.
+- `make backend-fmt-check`: verify that Go source files are formatted.
+- `make backend-lint`: run `golangci-lint` with the repository's configured linters, including `gosec` and `bodyclose`.
+- `make backend-build`: build the Go backend.
+- `make backend-test`: run Go tests.
+- `make backend-check`: run the backend formatting check and linting, build, and tests.

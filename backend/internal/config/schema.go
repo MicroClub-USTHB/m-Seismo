@@ -73,11 +73,26 @@ type IngestConfig struct {
 	InstallationBurst     int
 }
 
+// WorkerConfig controls the pipeline worker that turns accepted reports
+// into issues.
+type WorkerConfig struct {
+	// Enabled runs the worker in this process. Turn it off to run the API
+	// alone and the workers elsewhere.
+	Enabled bool
+	// Concurrency is how many reports one process works on at a time.
+	Concurrency int
+	// MaxAttempts is how many times a report is tried before the worker
+	// gives up on it. Waiting out a tracker's rate limit counts as an
+	// attempt.
+	MaxAttempts int
+}
+
 // CrashProvidersConfig holds operator-controlled credential encryption and allowed
 // Sentry origins. API clients cannot introduce arbitrary outbound destinations.
 type CrashProvidersConfig struct {
-	EncryptionKey string // base64-encoded 32-byte AES key; empty disables Sentry connections
-	SentryOrigins []string
+	EncryptionKey          string   // base64-encoded 32-byte AES key; empty disables Sentry connections
+	PreviousEncryptionKeys []string // decryption-only keys retained during rotation (at most five)
+	SentryOrigins          []string
 }
 
 type Config struct {
@@ -90,6 +105,7 @@ type Config struct {
 	Auth           AuthConfig
 	GitHub         GitHubConfig
 	Limits         LimitsConfig
+	Worker         WorkerConfig
 	Ingest         IngestConfig
 	CrashProviders CrashProvidersConfig
 }

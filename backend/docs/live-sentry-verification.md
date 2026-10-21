@@ -50,3 +50,40 @@ This verifies browser capture and report correlation against a real Sentry
 server. Native mobile SDK execution, Crashlytics resolution and automatic GitHub
 issue enrichment were not exercised by this test; their existing limitations
 are described in [crash-providers.md](crash-providers.md).
+
+## Follow-up after integrating the report worker
+
+Passed again against the same installed Sentry 26.10.0 server after merging the
+current `dev` worker and addressing review feedback. Chromium's unhandled error
+was classified as `crash`. The real Go application accepted the multipart report,
+resolved the actual Sentry event and stack, and its JetStream consumer and issue
+service posted exactly one issue through the GitHub HTTP publisher to fake GitHub.
+The captured issue body contained `### Crash`, the same event ID, a Sentry link and
+the `crash` trigger. The Sentry auth token was absent from the issue body.
+
+Sentry capture and lookup used the real installed server; the GitHub boundary
+used the local simulator and created no external GitHub issue. When an event is
+still processing, the worker retains its exact ID and a validated Sentry search
+link. Full stack details are included when Sentry already has them; published
+issues are not automatically backfilled after a later Sentry lookup.
+
+```json
+{
+  "tested_at": "2026-10-21T22:28:56.429Z",
+  "sentry_release": "26.10.0",
+  "browser": "147.0.7727.101",
+  "sdk": "@sentry/browser 10.22.0",
+  "report_id": "3151cd2b-ba0e-4935-bade-b1cbe60ff58d",
+  "event_id": "f38196c4957e4f1f824742b34bf4c22d",
+  "issue_id": "1",
+  "event_url": "https://127.0.0.1:19443/organizations/m-seismo-live/issues/1/events/f38196c4957e4f1f824742b34bf4c22d/",
+  "stack_frames": 1,
+  "trigger": "crash",
+  "status": "passed",
+  "github_issue_body_verified": true,
+  "github_boundary": "fake GitHub; real report worker and HTTP publisher"
+}
+```
+
+The temporary backend, GitHub simulator, browser, database, Redis and NATS were
+removed after this run. The installed Sentry service remains available locally.

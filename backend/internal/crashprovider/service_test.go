@@ -244,7 +244,9 @@ func TestVaultBindsCredentialsToAppAndDetectsTampering(t *testing.T) {
 }
 
 func TestOriginRestrictionsAndRedirects(t *testing.T) {
-	s, _, owner, app, origin := setup(t, func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "https://untrusted.example/", 302) })
+	s, _, owner, app, origin := setup(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://untrusted.example/", http.StatusFound)
+	})
 	for _, target := range []string{"http://127.0.0.1", "https://untrusted.example", origin + "/path", "https://user:pass@host", origin + "?q=secret", origin + "#fragment"} {
 		if _, err := s.Set(context.Background(), owner, app, sentryInput(target, "token")); err == nil {
 			t.Errorf("allowed origin %s", target)

@@ -1,0 +1,56 @@
+// Agent <-> coordinator. The agent dials out and never serves anything.
+syntax = "proto3";
+
+package seismo.v1;
+
+import "seismo/v1/common.proto";
+
+service Agent {
+  // One long-lived stream per agent. The agent sends Register first,
+  // then answers Queries until the stream (or the connection) dies.
+  rpc Connect(stream AgentMessage) returns (stream CoordinatorMessage);
+}
+
+message AgentMessage {
+  oneof message {
+    Register register = 1;
+    QueryResult result = 2;
+    QueryError error = 3;
+  }
+}
+
+message CoordinatorMessage {
+  oneof message {
+    Query query = 1;
+    Cancel cancel = 2;
+  }
+}
+
+// Must be the first message. Rejections come as a gRPC status on the
+// stream, there is no ack message:
+//   FAILED_PRECONDITION  protocol_version not supported
+//   ALREADY_EXISTS       another live stream already uses agent_id
+//   UNAUTHENTICATED      bad registration token (metadata)
+message Register {
+  uint32 protocol_version = 1;
+  // Stable across restarts and reconnects (from config, falls back to
+  // the hostname). a reconnect replaces the stale entry.
+  string agent_id = 2;
+  AgentSource source = 3;
+  // Services this agent can see. routing hint only for now, v1 queries
+  // every agent anyway.
+  repeated string services = 4;
+}
+
+// The agent could not produce a QueryResult at all (bad query, internal
+// failure). Per-workload problems go in the QueryResult instead.
+message QueryError {
+  string query_id = 1;
+  SourceError error = 2;
+}
+
+// Best effort. the agent drops the work for query_id and sends nothing
+// back; a late result for a cancelled query is ignored by the coordinator.
+message Cancel {
+  string query_id = 1;
+}

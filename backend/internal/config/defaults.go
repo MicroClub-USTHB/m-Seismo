@@ -42,4 +42,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("ingest.app_burst", 600)
 	v.SetDefault("ingest.installation_per_minute", 10)
 	v.SetDefault("ingest.installation_burst", 5)
+
+	v.SetDefault("crash_providers.previous_encryption_keys", []string{})
+	v.SetDefault("worker.enabled", true)
+	v.SetDefault("worker.concurrency", 4)
+	v.SetDefault("worker.max_attempts", 10)
 }

@@ -54,7 +54,7 @@ import (
 const (
 	clientSecret            = "fake-secret"
 	oauthCodePrefix         = "fake-code-"
-	userTokenPrefix         = "fake-user-token-"
+	userTokenPrefix         = "fake-user-token-" //nolint:gosec // prefix of the fake's made-up tokens, not a credential
 	installationTokenPrefix = "fake-installation-token-"
 	accountLogin            = "octo-org"
 	brokenRepository        = "octo-org/broken"
@@ -110,7 +110,15 @@ func main() {
 		slowDownSeen: map[string]bool{},
 	}
 	log.Printf("fakegithub: listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, s.routes()))
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           s.routes(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+	log.Fatal(srv.ListenAndServe())
 }
 
 func (s *server) routes() http.Handler {
@@ -149,9 +157,9 @@ func (s *server) routes() http.Handler {
 // to finish the flow by hand, since there is no real UI.
 func (s *server) installPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	fmt.Fprintf(w, "fakegithub install page for app %q.\n\n", r.PathValue("slug"))
-	fmt.Fprintf(w, "To finish, pick any number N and call the m-Seismo callback with:\n")
-	fmt.Fprintf(w, "  installation_id=N&setup_action=install&code=%sN&state=%s\n", oauthCodePrefix, r.URL.Query().Get("state"))
+	_, _ = fmt.Fprintf(w, "fakegithub install page for app %q.\n\n", r.PathValue("slug"))
+	_, _ = fmt.Fprintf(w, "To finish, pick any number N and call the m-Seismo callback with:\n")
+	_, _ = fmt.Fprintf(w, "  installation_id=N&setup_action=install&code=%sN&state=%s\n", oauthCodePrefix, r.URL.Query().Get("state")) //nolint:gosec // served as text/plain, not HTML
 }
 
 func (s *server) exchangeCode(w http.ResponseWriter, r *http.Request) {
@@ -466,16 +474,17 @@ func writeKey(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	// The backend container reads the key as the same user.
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
 	block := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}
-	return os.WriteFile(path, pem.EncodeToMemory(block), 0o644)
+	return os.WriteFile(path, pem.EncodeToMemory(block), 0o600)
 }
 
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s %s", r.Method, r.URL.Path)
+		log.Printf("%q %q", r.Method, r.URL.Path) //nolint:gosec // %q escapes newlines, so a request can't forge log lines
 		next.ServeHTTP(w, r)
 	})
 }

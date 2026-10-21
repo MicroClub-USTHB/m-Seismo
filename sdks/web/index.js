@@ -87,7 +87,8 @@ export function createSentryBridge({ reporter, consent, onReport, onError = () =
       if (permission !== "given" && permission !== "not_required") return event;
       const report = reporter.createReport({
         sentryEventID: event.event_id,
-        trigger: "non_fatal",
+        trigger: event.exception.values.some(value => value.mechanism?.handled === false)
+          ? "crash" : "non_fatal",
         consent: permission,
         occurredAt: typeof event.timestamp === "number"
           ? new Date(event.timestamp * 1000).toISOString()

@@ -65,10 +65,13 @@ def main():
     parser.add_argument("--redis-image", default="redis:7-alpine")
     parser.add_argument("--nats-image", default="nats:2-alpine")
     parser.add_argument("--go", default="go", help="Go executable (default: go on PATH)")
+    parser.add_argument("--dbmate", help="Optional dbmate executable: verify upgrade from the pre-Sentry schema")
     args = parser.parse_args()
     for command in ("docker", args.go, "node", "bash", "curl"):
         if shutil.which(command) is None:
             parser.error(command + " must be on PATH")
+    if args.dbmate and shutil.which(args.dbmate) is None:
+        parser.error(args.dbmate + " must be executable")
     version = run(["node", "-p", "process.versions.node"], capture=True).stdout.strip()
     if int(version.split(".")[0]) < 20:
         parser.error("Node 20+ is required")
@@ -105,9 +108,39 @@ def main():
             wait_until(lambda: run(["docker", "exec", postgres, "pg_isready", "-h", "127.0.0.1", "-U", "seismo", "-d", "seismo"], capture=True).returncode == 0, "Postgres")
             wait_until(lambda: run(["docker", "exec", redis, "redis-cli", "ping"], capture=True).stdout.strip() == "PONG", "Redis")
             wait_until(lambda: run(["docker", "exec", nats, "wget", "-qO-", "http://127.0.0.1:8222/healthz"], capture=True).returncode == 0, "NATS")
-            for migration in sorted((BACKEND / "db/migrations").glob("*.sql")):
-                sql = migration.read_text().split("-- migrate:down")[0]
-                run(["docker", "exec", "-i", postgres, "psql", "-U", "seismo", "-d", "seismo", "-v", "ON_ERROR_STOP=1", "-q"], input="BEGIN;\n" + sql + "\nCOMMIT;", capture=True)
+            migrations = sorted((BACKEND / "db/migrations").glob("*.sql"))
+            if args.dbmate:
+                print("Verifying dbmate upgrade, rollback and reapplication from the dev schema", flush=True)
+                baseline = temporary / "existing-migrations"
+                baseline.mkdir()
+                sentry_migration = next(path for path in migrations if path.name.endswith("_app_crash_providers.sql"))
+                versions = [path.name.split("_")[0] for path in migrations]
+                if len(versions) != len(set(versions)):
+                    raise RuntimeError("Migration timestamps must be unique")
+                for migration in migrations:
+                    if migration != sentry_migration:
+                        shutil.copyfile(migration, baseline / migration.name)
+                database = f"postgres://seismo:seismo@127.0.0.1:{pg_port}/seismo?sslmode=disable"
+                dbmate = [args.dbmate, "--url", database, "--no-dump-schema"]
+                run([*dbmate, "--migrations-dir", str(baseline), "up"], env=env)
+                upgrade = [*dbmate, "--migrations-dir", str(BACKEND / "db/migrations")]
+                run([*upgrade, "up"], env=env)
+                def tables():
+                    return run(["docker", "exec", postgres, "psql", "-U", "seismo", "-d", "seismo", "-tAc",
+                                "SELECT (to_regclass('report_deliveries') IS NOT NULL)::int, (to_regclass('app_crash_providers') IS NOT NULL)::int"], capture=True).stdout.strip()
+                if tables() != "1|1":
+                    raise RuntimeError("Upgrade skipped the Sentry table or lost report deliveries")
+                run([*upgrade, "down"], env=env)
+                if tables() != "1|0":
+                    raise RuntimeError("Rollback modified the existing delivery schema")
+                run([*upgrade, "up"], env=env)
+                run([*upgrade, "up"], env=env)  # A second deploy must be a no-op.
+                if tables() != "1|1":
+                    raise RuntimeError("Sentry migration reapplication failed")
+            else:
+                for migration in migrations:
+                    sql = migration.read_text().split("-- migrate:down")[0]
+                    run(["docker", "exec", "-i", postgres, "psql", "-U", "seismo", "-d", "seismo", "-v", "ON_ERROR_STOP=1", "-q"], input="BEGIN;\n" + sql + "\nCOMMIT;", capture=True)
             env.update({
                 "SEISMO_TEST_DATABASE_URL": f"postgres://seismo:seismo@127.0.0.1:{pg_port}/seismo?sslmode=disable",
                 "SEISMO_TEST_REDIS_URL": f"redis://127.0.0.1:{redis_port}/0",

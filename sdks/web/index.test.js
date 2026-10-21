@@ -91,3 +91,19 @@ test("Sentry bridge honors changing consent and isolates delivery failures", asy
   });
   assert.equal(broken(event), event);
 });
+
+test("Sentry bridge distinguishes unhandled exceptions and rejected promises from handled errors", () => {
+  const captured = [];
+  const bridge = createSentryBridge({reporter:createReporter(options),consent:"given",onReport:r=>captured.push(r)});
+  for (const [mechanism,expected] of [
+    [{type:"onerror",handled:false},"crash"],
+    [{type:"onunhandledrejection",handled:false},"crash"],
+    [{type:"generic",handled:true},"non_fatal"],
+    [undefined,"non_fatal"],
+  ]) {
+    const event={event_id:"d".repeat(32),exception:{values:[{type:"Error",mechanism}]}};
+    assert.equal(bridge(event),event);
+    assert.equal(captured.at(-1).trigger,expected);
+    assert.equal(captured.at(-1).auto_submitted,true);
+  }
+});
