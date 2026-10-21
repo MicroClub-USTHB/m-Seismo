@@ -44,4 +44,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("worker.enabled", true)
 	v.SetDefault("worker.concurrency", 4)
 	v.SetDefault("worker.max_attempts", 10)
+
+	v.SetDefault("coordinator.enabled", false)
+	v.SetDefault("coordinator.addr", ":9443")
+	v.SetDefault("coordinator.tls_cert_file", "")
+	v.SetDefault("coordinator.tls_key_file", "")
+	v.SetDefault("coordinator.plaintext", false)
+	v.SetDefault("coordinator.window", "2m")
+	v.SetDefault("coordinator.timeout", "8s")
+	v.SetDefault("coordinator.max_bytes", 256*1024)
+	v.SetDefault("coordinator.max_lines_per_workload", 200)
 }

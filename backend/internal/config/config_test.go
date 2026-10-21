@@ -46,3 +46,23 @@ func TestLoadLogLevel(t *testing.T) {
 		t.Error("Load with log_level=verbose: want an error")
 	}
 }
+
+func TestLoadCoordinatorNeedsTLSOutsideDevelopment(t *testing.T) {
+	t.Setenv("SEISMO_AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("SEISMO_COORDINATOR_ENABLED", "true")
+
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "coordinator needs") {
+		t.Fatalf("Load without TLS: err = %v, want the coordinator TLS error", err)
+	}
+
+	t.Setenv("SEISMO_COORDINATOR_PLAINTEXT", "true")
+	if _, err := Load(""); err != nil {
+		t.Fatalf("Load with plaintext behind a TLS proxy: %v", err)
+	}
+
+	t.Setenv("SEISMO_COORDINATOR_PLAINTEXT", "false")
+	t.Setenv("SEISMO_ENV", "development")
+	if _, err := Load(""); err != nil {
+		t.Fatalf("Load in development: %v", err)
+	}
+}

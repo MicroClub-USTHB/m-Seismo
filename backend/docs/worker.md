@@ -26,7 +26,8 @@ hands each message to one of them.
    one made from the crash or the platform and release), description,
    category and severity, the breadcrumbs as numbered steps to reproduce,
    the crash and its stack trace, the environment, recent logs and network
-   requests. Network request bodies are never included, and an `@` in
+   requests, and the server logs around the report when the app's
+   coordinator is attached. Network request bodies are never included, and an `@` in
    reporter-written text can't notify anyone on GitHub.
 5. Opens the issue in each target that doesn't have it yet, through
    `issue.Service.OpenInRepository`, and records each one in
@@ -101,7 +102,8 @@ to:
 - **Routing rules**: only the default repository of each project is used.
 - **Deduplication**: every report opens its own issue; the fingerprint and
   `Opener.Comment` are ready for it.
-- **Enrichment**: no Crashlytics crash or server context yet.
+- **Crash enrichment**: no Crashlytics crash yet. Server logs come from the
+  app's coordinator when one is attached (see [coordinator.md](coordinator.md)).
 - **Attachments**: the issue says a screenshot was sent but doesn't link it;
   that needs private, expiring links.
 - **Sweeper**: a report stored but never published (`queued_at IS NULL`,

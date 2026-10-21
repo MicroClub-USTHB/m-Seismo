@@ -5,6 +5,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/coordinator"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 )
@@ -14,7 +15,9 @@ var Module = fx.Module("worker",
 	fx.Provide(
 		func(q db.Querier) Queries { return q },
 		func(s *issue.Service) Issues { return s },
-		NewProcessor,
+		func(q Queries, is Issues, c *coordinator.Client, cfg *config.Config) *Processor {
+			return NewProcessor(q, is, c, cfg.Coordinator.Window)
+		},
 	),
 	fx.Invoke(register),
 )

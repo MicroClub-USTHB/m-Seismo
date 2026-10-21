@@ -22,7 +22,7 @@ type Querier interface {
 	DeleteOwner(ctx context.Context, id uuid.UUID) (int64, error)
 	DeleteProject(ctx context.Context, arg DeleteProjectParams) (int64, error)
 	DeleteProviderConnection(ctx context.Context, arg DeleteProviderConnectionParams) (int64, error)
-	GetActiveAppKeyByHash(ctx context.Context, keyHash []byte) (AppKey, error)
+	GetActiveAppKeyByHash(ctx context.Context, arg GetActiveAppKeyByHashParams) (AppKey, error)
 	GetApp(ctx context.Context, arg GetAppParams) (App, error)
 	// Resolves one project repository to everything needed to open an issue in it.
 	GetIssueTarget(ctx context.Context, id uuid.UUID) (GetIssueTargetRow, error)
@@ -39,7 +39,7 @@ type Querier interface {
 	InsertReportAttachment(ctx context.Context, arg InsertReportAttachmentParams) error
 	LinkAppProject(ctx context.Context, arg LinkAppProjectParams) error
 	LinkProjectRepository(ctx context.Context, arg LinkProjectRepositoryParams) (ProjectRepository, error)
-	ListAppKeys(ctx context.Context, appID uuid.UUID) ([]AppKey, error)
+	ListAppKeys(ctx context.Context, arg ListAppKeysParams) ([]AppKey, error)
 	ListAppProjects(ctx context.Context, appID uuid.UUID) ([]Project, error)
 	ListApps(ctx context.Context, ownerID uuid.UUID) ([]App, error)
 	// The default repository of every project linked to the app.

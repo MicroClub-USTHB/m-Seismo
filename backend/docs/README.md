@@ -14,11 +14,12 @@ route list, start with [../README.md](../README.md).
 | 4 | [github.md](github.md) | see how GitHub access works, why it is secure, how **rate limits** are handled, and how to create the GitHub App |
 | 5 | [issue-service.md](issue-service.md) | see how an app's issue is targeted, opened and recorded |
 | 6 | [worker.md](worker.md) | see how an accepted report becomes an issue: the queue, retries and idempotency |
-| 7 | [api.md](api.md) | look up an endpoint, its body, responses and errors |
-| 8 | [files.md](files.md) | find out what a specific file does |
-| 9 | [extending.md](extending.md) | add a tracker, a resource, a query or a setting |
-| 10 | [testing.md](testing.md) | run and write tests (unit, API scripts, e2e) |
-| 11 | [test-scripts.md](test-scripts.md) | the bash API test suite: every `lib.sh` function, the state file, token handling and the fake GitHub contract |
+| 7 | [coordinator.md](coordinator.md) | see how the log coordinator attaches and how the worker gets server logs from any instance |
+| 8 | [api.md](api.md) | look up an endpoint, its body, responses and errors |
+| 9 | [files.md](files.md) | find out what a specific file does |
+| 10 | [extending.md](extending.md) | add a tracker, a resource, a query or a setting |
+| 11 | [testing.md](testing.md) | run and write tests (unit, API scripts, e2e) |
+| 12 | [test-scripts.md](test-scripts.md) | the bash API test suite: every `lib.sh` function, the state file, token handling and the fake GitHub contract |
 
 The local stack (Docker Compose, fake GitHub) is described in
 [deploy/README.md](../../deploy/README.md).

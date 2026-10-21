@@ -79,6 +79,8 @@ services:
       target: backend
     ports:
       - "${BACKEND_PORT:-8080}:8080"
+      # Coordinator.Attach (plain gRPC in development)
+      - "${COORDINATOR_PORT:-9443}:9443"
     environment:
       SEISMO_ENV: development
       SEISMO_LOG_LEVEL: debug
@@ -104,6 +106,9 @@ services:
       SEISMO_GITHUB_MIN_WRITE_INTERVAL: ${SEISMO_GITHUB_MIN_WRITE_INTERVAL:-1s}
       SEISMO_GITHUB_MAX_RATE_LIMIT_WAIT: ${SEISMO_GITHUB_MAX_RATE_LIMIT_WAIT:-30s}
       SEISMO_LIMITS_TEST_ISSUES_PER_MINUTE: ${SEISMO_LIMITS_TEST_ISSUES_PER_MINUTE:-10}
+      # Log coordinator (see backend/docs/coordinator.md)
+      SEISMO_COORDINATOR_ENABLED: "true"
+      SEISMO_COORDINATOR_ADDR: ":9443"
     volumes:
       - github-app-key:/shared:ro
     depends_on:

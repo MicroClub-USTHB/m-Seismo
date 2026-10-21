@@ -9,7 +9,7 @@ JSON (`Content-Type: application/json`).
 - [Projects](#projects)
 - [Project repositories](#project-repositories)
 - [Apps](#apps)
-- [App keys](#app-keys)
+- [App keys](#app-keys) (SDK and coordinator)
 - [App ↔ project links](#app--project-links)
 - [Test issue](#test-issue)
 - [Providers](#providers)
@@ -263,6 +263,23 @@ The `secret` appears **only** in the `POST` response. m-Seismo stores only
 its SHA-256 hash and can't show it again. An app can have several active
 keys, which lets you rotate: create the new one, ship it, then revoke the old
 one.
+
+### Coordinator keys
+
+The app's log coordinator attaches to the backend's gRPC
+`Coordinator.Attach` with a coordinator key (see
+[coordinator.md](coordinator.md)). Same key object and rules as SDK keys,
+with an `mco_` prefix:
+
+| Method & path | Success |
+|---|---|
+| `GET /apps/{appID}/coordinator-keys` | `200` `[key]`, newest first, revoked ones included |
+| `POST /apps/{appID}/coordinator-keys` (no body) | `201` key **plus `"secret": "mco_…"`** |
+| `DELETE /apps/{appID}/coordinator-keys/{keyID}` | `204`; revokes it immediately. `404 active key not found` if already revoked. |
+
+The two kinds are kept apart: an SDK key is never accepted by `Attach`, a
+coordinator key never by `POST /reports`, and each is listed and revoked
+only under its own path.
 
 ---
 

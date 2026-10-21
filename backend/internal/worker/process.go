@@ -7,13 +7,16 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/coordinator"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
 )
 
 // Issues opens issues in project repositories. Implemented by
@@ -32,6 +35,12 @@ type Queries interface {
 	MarkReportProcessed(ctx context.Context, id uuid.UUID) error
 }
 
+// ServerLogs asks an app's log coordinator for server logs. Implemented by
+// *coordinator.Client.
+type ServerLogs interface {
+	QueryLogs(ctx context.Context, appID uuid.UUID, from, to time.Time) (*seismov1.AggregateResult, error)
+}
+
 // permanentError marks a failure that trying again won't fix.
 type permanentError struct{ err error }
 
@@ -44,10 +53,13 @@ func permanent(err error) error { return &permanentError{err: err} }
 type Processor struct {
 	q      Queries
 	issues Issues
+	// logs is optional; window is how far around the report it looks.
+	logs   ServerLogs
+	window time.Duration
 }
 
-func NewProcessor(q Queries, issues Issues) *Processor {
-	return &Processor{q: q, issues: issues}
+func NewProcessor(q Queries, issues Issues, logs ServerLogs, window time.Duration) *Processor {
+	return &Processor{q: q, issues: issues, logs: logs, window: window}
 }
 
 // Process opens the report's issue in the default repository of every
@@ -96,6 +108,16 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 		delivered[d.ProjectRepositoryID] = true
 	}
 
+	var todo []db.ListIssueTargetsForAppRow
+	for _, t := range targets {
+		if !delivered[t.ProjectRepositoryID] {
+			todo = append(todo, t)
+		}
+	}
+	if len(todo) == 0 {
+		return p.markProcessed(ctx, id)
+	}
+
 	names, err := p.q.ListReportAttachmentNames(ctx, id)
 	if err != nil {
 		return fmt.Errorf("list attachments of report %s: %w", id, err)
@@ -104,13 +126,11 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 		ID:             row.ReportID,
 		InstallationID: row.InstallationID,
 		Screenshot:     slices.Contains(names, ingest.ScreenshotName),
+		ServerLogs:     p.serverLogs(ctx, row),
 	})
 
 	var errs []error
-	for _, t := range targets {
-		if delivered[t.ProjectRepositoryID] {
-			continue
-		}
+	for _, t := range todo {
 		res, err := p.issues.OpenInRepository(ctx, t.ProjectRepositoryID, &row.AppID, draft)
 		if err != nil {
 			var rl *issue.RateLimitError
@@ -146,9 +166,28 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
+	return p.markProcessed(ctx, id)
+}
 
+func (p *Processor) markProcessed(ctx context.Context, id uuid.UUID) error {
 	if err := p.q.MarkReportProcessed(ctx, id); err != nil {
 		return fmt.Errorf("mark report %s processed: %w", id, err)
 	}
 	return nil
+}
+
+// serverLogs asks the app's coordinator for the server logs around the
+// report. The issue is opened without them when there are none.
+func (p *Processor) serverLogs(ctx context.Context, row db.Report) *seismov1.AggregateResult {
+	if p.logs == nil {
+		return nil
+	}
+	res, err := p.logs.QueryLogs(ctx, row.AppID, row.OccurredAt.Add(-p.window), row.OccurredAt.Add(p.window))
+	switch {
+	case errors.Is(err, coordinator.ErrNotAttached):
+		slog.DebugContext(ctx, "no coordinator attached, opening the issue without server logs", "report", row.ID)
+	case err != nil:
+		slog.WarnContext(ctx, "server logs unavailable, opening the issue without them", "report", row.ID, "err", err)
+	}
+	return res
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
 )
 
 // Limits on what goes into an issue. GitHub refuses titles over 256
@@ -30,6 +31,8 @@ type reportInfo struct {
 	ID             uuid.UUID
 	InstallationID uuid.UUID
 	Screenshot     bool
+	// ServerLogs is the coordinator's answer, nil when there is none.
+	ServerLogs *seismov1.AggregateResult
 }
 
 // render turns a report into the draft of its issue.
@@ -138,6 +141,8 @@ func render(r *ingest.Report, info reportInfo) issue.Draft {
 		b.WriteString(code(strings.Join(lines, "\n")))
 		b.WriteString("\n")
 	}
+
+	renderServerLogs(&b, info.ServerLogs)
 
 	if info.Screenshot {
 		b.WriteString("_A screenshot was sent with this report and is kept in m-Seismo._\n\n")

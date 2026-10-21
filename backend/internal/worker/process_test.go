@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/coordinator"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
 )
 
 type fakeQueries struct {
@@ -84,7 +87,7 @@ func newFixture(t *testing.T, repos int) (*fakeQueries, *fakeIssues, *Processor)
 		q.targets = append(q.targets, db.ListIssueTargetsForAppRow{ProjectRepositoryID: uuid.New(), Repository: "o/r"})
 	}
 	is := &fakeIssues{fail: map[uuid.UUID]error{}}
-	return q, is, NewProcessor(q, is)
+	return q, is, NewProcessor(q, is, nil, time.Minute)
 }
 
 func TestProcessOpensOneIssuePerRepository(t *testing.T) {
@@ -105,6 +108,59 @@ func TestProcessOpensOneIssuePerRepository(t *testing.T) {
 	}
 	if len(is.opened) != 2 {
 		t.Errorf("opened %d issues after a redelivery, want 2", len(is.opened))
+	}
+}
+
+type fakeLogs struct {
+	calls    int
+	from, to time.Time
+	err      error
+}
+
+func (f *fakeLogs) QueryLogs(_ context.Context, _ uuid.UUID, from, to time.Time) (*seismov1.AggregateResult, error) {
+	f.calls++
+	f.from, f.to = from, to
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &seismov1.AggregateResult{Agents: []*seismov1.AgentSection{{AgentId: "prod-1"}}}, nil
+}
+
+func TestProcessAddsServerLogs(t *testing.T) {
+	q, is, _ := newFixture(t, 1)
+	q.report.OccurredAt = time.Date(2026, 10, 21, 14, 0, 0, 0, time.UTC)
+	logs := &fakeLogs{}
+	p := NewProcessor(q, is, logs, 2*time.Minute)
+
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	if !logs.from.Equal(q.report.OccurredAt.Add(-2*time.Minute)) || !logs.to.Equal(q.report.OccurredAt.Add(2*time.Minute)) {
+		t.Errorf("window = [%s, %s]", logs.from, logs.to)
+	}
+	if !strings.Contains(is.drafts[0].Body, "**Agent `prod-1`**") {
+		t.Errorf("issue has no server logs:\n%s", is.drafts[0].Body)
+	}
+
+	// Nothing left to open: the coordinator is not asked again.
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	if logs.calls != 1 {
+		t.Errorf("asked for logs %d times, want 1", logs.calls)
+	}
+}
+
+func TestProcessWithoutServerLogs(t *testing.T) {
+	for _, err := range []error{coordinator.ErrNotAttached, errors.New("NATS is down")} {
+		q, is, _ := newFixture(t, 1)
+		p := NewProcessor(q, is, &fakeLogs{err: err}, time.Minute)
+		if err := p.Process(context.Background(), q.report.ID); err != nil {
+			t.Fatalf("logs failing with %v failed the report: %v", err, err)
+		}
+		if len(is.opened) != 1 || strings.Contains(is.drafts[0].Body, "Server logs") {
+			t.Errorf("logs failing with %v: opened %d issues", err, len(is.opened))
+		}
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
@@ -138,7 +139,7 @@ func (w *Worker) handle(ctx context.Context, msg jetstream.Msg) {
 		return
 	}
 	attempt := 1
-	if meta, err := msg.Metadata(); err == nil {
+	if meta, err := msg.Metadata(); err == nil && meta.NumDelivered <= math.MaxInt32 {
 		attempt = int(meta.NumDelivered)
 	}
 	log := slog.With("report", m.ID, "app", m.AppID, "attempt", attempt)

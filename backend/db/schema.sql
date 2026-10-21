@@ -29,6 +29,16 @@ COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
 
 
 --
+-- Name: app_key_kind; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.app_key_kind AS ENUM (
+    'sdk',
+    'coordinator'
+);
+
+
+--
 -- Name: app_platform; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -65,7 +75,8 @@ CREATE TABLE public.app_keys (
     key_hash bytea NOT NULL,
     key_prefix text NOT NULL,
     revoked_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    kind public.app_key_kind NOT NULL
 );
 
 
@@ -575,4 +586,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016192420'),
     ('20261017120000'),
     ('20261018120000'),
-    ('20261021120000');
+    ('20261021120000'),
+    ('20261021150000');

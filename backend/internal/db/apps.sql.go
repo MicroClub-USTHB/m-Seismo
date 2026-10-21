@@ -45,19 +45,25 @@ func (q *Queries) CreateApp(ctx context.Context, arg CreateAppParams) (App, erro
 }
 
 const createAppKey = `-- name: CreateAppKey :one
-INSERT INTO app_keys (app_id, key_hash, key_prefix)
-VALUES ($1, $2, $3)
-RETURNING id, app_id, key_hash, key_prefix, revoked_at, created_at
+INSERT INTO app_keys (app_id, kind, key_hash, key_prefix)
+VALUES ($1, $2, $3, $4)
+RETURNING id, app_id, key_hash, key_prefix, revoked_at, created_at, kind
 `
 
 type CreateAppKeyParams struct {
-	AppID     uuid.UUID `json:"app_id"`
-	KeyHash   []byte    `json:"key_hash"`
-	KeyPrefix string    `json:"key_prefix"`
+	AppID     uuid.UUID  `json:"app_id"`
+	Kind      AppKeyKind `json:"kind"`
+	KeyHash   []byte     `json:"key_hash"`
+	KeyPrefix string     `json:"key_prefix"`
 }
 
 func (q *Queries) CreateAppKey(ctx context.Context, arg CreateAppKeyParams) (AppKey, error) {
-	row := q.db.QueryRow(ctx, createAppKey, arg.AppID, arg.KeyHash, arg.KeyPrefix)
+	row := q.db.QueryRow(ctx, createAppKey,
+		arg.AppID,
+		arg.Kind,
+		arg.KeyHash,
+		arg.KeyPrefix,
+	)
 	var i AppKey
 	err := row.Scan(
 		&i.ID,
@@ -66,6 +72,7 @@ func (q *Queries) CreateAppKey(ctx context.Context, arg CreateAppKeyParams) (App
 		&i.KeyPrefix,
 		&i.RevokedAt,
 		&i.CreatedAt,
+		&i.Kind,
 	)
 	return i, err
 }
@@ -89,12 +96,17 @@ func (q *Queries) DeleteApp(ctx context.Context, arg DeleteAppParams) (int64, er
 }
 
 const getActiveAppKeyByHash = `-- name: GetActiveAppKeyByHash :one
-SELECT id, app_id, key_hash, key_prefix, revoked_at, created_at FROM app_keys
-WHERE key_hash = $1 AND revoked_at IS NULL
+SELECT id, app_id, key_hash, key_prefix, revoked_at, created_at, kind FROM app_keys
+WHERE key_hash = $1 AND kind = $2 AND revoked_at IS NULL
 `
 
-func (q *Queries) GetActiveAppKeyByHash(ctx context.Context, keyHash []byte) (AppKey, error) {
-	row := q.db.QueryRow(ctx, getActiveAppKeyByHash, keyHash)
+type GetActiveAppKeyByHashParams struct {
+	KeyHash []byte     `json:"key_hash"`
+	Kind    AppKeyKind `json:"kind"`
+}
+
+func (q *Queries) GetActiveAppKeyByHash(ctx context.Context, arg GetActiveAppKeyByHashParams) (AppKey, error) {
+	row := q.db.QueryRow(ctx, getActiveAppKeyByHash, arg.KeyHash, arg.Kind)
 	var i AppKey
 	err := row.Scan(
 		&i.ID,
@@ -103,6 +115,7 @@ func (q *Queries) GetActiveAppKeyByHash(ctx context.Context, keyHash []byte) (Ap
 		&i.KeyPrefix,
 		&i.RevokedAt,
 		&i.CreatedAt,
+		&i.Kind,
 	)
 	return i, err
 }
@@ -149,13 +162,18 @@ func (q *Queries) LinkAppProject(ctx context.Context, arg LinkAppProjectParams) 
 }
 
 const listAppKeys = `-- name: ListAppKeys :many
-SELECT id, app_id, key_hash, key_prefix, revoked_at, created_at FROM app_keys
-WHERE app_id = $1
+SELECT id, app_id, key_hash, key_prefix, revoked_at, created_at, kind FROM app_keys
+WHERE app_id = $1 AND kind = $2
 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListAppKeys(ctx context.Context, appID uuid.UUID) ([]AppKey, error) {
-	rows, err := q.db.Query(ctx, listAppKeys, appID)
+type ListAppKeysParams struct {
+	AppID uuid.UUID  `json:"app_id"`
+	Kind  AppKeyKind `json:"kind"`
+}
+
+func (q *Queries) ListAppKeys(ctx context.Context, arg ListAppKeysParams) ([]AppKey, error) {
+	rows, err := q.db.Query(ctx, listAppKeys, arg.AppID, arg.Kind)
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +188,7 @@ func (q *Queries) ListAppKeys(ctx context.Context, appID uuid.UUID) ([]AppKey, e
 			&i.KeyPrefix,
 			&i.RevokedAt,
 			&i.CreatedAt,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}
@@ -252,16 +271,17 @@ func (q *Queries) ListApps(ctx context.Context, ownerID uuid.UUID) ([]App, error
 const revokeAppKey = `-- name: RevokeAppKey :execrows
 UPDATE app_keys
 SET revoked_at = now()
-WHERE id = $1 AND app_id = $2 AND revoked_at IS NULL
+WHERE id = $1 AND app_id = $2 AND kind = $3 AND revoked_at IS NULL
 `
 
 type RevokeAppKeyParams struct {
-	ID    uuid.UUID `json:"id"`
-	AppID uuid.UUID `json:"app_id"`
+	ID    uuid.UUID  `json:"id"`
+	AppID uuid.UUID  `json:"app_id"`
+	Kind  AppKeyKind `json:"kind"`
 }
 
 func (q *Queries) RevokeAppKey(ctx context.Context, arg RevokeAppKeyParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeAppKey, arg.ID, arg.AppID)
+	result, err := q.db.Exec(ctx, revokeAppKey, arg.ID, arg.AppID, arg.Kind)
 	if err != nil {
 		return 0, err
 	}

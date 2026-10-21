@@ -48,6 +48,11 @@ message QueryLogs {
   // The coordinator fans out under this, minus a small margin to still
   // have time to aggregate.
   google.protobuf.Timestamp deadline = 4;
+  // The backend's budget for this query. Unlike in Query, max_bytes_total
+  // is for the whole aggregate: the coordinator splits it across agents.
+  // A zero field, or no limits at all, means the coordinator's default,
+  // and a value above the coordinator's ceiling is lowered to it.
+  QueryLimits limits = 5;
 }
 
 enum AgentStatus {
