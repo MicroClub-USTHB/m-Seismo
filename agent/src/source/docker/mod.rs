@@ -155,6 +155,7 @@ impl LogSource for DockerSource {
         // Docker accepts second-resolution bounds; round the upper bound up
         // and let the shared engine apply exact timestamp filtering.
         let until = docker_epoch_seconds(window.to, true)?;
+        // NOTE: +1 so the decoder can tell the window had more lines than the cap.
         let options = LogsOptionsBuilder::default()
             .follow(false)
             .stdout(true)
@@ -162,7 +163,7 @@ impl LogSource for DockerSource {
             .timestamps(true)
             .since(since)
             .until(until)
-            .tail("all")
+            .tail(&(limits.max_lines + 1).to_string())
             .build();
 
         let mut stream = self.client.logs(&workload.id, Some(options));
@@ -183,9 +184,7 @@ impl LogSource for DockerSource {
                             (crate::model::LogStream::Unknown, message)
                         }
                     };
-                    if !decoder.push(tag, &bytes) {
-                        break;
-                    }
+                    decoder.push(tag, &bytes);
                 }
                 Err(error) => {
                     stream_error = Some(map_docker_error(error));

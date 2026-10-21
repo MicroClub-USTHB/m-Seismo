@@ -1,5 +1,7 @@
 //! Bounded decoder for Docker log stream chunks.
 
+use std::collections::VecDeque;
+
 use chrono::{DateTime, Utc};
 
 use crate::model::{LogStream, RawLogLine, ReadLimits};
@@ -14,11 +16,11 @@ pub(super) struct DecodedLogs {
 }
 
 pub(super) struct LineDecoder {
-    lines: Vec<RawLogLine>,
+    lines: VecDeque<RawLogLine>,
+    kept_bytes: usize,
     pending: Vec<u8>,
     pending_stream: Option<LogStream>,
     dropping_oversized_line: bool,
-    bytes_seen: usize,
     discarded_line_count: u64,
     truncated: bool,
     limits: ReadLimits,
@@ -27,38 +29,23 @@ pub(super) struct LineDecoder {
 impl LineDecoder {
     pub fn new(limits: ReadLimits) -> Self {
         Self {
-            lines: Vec::new(),
+            lines: VecDeque::new(),
+            kept_bytes: 0,
             pending: Vec::new(),
             pending_stream: None,
             dropping_oversized_line: false,
-            bytes_seen: 0,
             discarded_line_count: 0,
             truncated: false,
             limits,
         }
     }
 
-    pub fn push(&mut self, stream: LogStream, bytes: &[u8]) -> bool {
+    // NOTE: Docker sends oldest-first, so over a limit we evict from the
+    // front and keep the newest lines. Never stops early.
+    pub fn push(&mut self, stream: LogStream, bytes: &[u8]) {
         for &byte in bytes {
-            if self.bytes_seen >= self.limits.max_bytes || self.lines.len() >= self.limits.max_lines
-            {
-                self.truncated = true;
-                if self.dropping_oversized_line {
-                    self.dropping_oversized_line = false;
-                } else if !self.pending.is_empty() {
-                    self.discarded_line_count = self.discarded_line_count.saturating_add(1);
-                }
-                self.pending.clear();
-                self.pending_stream = None;
-                return false;
-            }
-            self.bytes_seen += 1;
             if byte == b'\n' {
                 self.finish_line();
-                if self.lines.len() >= self.limits.max_lines {
-                    self.truncated = true;
-                    return false;
-                }
                 continue;
             }
 
@@ -81,7 +68,6 @@ impl LineDecoder {
                 self.pending.push(byte);
             }
         }
-        true
     }
 
     pub fn finish(mut self) -> DecodedLogs {
@@ -91,7 +77,7 @@ impl LineDecoder {
             self.finish_line();
         }
         DecodedLogs {
-            lines: self.lines,
+            lines: self.lines.into(),
             discarded_line_count: self.discarded_line_count,
             truncated: self.truncated,
         }
@@ -109,7 +95,7 @@ impl LineDecoder {
         let bytes = bytes.strip_suffix(b"\r").unwrap_or(&bytes);
         match std::str::from_utf8(bytes) {
             Ok(line) => match parse_timestamped_line(line) {
-                Some((timestamp, message)) => self.lines.push(RawLogLine {
+                Some((timestamp, message)) => self.keep(RawLogLine {
                     timestamp: Some(timestamp),
                     stream,
                     message,
@@ -121,6 +107,18 @@ impl LineDecoder {
             Err(_) => {
                 self.discarded_line_count = self.discarded_line_count.saturating_add(1);
             }
+        }
+    }
+
+    fn keep(&mut self, line: RawLogLine) {
+        self.kept_bytes = self.kept_bytes.saturating_add(line.message.len());
+        self.lines.push_back(line);
+        while self.lines.len() > self.limits.max_lines || self.kept_bytes > self.limits.max_bytes {
+            let Some(oldest) = self.lines.pop_front() else {
+                break;
+            };
+            self.kept_bytes -= oldest.message.len();
+            self.truncated = true;
         }
     }
 
@@ -153,8 +151,8 @@ mod tests {
     #[test]
     fn decodes_timestamp_and_stdout_stderr_streams_from_chunks() {
         let mut decoder = LineDecoder::new(limits());
-        assert!(decoder.push(LogStream::Stdout, b"2026-10-16T12:00:00Z first\n"));
-        assert!(decoder.push(LogStream::Stderr, b"2026-10-16T12:00:01Z second\n"));
+        decoder.push(LogStream::Stdout, b"2026-10-16T12:00:00Z first\n");
+        decoder.push(LogStream::Stderr, b"2026-10-16T12:00:01Z second\n");
         let decoded = decoder.finish();
         assert_eq!(decoded.lines.len(), 2);
         assert_eq!(decoded.lines[0].message, "first");
@@ -166,9 +164,9 @@ mod tests {
     #[test]
     fn joins_chunks_and_drops_invalid_timestamp_or_utf8() {
         let mut decoder = LineDecoder::new(limits());
-        assert!(decoder.push(LogStream::Stdout, b"2026-10-16T12:00:"));
-        assert!(decoder.push(LogStream::Stdout, b"00Z split\nnot-a-time leak\n"));
-        assert!(decoder.push(LogStream::Stdout, b"2026-10-16T12:00:01Z \xff\n"));
+        decoder.push(LogStream::Stdout, b"2026-10-16T12:00:");
+        decoder.push(LogStream::Stdout, b"00Z split\nnot-a-time leak\n");
+        decoder.push(LogStream::Stdout, b"2026-10-16T12:00:01Z \xff\n");
         let decoded = decoder.finish();
         assert_eq!(decoded.lines.len(), 1);
         assert_eq!(decoded.lines[0].message, "split");
@@ -176,39 +174,72 @@ mod tests {
     }
 
     #[test]
-    fn bounds_oversized_lines_and_total_stream_bytes() {
+    fn evicts_oldest_lines_when_the_line_limit_is_reached() {
+        let mut decoder = LineDecoder::new(ReadLimits {
+            max_lines: 2,
+            max_bytes: 1024,
+        });
+        decoder.push(
+            LogStream::Stdout,
+            b"2026-10-16T12:00:00Z first\n2026-10-16T12:00:01Z second\n",
+        );
+        decoder.push(LogStream::Stdout, b"2026-10-16T12:00:02Z third\n");
+        let decoded = decoder.finish();
+        let messages: Vec<_> = decoded
+            .lines
+            .iter()
+            .map(|line| line.message.as_str())
+            .collect();
+        assert_eq!(messages, ["second", "third"]);
+        assert!(decoded.truncated);
+        assert_eq!(decoded.discarded_line_count, 0);
+    }
+
+    #[test]
+    fn evicts_oldest_lines_when_the_byte_budget_is_reached() {
         let mut decoder = LineDecoder::new(ReadLimits {
             max_lines: 10,
             max_bytes: 10,
         });
-        assert!(!decoder.push(LogStream::Stdout, b"01234567890"));
+        decoder.push(
+            LogStream::Stdout,
+            b"2026-10-16T12:00:00Z aaaa\n2026-10-16T12:00:01Z bbbb\n2026-10-16T12:00:02Z cccc\n",
+        );
+        let decoded = decoder.finish();
+        let messages: Vec<_> = decoded
+            .lines
+            .iter()
+            .map(|line| line.message.as_str())
+            .collect();
+        assert_eq!(messages, ["bbbb", "cccc"]);
+        assert!(decoded.truncated);
+    }
+
+    #[test]
+    fn never_returns_a_fragment_of_a_line_larger_than_the_byte_budget() {
+        let mut decoder = LineDecoder::new(ReadLimits {
+            max_lines: 10,
+            max_bytes: 10,
+        });
+        decoder.push(
+            LogStream::Stdout,
+            b"2026-10-16T12:00:00Z this line is cut off",
+        );
         let decoded = decoder.finish();
         assert!(decoded.truncated);
         assert!(decoded.lines.is_empty());
+        assert_eq!(decoded.discarded_line_count, 0);
+    }
 
+    #[test]
+    fn discards_oversized_lines_without_storing_them() {
         let mut decoder = LineDecoder::new(ReadLimits {
             max_lines: 10,
             max_bytes: MAX_LINE_BYTES * 2,
         });
         let oversized = format!("2026-10-16T12:00:00Z {}\n", "x".repeat(MAX_LINE_BYTES));
-        assert!(decoder.push(LogStream::Stdout, oversized.as_bytes()));
+        decoder.push(LogStream::Stdout, oversized.as_bytes());
         let decoded = decoder.finish();
-        assert!(decoded.lines.is_empty());
-        assert_eq!(decoded.discarded_line_count, 1);
-    }
-
-    #[test]
-    fn does_not_return_a_log_fragment_cut_off_by_the_total_byte_limit() {
-        let mut decoder = LineDecoder::new(ReadLimits {
-            max_lines: 10,
-            max_bytes: 30,
-        });
-        assert!(!decoder.push(
-            LogStream::Stdout,
-            b"2026-10-16T12:00:00Z this line is cut off"
-        ));
-        let decoded = decoder.finish();
-        assert!(decoded.truncated);
         assert!(decoded.lines.is_empty());
         assert_eq!(decoded.discarded_line_count, 1);
     }

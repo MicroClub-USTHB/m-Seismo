@@ -72,22 +72,27 @@ impl LogSource for FakeSource {
             }
 
             let available = self.logs.get(&workload.id).cloned().unwrap_or_default();
-            let mut lines = Vec::new();
+            let mut lines: Vec<RawLogLine> = available
+                .into_iter()
+                .filter(|line| {
+                    line.timestamp
+                        .is_none_or(|timestamp| timestamp >= window.from && timestamp <= window.to)
+                })
+                .collect();
+            // Keep the newest lines that fit, like the Docker adapter.
+            let mut kept = 0;
             let mut bytes = 0usize;
-            let mut truncated = false;
-            for line in available.into_iter().filter(|line| {
-                line.timestamp
-                    .is_none_or(|timestamp| timestamp >= window.from && timestamp <= window.to)
-            }) {
-                if lines.len() >= limits.max_lines
+            for line in lines.iter().rev() {
+                if kept >= limits.max_lines
                     || bytes.saturating_add(line.message.len()) > limits.max_bytes
                 {
-                    truncated = true;
                     break;
                 }
                 bytes += line.message.len();
-                lines.push(line);
+                kept += 1;
             }
+            let truncated = kept < lines.len();
+            lines.drain(..lines.len() - kept);
             let oldest_available = lines.iter().filter_map(|line| line.timestamp).min();
             Ok(RawLogs {
                 lines,
