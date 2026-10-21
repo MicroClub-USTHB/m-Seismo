@@ -19,7 +19,7 @@ import (
 // Issues opens issues in project repositories. Implemented by
 // issue.Service.
 type Issues interface {
-	OpenInRepository(ctx context.Context, projectRepositoryID uuid.UUID, appID *uuid.UUID, d issue.Draft) (issue.Result, error)
+	OpenInRepository(ctx context.Context, appID, projectRepositoryID uuid.UUID, d issue.Draft) (issue.Result, error)
 }
 
 // Queries is the part of db.Querier the processor uses.
@@ -111,7 +111,7 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 		if delivered[t.ProjectRepositoryID] {
 			continue
 		}
-		res, err := p.issues.OpenInRepository(ctx, t.ProjectRepositoryID, &row.AppID, draft)
+		res, err := p.issues.OpenInRepository(ctx, row.AppID, t.ProjectRepositoryID, draft)
 		if err != nil {
 			var rl *issue.RateLimitError
 			if errors.As(err, &rl) {

@@ -19,7 +19,30 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 )
+
+// Connection is one of an app's tracker connections: the credentials an
+// issue is opened with (for GitHub, an App installation). Providers receive
+// the whole value so trackers that store per-connection secrets (GitLab,
+// Bitbucket OAuth tokens) can look them up by ID.
+type Connection struct {
+	ID      uuid.UUID
+	Tracker db.Tracker
+	// ExternalID is the tracker's identifier for the connection (GitHub: the
+	// installation ID).
+	ExternalID string
+	// AccountLogin is the tracker account the connection grants access to.
+	AccountLogin string
+}
+
+// ConnectionFromRow converts a provider_connections row.
+func ConnectionFromRow(c db.ProviderConnection) Connection {
+	return Connection{ID: c.ID, Tracker: c.Tracker, ExternalID: c.ExternalID, AccountLogin: c.AccountLogin}
+}
 
 // RateLimitError is returned by an Opener when the tracker refused the
 // request because of a rate limit and waiting was not possible within the
