@@ -13,7 +13,9 @@ import (
 )
 
 // This test needs a NATS server with JetStream. It is skipped unless
-// SEISMO_TEST_NATS_URL is set, e.g. nats://localhost:4222.
+// SEISMO_TEST_NATS_URL is set, e.g. nats://localhost:4222. Use a server no
+// backend is running against: its worker's consumer would take the
+// messages, and the test's own consumer can't be created next to it.
 func TestReportAccepted(t *testing.T) {
 	url := os.Getenv("SEISMO_TEST_NATS_URL")
 	if url == "" {

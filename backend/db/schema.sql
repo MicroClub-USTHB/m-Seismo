@@ -187,6 +187,19 @@ CREATE TABLE public.report_attachments (
 
 
 --
+-- Name: report_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.report_deliveries (
+    report_id uuid NOT NULL,
+    project_repository_id uuid NOT NULL,
+    issue_id uuid,
+    url text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: reports; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -200,7 +213,8 @@ CREATE TABLE public.reports (
     occurred_at timestamp with time zone NOT NULL,
     received_at timestamp with time zone DEFAULT now() NOT NULL,
     queued_at timestamp with time zone,
-    payload jsonb NOT NULL
+    payload jsonb NOT NULL,
+    processed_at timestamp with time zone
 );
 
 
@@ -315,6 +329,14 @@ ALTER TABLE ONLY public.provider_connections
 
 ALTER TABLE ONLY public.report_attachments
     ADD CONSTRAINT report_attachments_pkey PRIMARY KEY (report_id, name);
+
+
+--
+-- Name: report_deliveries report_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_deliveries
+    ADD CONSTRAINT report_deliveries_pkey PRIMARY KEY (report_id, project_repository_id);
 
 
 --
@@ -507,6 +529,30 @@ ALTER TABLE ONLY public.report_attachments
 
 
 --
+-- Name: report_deliveries report_deliveries_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_deliveries
+    ADD CONSTRAINT report_deliveries_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issues(id) ON DELETE SET NULL;
+
+
+--
+-- Name: report_deliveries report_deliveries_project_repository_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_deliveries
+    ADD CONSTRAINT report_deliveries_project_repository_id_fkey FOREIGN KEY (project_repository_id) REFERENCES public.project_repositories(id) ON DELETE CASCADE;
+
+
+--
+-- Name: report_deliveries report_deliveries_report_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_deliveries
+    ADD CONSTRAINT report_deliveries_report_id_fkey FOREIGN KEY (report_id) REFERENCES public.reports(id) ON DELETE CASCADE;
+
+
+--
 -- Name: reports reports_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -528,4 +574,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016190043'),
     ('20261016192420'),
     ('20261017120000'),
-    ('20261018120000');
+    ('20261018120000'),
+    ('20261021120000');
