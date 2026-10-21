@@ -154,6 +154,10 @@ bounded and no raw upstream response/error body is exposed or persisted.
 
 ## Validation
 
+`make test-integration` from the repository root runs the full isolated service
+and HTTP suite, including a real web-adapter upload. See
+[testing.md](testing.md#full-isolated-unit-and-integration-suite) for prerequisites.
+
 `go test ./...` covers app isolation, owner authorization, token rotation,
 encryption integrity, HTTP routing, credential redaction, upstream failures and
 schema references. `cd sdks/web && npm test` covers multipart delivery, the

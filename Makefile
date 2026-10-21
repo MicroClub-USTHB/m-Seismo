@@ -1,4 +1,4 @@
-.PHONY: all backend-build backend-test backend-fmt agent-build agent-test agent-fmt db-up db-down db-status sqlc-generate \
+.PHONY: all backend-build backend-test backend-fmt agent-build agent-test agent-fmt db-up db-down db-status sqlc-generate test-integration \
 	dev-up dev-down dev-reset dev-logs api-test api-test-fresh
 
 COMPOSE_DEV := docker compose -f deploy/compose.dev.yml
@@ -43,6 +43,10 @@ backend-build:
 
 backend-test:
 	cd backend && go test ./...
+
+# Disposable Postgres/Redis/NATS, Sentry HTTP integration, web and API regressions.
+test-integration:
+	python3 backend/scripts/test-integration.py
 
 backend-fmt:
 	cd backend && test -z "$$(gofmt -l .)"

@@ -1,5 +1,54 @@
 # Testing
 
+## Full isolated unit and integration suite
+
+From the repository root:
+
+```sh
+make test-integration
+# Equivalent:
+python3 backend/scripts/test-integration.py
+```
+
+Requires Docker, Python 3, Bash/curl, Go matching `backend/go.mod` with a C compiler
+for race detection, and Node 20+.
+The runner creates disposable PostgreSQL, Redis and NATS containers with ports
+bound only to localhost, applies all migrations, and runs:
+
+- Every Go package with `-race`, `-count=1` and the `integration` build tag.
+- The PostgreSQL report store, Redis rate limiter and JetStream integration tests
+  that otherwise skip when their `SEISMO_TEST_*` variables are missing.
+- `TestCrashProviderHTTPIntegration`: the production dependency graph and real
+  owner/SDK HTTP routes, including a JavaScript adapter upload, encrypted tokens,
+  Sentry failures/recovery, screenshots, queue publication and access isolation.
+- Go vet and the five dependency-free web adapter tests.
+- Every existing API script against a compiled backend and fake GitHub.
+
+Only external Sentry and GitHub are simulated. No vendor credentials are needed.
+Containers, backend processes, temporary keys and test state are removed even
+when a test fails. The runner does not use existing application databases or
+the API scripts' normal saved credentials.
+
+Optional `--go`, `--postgres-image`, `--redis-image` and `--nats-image` arguments
+select installed tooling or cached service images. Defaults match the development
+stack: PostgreSQL 17, Redis 7 and NATS 2 with JetStream.
+
+The iOS suite requires a macOS/Xcode host and is separate from this runner. The
+Rust agent is still a placeholder with zero tests; `cd agent && cargo test` checks
+its current build/test target.
+
+To use existing **isolated test services**, apply migrations and supply
+`SEISMO_TEST_DATABASE_URL`, `SEISMO_TEST_REDIS_URL` and `SEISMO_TEST_NATS_URL`:
+
+```sh
+cd backend
+go test -p 1 -count=1 -race -tags integration ./...
+```
+
+Run packages serially (`-p 1`): the integration tests share a JetStream work-queue
+stream, and concurrent consumers would interfere. The HTTP test's optional web
+subtest needs Node 20+; the full runner verifies this prerequisite up front.
+
 ## Running
 
 ```sh
@@ -63,10 +112,9 @@ token path, including JWT signing with a generated RSA key.
 
 ## Not covered yet
 
-- **Go-level DB tests.** The SQL behaviour (owner scoping, cascades, the
-  one-default index, the upsert guard) is only covered by the API scripts.
-  Those need the compose stack and don't run in `go test ./...`. A
-  testcontainers-based Go suite would also bring it into CI.
+- **Broader Go-level DB coverage.** Report persistence and crash-provider
+  connections now have real PostgreSQL tests. Other domain SQL behavior, such
+  as repository-default constraints, is exercised by the API scripts.
 - **A real GitHub App** is only exercised manually (`GITHUB_MODE=real`) or
   by the `e2e` Go test.
 
