@@ -1,6 +1,7 @@
 
 plugins {
     id("com.android.library")
+    kotlin("android")
 }
 
 android {
@@ -14,4 +15,8 @@ android {
     defaultConfig {
         minSdk = 24
     }
+}
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
 }
