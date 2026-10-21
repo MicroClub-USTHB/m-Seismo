@@ -25,7 +25,7 @@ func newTestLimiter(t *testing.T) *Limiter {
 		t.Fatal(err)
 	}
 	rdb := redis.NewClient(opts)
-	t.Cleanup(func() { rdb.Close() })
+	t.Cleanup(func() { _ = rdb.Close() })
 	return New(rdb, fmt.Sprintf("test:ratelimit:%d:", time.Now().UnixNano()))
 }
 
