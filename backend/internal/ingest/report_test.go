@@ -14,7 +14,7 @@ const specDir = "../../../spec"
 
 func loadExample(t *testing.T, name string) map[string]any {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(specDir, "examples", name))
+	data, err := os.ReadFile(filepath.Join(specDir, "examples", name)) //nolint:gosec // test fixtures from the repository
 	if err != nil {
 		t.Fatal(err)
 	}
