@@ -9,9 +9,10 @@
 #   STATE_FILE        where the token and IDs are saved (default scripts/api/.env.test)
 #   VERBOSE=1         print every request and response
 #
-# State: the owner's credentials, bearer token and GitHub connection are
-# saved to STATE_FILE and re-read before every authenticated request, so
-# each script (and each run) reuses and re-verifies them.
+# State: the owner's credentials, bearer token, a test app and that app's
+# GitHub connection are saved to STATE_FILE and re-read before every
+# authenticated request, so each script (and each run) reuses and
+# re-verifies them.
 
 set -uo pipefail
 
@@ -284,6 +285,7 @@ refresh_token() {
     [[ $STATUS == 201 ]] || return 1
     save_var OWNER_EMAIL "$email"
     save_var OWNER_PASSWORD "$password"
+    clear_var APP_ID
     clear_var CONNECTION_ID
   fi
   save_var TOKEN "$(jget .token.access_token)"
@@ -335,74 +337,108 @@ create_app() {
   CREATED_ID=$(jget .id)
 }
 
-# link_repo PROJECT_ID REPOSITORY [IS_DEFAULT]: links a repository through
-# CONNECTION_ID (the saved GitHub connection unless overridden for the call,
-# e.g. CONNECTION_ID=other link_repo ...); sets CREATED_ID.
+# link_repo PROJECT_ID REPOSITORY [IS_DEFAULT] [TRACKER]: links a
+# repository (tracker github unless given) to the project; sets CREATED_ID.
+# Projects hold no credentials: apps reach the repository through their own
+# connections.
 link_repo() {
   CREATED_ID=""
-  # Captured before api re-reads the state file, which would reset it.
-  local connection=$CONNECTION_ID
-  api POST "/projects/$1/repositories" \
-    "{\"connection_id\":\"$connection\",\"repository\":\"$2\",\"is_default\":${3:-false}}"
+  api POST "/projects/$1/repositories"     "{\"tracker\":\"${4:-github}\",\"repository\":\"$2\",\"is_default\":${3:-false}}"
   [[ $STATUS == 201 ]] || { fail "link $2 to project $1"; return 1; }
   CREATED_ID=$(jget .id)
 }
 
+# ensure_app makes sure STATE_FILE holds APP_ID, an app of the saved owner
+# that the saved GitHub connection belongs to. A saved app that no longer
+# exists is replaced, and its connection forgotten.
+ensure_app() {
+  load_state
+  if [[ -n ${APP_ID-} ]]; then
+    api GET "/apps/$APP_ID"
+    [[ $STATUS == 200 ]] && return 0
+    note "saved app $APP_ID is gone; creating another"
+  fi
+  create_app "API test app" || fatal "could not create the test app"
+  save_var APP_ID "$CREATED_ID"
+  clear_var CONNECTION_ID
+}
+
 # ---------------------------------------------------------------- GitHub --
 
-# github_connect runs the connect flow and sets CONNECTION_ID. With the
-# fake GitHub it plays the browser: it calls the callback the way GitHub's
-# redirect would, with a fresh installation id. With a real GitHub App it
-# prints the install URL and waits for the connection to appear.
+# fake_install_id prints a fresh installation ID on octo-org for the fake
+# GitHub (IDs from 100000000 up are on other-org; see cmd/fakegithub).
+fake_install_id() { echo $((RANDOM * 1000 + RANDOM % 1000 + 1)); }
+
+# github_connect APP_ID [INSTALLATION_ID] runs the connect flow for the app
+# and sets CONNECTION_ID (it does not save it). With the fake GitHub it
+# plays the browser: it calls the callback the way GitHub's redirect would,
+# with INSTALLATION_ID or a fresh one. With a real GitHub App it prints the
+# install URL and waits for a new connection to appear on the app.
 github_connect() {
-  api GET /providers/github/connect
-  [[ $STATUS == 200 ]] || { fail "GET /providers/github/connect" "is the GitHub provider configured?"; return 1; }
+  local app=$1 install_id=${2:-$(fake_install_id)}
+  CONNECTION_ID=""
+  api GET "/apps/$app/connect/github"
+  [[ $STATUS == 200 ]] || { fail "GET /apps/$app/connect/github" "is the GitHub provider configured?"; return 1; }
   local url state
   url=$(jget .url)
   state=$(query_param "$url" state)
 
   if [[ $GITHUB_MODE == fake ]]; then
-    local install_id=$((RANDOM * 1000 + RANDOM % 1000 + 1))
     http GET "/providers/github/callback?installation_id=$install_id&setup_action=install&code=fake-code-$install_id&state=$state"
     local location
     location=$(header Location)
     if [[ $STATUS != 302 || $(query_param "$location" status) != connected ]]; then
-      fail "connect GitHub installation $install_id" "callback redirected to: $location"
+      fail "connect GitHub installation $install_id to app $app" "callback redirected to: $location"
       return 1
     fi
     CONNECTION_ID=$(query_param "$location" connection_id)
   else
-    printf '\n  %sOpen this URL, install the GitHub App on the account that owns %s:%s\n  %s\n\n' \
-      "$C_BOLD" "$GITHUB_TEST_REPO" "$C_RESET" "$url"
-    api GET /providers/connections
+    printf '
+  %sOpen this URL, install the GitHub App on the account that owns %s:%s
+  %s
+
+'       "$C_BOLD" "$GITHUB_TEST_REPO" "$C_RESET" "$url"
+    api GET "/apps/$app/connections"
     local before
     before=$(jlen .)
     local i
     for i in $(seq 1 100); do
       sleep 3
-      api GET /providers/connections
+      api GET "/apps/$app/connections"
       if [[ $(jlen .) -gt $before ]]; then
         CONNECTION_ID=$(jget ".[$(($(jlen .) - 1))].id")
         break
       fi
     done
-    [[ -n ${CONNECTION_ID-} ]] || { fail "waited 5 minutes for the GitHub App install"; return 1; }
+    [[ -n $CONNECTION_ID ]] || { fail "waited 5 minutes for the GitHub App install"; return 1; }
   fi
-  save_var CONNECTION_ID "$CONNECTION_ID"
 }
 
-# ensure_github_connection reuses the saved CONNECTION_ID when it still
-# exists for this owner, otherwise connects.
+# ensure_github_connection makes sure the saved app (ensure_app) has a
+# GitHub connection: it reuses the saved CONNECTION_ID while the app still
+# has it, otherwise connects and saves the new one.
 ensure_github_connection() {
+  ensure_app
   load_state
   if [[ -n ${CONNECTION_ID-} ]]; then
-    api GET /providers/connections
+    api GET "/apps/$APP_ID/connections"
     if [[ $STATUS == 200 && $(jcount . id "$CONNECTION_ID") == 1 ]]; then
-      note "reusing GitHub connection $CONNECTION_ID"
+      note "reusing GitHub connection $CONNECTION_ID of app $APP_ID"
       return 0
     fi
   fi
-  github_connect
+  github_connect "$APP_ID" || return 1
+  save_var CONNECTION_ID "$CONNECTION_ID"
+}
+
+# attach_connection APP_ID CONNECTION_ID gives the app a connection that
+# another of the owner's apps already has (no new OAuth); sets CREATED_ID to
+# the app's new connection.
+attach_connection() {
+  CREATED_ID=""
+  api POST "/apps/$1/connections" "{\"connection_id\":\"$2\"}"
+  [[ $STATUS == 201 ]] || { fail "attach connection $2 to app $1"; return 1; }
+  CREATED_ID=$(jget .id)
 }
 
 # fake_issue_count TITLE: prints how many issues with that title the fake
