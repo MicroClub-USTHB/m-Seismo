@@ -1,0 +1,169 @@
+// Types shared by the agent hop and the backend hop.
+//
+// These mirror agent/src/model.rs on purpose, so the agent can turn its
+// own types into these without any reshaping.
+syntax = "proto3";
+
+package seismo.v1;
+
+import "google/protobuf/timestamp.proto";
+
+enum AgentSource {
+  AGENT_SOURCE_UNSPECIFIED = 0;
+  AGENT_SOURCE_DOCKER = 1;
+  AGENT_SOURCE_KUBERNETES = 2;
+  AGENT_SOURCE_LOKI = 3;
+}
+
+message TimeWindow {
+  google.protobuf.Timestamp from = 1;
+  google.protobuf.Timestamp to = 2;
+}
+
+message QueryLimits {
+  uint32 max_lines_per_workload = 1;
+  // Per agent, not for the whole aggregate. the coordinator already did
+  // the even split before sending this.
+  uint32 max_bytes_total = 2;
+  uint32 context_lines = 3;
+}
+
+// What the coordinator asks of one agent.
+message Query {
+  // Coordinator generated, echoed by every reply and by Cancel.
+  string query_id = 1;
+  TimeWindow window = 2;
+  // Unset means "plain window query".
+  optional string trace_id = 3;
+  QueryLimits limits = 4;
+  // Absolute, the agent must answer before this or the coordinator
+  // gives up on it (and marks the agent TIMEOUT).
+  google.protobuf.Timestamp deadline = 5;
+}
+
+enum LogStream {
+  LOG_STREAM_UNSPECIFIED = 0;
+  LOG_STREAM_STDOUT = 1;
+  LOG_STREAM_STDERR = 2;
+  LOG_STREAM_UNKNOWN = 3;
+}
+
+enum MatchKind {
+  MATCH_KIND_UNSPECIFIED = 0;
+  MATCH_KIND_TRACE = 1;
+  MATCH_KIND_CONTEXT = 2;
+  MATCH_KIND_WINDOW = 3;
+}
+
+enum WorkloadStatus {
+  WORKLOAD_STATUS_UNSPECIFIED = 0;
+  WORKLOAD_STATUS_COMPLETE = 1;
+  WORKLOAD_STATUS_PARTIAL = 2;
+  WORKLOAD_STATUS_UNAVAILABLE = 3;
+}
+
+enum CoverageStatus {
+  COVERAGE_STATUS_UNSPECIFIED = 0;
+  COVERAGE_STATUS_COMPLETE = 1;
+  COVERAGE_STATUS_PARTIAL = 2;
+  COVERAGE_STATUS_UNKNOWN = 3;
+}
+
+enum QueryStatus {
+  QUERY_STATUS_UNSPECIFIED = 0;
+  QUERY_STATUS_COMPLETE = 1;
+  QUERY_STATUS_PARTIAL = 2;
+  QUERY_STATUS_FAILED = 3;
+}
+
+// Why logs are gone (or never readable). New values are fine to add,
+// receivers must treat unknown ones as SOURCE_ERROR_KIND_UNSPECIFIED.
+enum SourceErrorKind {
+  SOURCE_ERROR_KIND_UNSPECIFIED = 0;
+  SOURCE_ERROR_KIND_ACCESS_DENIED = 1;
+  SOURCE_ERROR_KIND_SOURCE_UNREACHABLE = 2;
+  SOURCE_ERROR_KIND_DRIVER_UNSUPPORTED = 3;
+  SOURCE_ERROR_KIND_HISTORY_UNAVAILABLE = 4;
+  SOURCE_ERROR_KIND_WORKLOAD_NOT_FOUND = 5;
+  SOURCE_ERROR_KIND_TIMEOUT = 6;
+  SOURCE_ERROR_KIND_INVALID_RESPONSE = 7;
+}
+
+message SourceError {
+  SourceErrorKind kind = 1;
+  // Free text for humans. never parse it, the kind is the contract.
+  string detail = 2;
+}
+
+message Workload {
+  string id = 1;
+  string name = 2;
+  // Source-neutral grouping: host, namespace...
+  string scope_label = 3;
+}
+
+// A diagnostic is either there or has a reason for not being there.
+// Same idea as DiagnosticValue<T> in the agent.
+message StringDiagnostic {
+  oneof value {
+    string available = 1;
+    string unavailable_reason = 2;
+  }
+}
+
+message UintDiagnostic {
+  oneof value {
+    uint64 available = 1;
+    string unavailable_reason = 2;
+  }
+}
+
+message BoolDiagnostic {
+  oneof value {
+    bool available = 1;
+    string unavailable_reason = 2;
+  }
+}
+
+message WorkloadDiagnostics {
+  StringDiagnostic runtime_state = 1;
+  UintDiagnostic restart_count = 2;
+  BoolDiagnostic oom_killed = 3;
+  StringDiagnostic image = 4;
+  // Configured limits, not observed utilisation.
+  UintDiagnostic configured_cpu_nanocpus = 5;
+  UintDiagnostic configured_memory_bytes = 6;
+}
+
+message LogEntry {
+  optional google.protobuf.Timestamp timestamp = 1;
+  LogStream stream = 2;
+  // Already redacted. raw logs never leave the host.
+  string message = 3;
+  MatchKind match_kind = 4;
+}
+
+message WorkloadResult {
+  Workload workload = 1;
+  WorkloadStatus status = 2;
+  CoverageStatus coverage = 3;
+  // Oldest first. when truncating, the newest lines are the ones kept.
+  repeated LogEntry entries = 4;
+  WorkloadDiagnostics diagnostics = 5;
+  // Set when status is UNAVAILABLE (or PARTIAL because of an error).
+  optional SourceError error = 6;
+  uint64 dropped_line_count = 7;
+}
+
+// One agent's answer to one Query.
+message QueryResult {
+  string query_id = 1;
+  QueryStatus status = 2;
+  TimeWindow requested_window = 3;
+  optional google.protobuf.Timestamp oldest_available = 4;
+  // Set when the whole source failed, not just a workload.
+  optional SourceError source_error = 5;
+  repeated WorkloadResult workloads = 6;
+  bool truncated = 7;
+  uint64 dropped_line_count = 8;
+}
