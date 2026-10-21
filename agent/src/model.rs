@@ -76,6 +76,24 @@ impl ReadLimits {
             max_bytes: Self::MAX_BYTES,
         }
     }
+
+    pub fn from_query(limits: &QueryLimits, trace_requested: bool) -> Self {
+        // A trace match can sit anywhere in the window, so read the full cap.
+        if trace_requested {
+            return Self::per_workload_default();
+        }
+        // NOTE: 2x margin for lines the window filter and redaction drop later.
+        Self {
+            max_lines: limits
+                .max_lines_per_workload
+                .saturating_mul(2)
+                .min(Self::MAX_LINES),
+            max_bytes: limits
+                .max_bytes_total
+                .saturating_mul(2)
+                .min(Self::MAX_BYTES),
+        }
+    }
 }
 
 impl QueryLimits {
@@ -326,6 +344,38 @@ mod tests {
         assert_eq!(value.validate(at(0)), Err(ValidationError::InvalidLimits));
         value.limits.max_lines_per_workload = QueryLimits::MAX_LINES_PER_WORKLOAD + 1;
         assert_eq!(value.validate(at(0)), Err(ValidationError::InvalidLimits));
+    }
+
+    #[test]
+    fn derives_read_limits_from_the_query_with_a_margin() {
+        let limits = QueryLimits {
+            max_lines_per_workload: 1_000,
+            max_bytes_total: 64 * 1024,
+            context_lines: 5,
+        };
+        assert_eq!(
+            ReadLimits::from_query(&limits, false),
+            ReadLimits {
+                max_lines: 2_000,
+                max_bytes: 128 * 1024,
+            }
+        );
+        assert_eq!(
+            ReadLimits::from_query(&limits, true),
+            ReadLimits::per_workload_default()
+        );
+        let max = QueryLimits {
+            max_lines_per_workload: QueryLimits::MAX_LINES_PER_WORKLOAD,
+            max_bytes_total: QueryLimits::MAX_BYTES_TOTAL,
+            context_lines: 0,
+        };
+        assert_eq!(
+            ReadLimits::from_query(&max, false),
+            ReadLimits {
+                max_lines: 20_000,
+                max_bytes: ReadLimits::MAX_BYTES,
+            }
+        );
     }
 
     #[test]

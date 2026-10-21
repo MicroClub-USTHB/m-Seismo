@@ -42,7 +42,7 @@ pub async fn execute<S: LogSource>(source: &S, query: &Query, config: &AgentConf
     let configured_deadline = started + Duration::from_millis(config.query_deadline_ms);
     let request_remaining = (query.deadline - Utc::now())
         .to_std()
-        .map_or(Duration::ZERO, |duration| duration);
+        .unwrap_or(Duration::ZERO);
     let deadline = configured_deadline.min(started + request_remaining);
 
     let workloads = match timeout_at(deadline, source.list_workloads(&config.scope)).await {
@@ -90,7 +90,11 @@ pub async fn execute<S: LogSource>(source: &S, query: &Query, config: &AgentConf
             (Instant::now() + Duration::from_millis(config.workload_timeout_ms)).min(deadline);
         let raw_logs = match timeout_at(
             workload_deadline,
-            source.read_logs(&workload, query.window, ReadLimits::per_workload_default()),
+            source.read_logs(
+                &workload,
+                query.window,
+                ReadLimits::from_query(&query.limits, query.trace_id.is_some()),
+            ),
         )
         .await
         {
@@ -522,6 +526,37 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].message, "line-103");
         assert_eq!(entries[1].message, "line-104");
+        assert!(result.truncated);
+    }
+
+    #[tokio::test]
+    async fn keeps_newest_lines_when_the_read_cap_truncates_a_workload() {
+        let workload = FakeSource::workload("api");
+        let source = FakeSource {
+            workloads: vec![workload.clone()],
+            logs: BTreeMap::from([(
+                workload.id.clone(),
+                (100..110)
+                    .map(|second| FakeSource::line(at(second), &format!("line-{second}")))
+                    .collect(),
+            )]),
+            coverage: CoverageStatus::Complete,
+            ..FakeSource::default()
+        };
+        let mut request = query(None);
+        request.window = TimeWindow {
+            from: at(99),
+            to: at(111),
+        };
+        request.limits.max_lines_per_workload = 3;
+        let result = execute(&source, &request, &config()).await;
+        let entries = &result.workloads[0].entries;
+        assert_eq!(
+            entries.last().map(|entry| entry.message.as_str()),
+            Some("line-109")
+        );
+        assert!(entries.iter().all(|entry| entry.message != "line-100"));
+        assert_eq!(result.status, QueryStatus::Partial);
         assert!(result.truncated);
     }
 
