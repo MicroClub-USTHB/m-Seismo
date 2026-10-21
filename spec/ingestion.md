@@ -158,5 +158,4 @@ breadcrumbs, …).
    into Crashlytics as a custom key. The field is in the schema but stays
    optional until this is decided.
 2. **GitHub webhook** for closed issues: separate document.
-3. **Agent protocol** (server-side context): separate
-   document.
+3. **Agent protocol** (server-side context): [`agent-protocol.md`](agent-protocol.md).
