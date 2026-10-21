@@ -45,7 +45,7 @@ Reference pages: [api.md](api.md) lists every endpoint;
 | `provider.Provider` | Go interface (plug-in) | tracker implementers | `internal/provider/provider.go` |
 | `apperr` | error vocabulary | every service | `internal/apperr` |
 | `httpx` | handler toolkit | every HTTP package | `internal/httpx` |
-| `ratelimit.Limiter` | Go interface | anything that needs a throttle | `internal/ratelimit` |
+| `*ratelimit.Limiter` | Go type (token bucket) | anything that needs a throttle | `internal/ratelimit` |
 
 ---
 
@@ -261,7 +261,7 @@ Then add `ingest.Module` to `Options()` in `main.go`. `go test .` runs
 | check an SDK key | `*app.Service` |
 | act on one tracker connection | `issue.OpenerSource` (or `*provider.Registry`) |
 | raw SQL queries | `db.Querier` (or `*db.Queries` + `*pgxpool.Pool` for transactions) |
-| a throttle | `ratelimit.Limiter` |
+| a throttle | `*ratelimit.Limiter` |
 | settings | `*config.Config` |
 
 ## B2. Opening issues: `issue.Service`
@@ -478,21 +478,27 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 ## B8. Throttling an action: `ratelimit.Limiter`
 
 ```go
-type Limiter interface {
-    Allow(ctx context.Context, key string, limit int, window time.Duration) (ok bool, retryAfter time.Duration, err error)
+type Limit struct {
+    PerMinute float64 // steady rate
+    Burst     int     // calls allowed at once after a quiet period
 }
+
+func (l *Limiter) Allow(ctx context.Context, key string, lim Limit) (Result, error)
 ```
 
-This is a fixed window counted in Redis, so it holds across server
-instances. `limit <= 0` always allows. Key it by whatever you are limiting:
+`*ratelimit.Limiter` is a token bucket per key in Redis, so it holds across
+server instances. Each allowed call takes one token; the bucket refills at
+`PerMinute`. Take it through a small interface in your package (as
+`app.Limiter` and `ingest.Limiter` do) and key it by whatever you are
+limiting:
 
 ```go
-ok, wait, err := s.limiter.Allow(ctx, "report:"+appID.String(), 120, time.Minute)
+res, err := s.limiter.Allow(ctx, "report:"+appID.String(), ratelimit.Limit{PerMinute: 120, Burst: 20})
 if err != nil {
     return err
 }
-if !ok {
-    return apperr.RateLimited("too many reports from this app; retry later", wait) // 429 + Retry-After
+if !res.Allowed {
+    return apperr.RateLimited("too many reports from this app; retry later", res.RetryAfter) // 429 + Retry-After
 }
 ```
 

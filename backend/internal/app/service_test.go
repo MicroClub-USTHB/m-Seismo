@@ -13,6 +13,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ratelimit"
 )
 
 type fakeQuerier struct {
@@ -91,8 +92,8 @@ func kind(err error) apperr.Kind {
 
 type denyLimiter struct{ wait time.Duration }
 
-func (d denyLimiter) Allow(context.Context, string, int, time.Duration) (bool, time.Duration, error) {
-	return false, d.wait, nil
+func (d denyLimiter) Allow(context.Context, string, ratelimit.Limit) (ratelimit.Result, error) {
+	return ratelimit.Result{RetryAfter: d.wait}, nil
 }
 
 func TestTestIssueIsThrottled(t *testing.T) {

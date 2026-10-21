@@ -65,8 +65,8 @@ These are deliberate omissions or limitations in the current code:
 - **JWTs can't be revoked.** Changing a password doesn't log out other
   sessions, and there are no refresh tokens.
 - **No rate limiting** on `/auth/login`, `/auth/register` or the provider
-  callback. `ratelimit.Limiter` is ready for this; only
-  `POST /apps/{id}/test-issue` uses it today.
+  callback. `*ratelimit.Limiter` is ready for this; today it throttles
+  `POST /apps/{id}/test-issue` and `POST /reports`.
 - **No retry queue yet** for issues that failed or were rate-limited for too
   long. `*issue.RateLimitError.Wait` and the per-target results are the hooks
   for it (FR-62).

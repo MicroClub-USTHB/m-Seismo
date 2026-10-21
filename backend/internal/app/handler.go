@@ -8,10 +8,12 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ratelimit"
 )
 
 var Module = fx.Module("app",
 	fx.Provide(
+		func(l *ratelimit.Limiter) Limiter { return l },
 		NewService,
 		httpx.AsRoutes(NewHandler),
 	),

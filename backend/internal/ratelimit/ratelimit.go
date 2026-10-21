@@ -1,60 +1,107 @@
-// Package ratelimit limits how often m-Seismo's own actions may run, using
-// fixed windows counted in Redis so the limit holds across server
-// instances.
+// Package ratelimit limits how often something may happen, shared by every
+// backend instance through Redis.
+//
+// Each key has a token bucket: it holds up to Burst tokens and refills at
+// PerMinute tokens per minute. Every allowed call takes one token. The
+// bucket is updated by a Lua script, so concurrent calls from several
+// instances never over-allow.
 package ratelimit
 
 import (
 	"context"
 	"fmt"
+	"math"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/fx"
 )
 
-// Module provides a Redis-backed Limiter.
+// Module provides the Redis-backed *Limiter shared by the API.
 var Module = fx.Module("ratelimit",
-	fx.Provide(NewRedis),
+	fx.Provide(func(rdb *redis.Client) *Limiter { return New(rdb, "seismo:ratelimit:") }),
 )
 
-// Limiter decides whether one more event is allowed for key.
-type Limiter interface {
-	// Allow counts one event for key in the current window. It reports
-	// whether the event is within limit and, when it is not, how long until
-	// the window resets. A limit <= 0 always allows.
-	Allow(ctx context.Context, key string, limit int, window time.Duration) (ok bool, retryAfter time.Duration, err error)
+// Limit is how often a key may be used.
+type Limit struct {
+	// PerMinute is the steady rate.
+	PerMinute float64
+	// Burst is how many calls may happen at once after a quiet period.
+	Burst int
 }
 
-const keyPrefix = "ratelimit:"
+// Result is the outcome of one call to Allow.
+type Result struct {
+	Allowed bool
+	// RetryAfter is how long to wait before the next call can succeed. Zero
+	// when Allowed.
+	RetryAfter time.Duration
+}
 
-// fixedWindow increments the counter and starts its expiry on the first
-// event of a window, atomically. Returns {count, ttl_ms}.
-var fixedWindow = redis.NewScript(`
-local n = redis.call('INCR', KEYS[1])
-if n == 1 then
-  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+// script refills the bucket for the time elapsed since its last use, then
+// takes a token if one is available. It uses the Redis clock so every
+// instance sees the same time.
+var script = redis.NewScript(`
+local rate = tonumber(ARGV[1])
+local burst = tonumber(ARGV[2])
+local t = redis.call('TIME')
+local now = tonumber(t[1]) + tonumber(t[2]) / 1000000
+
+local state = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
+local tokens = tonumber(state[1])
+local ts = tonumber(state[2])
+if tokens == nil then
+  tokens = burst
+  ts = now
 end
-return {n, redis.call('PTTL', KEYS[1])}
+tokens = math.min(burst, tokens + (now - ts) * rate)
+
+local allowed = 0
+local wait = 0
+if tokens >= 1 then
+  tokens = tokens - 1
+  allowed = 1
+else
+  wait = (1 - tokens) / rate
+end
+
+redis.call('HSET', KEYS[1], 'tokens', tostring(tokens), 'ts', tostring(now))
+redis.call('EXPIRE', KEYS[1], math.ceil(burst / rate) + 1)
+return {allowed, tostring(wait)}
 `)
 
-type redisLimiter struct{ rdb *redis.Client }
+// Limiter checks limits stored in Redis.
+type Limiter struct {
+	rdb    *redis.Client
+	prefix string
+}
 
-func NewRedis(rdb *redis.Client) Limiter { return redisLimiter{rdb: rdb} }
+// New returns a Limiter whose Redis keys start with prefix.
+func New(rdb *redis.Client, prefix string) *Limiter {
+	return &Limiter{rdb: rdb, prefix: prefix}
+}
 
-func (l redisLimiter) Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, time.Duration, error) {
-	if limit <= 0 {
-		return true, 0, nil
+// Allow takes one token from key's bucket.
+func (l *Limiter) Allow(ctx context.Context, key string, lim Limit) (Result, error) {
+	if lim.PerMinute <= 0 || lim.Burst < 1 {
+		return Result{}, fmt.Errorf("ratelimit: invalid limit %+v", lim)
 	}
-	res, err := fixedWindow.Run(ctx, l.rdb, []string{keyPrefix + key}, window.Milliseconds()).Int64Slice()
+	perSecond := lim.PerMinute / 60
+
+	out, err := script.Run(ctx, l.rdb, []string{l.prefix + key}, perSecond, lim.Burst).Slice()
 	if err != nil {
-		return false, 0, fmt.Errorf("ratelimit: %w", err)
+		return Result{}, fmt.Errorf("ratelimit: %w", err)
 	}
-	count, ttl := res[0], time.Duration(res[1])*time.Millisecond
-	if count <= int64(limit) {
-		return true, 0, nil
+	allowed, _ := out[0].(int64)
+	waitText, _ := out[1].(string)
+	wait, err := strconv.ParseFloat(waitText, 64)
+	if err != nil {
+		return Result{}, fmt.Errorf("ratelimit: bad wait %q: %w", waitText, err)
 	}
-	if ttl <= 0 {
-		ttl = window
+
+	if allowed == 1 {
+		return Result{Allowed: true}, nil
 	}
-	return false, ttl, nil
+	return Result{RetryAfter: time.Duration(math.Ceil(wait*1000)) * time.Millisecond}, nil
 }

@@ -35,4 +35,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("github.max_rate_limit_wait", "30s")
 
 	v.SetDefault("limits.test_issues_per_minute", 10)
+
+	v.SetDefault("ingest.app_per_minute", 600)
+	v.SetDefault("ingest.app_burst", 600)
+	v.SetDefault("ingest.installation_per_minute", 10)
+	v.SetDefault("ingest.installation_burst", 5)
 }
