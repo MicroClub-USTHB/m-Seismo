@@ -5,9 +5,9 @@
 // Service that opens issues for apps. Each tracker gets its own provider
 // subpackage, which implements Opener next to the tracker's connect flow:
 //
-//	internal/provider/github/     - v1
-//	internal/provider/gitlab/
-//	internal/provider/bitbucket/
+//	internal/provider/github/     - GitHub App installations
+//	internal/provider/gitlab/     - GitLab, per-app OAuth tokens
+//	internal/provider/bitbucket/  - Bitbucket Cloud, per-app OAuth tokens
 //
 // Nothing outside those subpackages should import a vendor's API client
 // directly. Domain code (dedup, routing, ...) depends only on Opener and
