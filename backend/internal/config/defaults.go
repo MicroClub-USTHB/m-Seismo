@@ -40,4 +40,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("ingest.app_burst", 600)
 	v.SetDefault("ingest.installation_per_minute", 10)
 	v.SetDefault("ingest.installation_burst", 5)
+
+	v.SetDefault("crash.source", "none")
+	v.SetDefault("crash.window", "2m")
 }

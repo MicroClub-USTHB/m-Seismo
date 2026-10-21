@@ -70,6 +70,19 @@ func Load(configPath string) (*Config, error) {
 		Limits: LimitsConfig{
 			TestIssuesPerMinute: v.GetInt("limits.test_issues_per_minute"),
 		},
+		Crash: CrashConfig{
+			Source: v.GetString("crash.source"),
+			Window: v.GetDuration("crash.window"),
+			Crashlytics: CrashlyticsConfig{
+				ClientID:     v.GetString("crash.crashlytics.client_id"),
+				ClientSecret: v.GetString("crash.crashlytics.client_secret"),
+				RedirectURL:  v.GetString("crash.crashlytics.redirect_url"),
+				QuotaProject: v.GetString("crash.crashlytics.quota_project"),
+			},
+		},
+		Security: SecurityConfig{
+			SecretKey: v.GetString("security.secret_key"),
+		},
 		Ingest: IngestConfig{
 			AppPerMinute:          v.GetFloat64("ingest.app_per_minute"),
 			AppBurst:              v.GetInt("ingest.app_burst"),

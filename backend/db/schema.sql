@@ -96,6 +96,20 @@ CREATE TABLE public.apps (
 
 
 --
+-- Name: crashlytics_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.crashlytics_connections (
+    project_id uuid NOT NULL,
+    google_email text NOT NULL,
+    refresh_token bytea NOT NULL,
+    apps text[] DEFAULT '{}'::text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: issues; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -243,6 +257,14 @@ ALTER TABLE ONLY public.app_projects
 
 ALTER TABLE ONLY public.apps
     ADD CONSTRAINT apps_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: crashlytics_connections crashlytics_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crashlytics_connections
+    ADD CONSTRAINT crashlytics_connections_pkey PRIMARY KEY (project_id);
 
 
 --
@@ -451,6 +473,14 @@ ALTER TABLE ONLY public.apps
 
 
 --
+-- Name: crashlytics_connections crashlytics_connections_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crashlytics_connections
+    ADD CONSTRAINT crashlytics_connections_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
 -- Name: issues issues_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -519,7 +549,6 @@ ALTER TABLE ONLY public.reports
 --
 
 
-
 --
 -- Dbmate schema migrations
 --
@@ -528,4 +557,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016190043'),
     ('20261016192420'),
     ('20261017120000'),
+    ('20261017140000'),
     ('20261018120000');

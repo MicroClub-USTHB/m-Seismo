@@ -23,6 +23,7 @@ type Querier interface {
 	DeleteProviderConnection(ctx context.Context, arg DeleteProviderConnectionParams) (int64, error)
 	GetActiveAppKeyByHash(ctx context.Context, keyHash []byte) (AppKey, error)
 	GetApp(ctx context.Context, arg GetAppParams) (App, error)
+	GetCrashlyticsConnection(ctx context.Context, projectID uuid.UUID) (CrashlyticsConnection, error)
 	// Resolves one project repository to everything needed to open an issue in it.
 	GetIssueTarget(ctx context.Context, id uuid.UUID) (GetIssueTargetRow, error)
 	GetOpenIssueByFingerprint(ctx context.Context, arg GetOpenIssueByFingerprintParams) (Issue, error)
@@ -40,6 +41,7 @@ type Querier interface {
 	ListAppKeys(ctx context.Context, appID uuid.UUID) ([]AppKey, error)
 	ListAppProjects(ctx context.Context, appID uuid.UUID) ([]Project, error)
 	ListApps(ctx context.Context, ownerID uuid.UUID) ([]App, error)
+	ListCrashlyticsConnections(ctx context.Context) ([]CrashlyticsConnection, error)
 	// The default repository of every project linked to the app.
 	ListIssueTargetsForApp(ctx context.Context, appID uuid.UUID) ([]ListIssueTargetsForAppRow, error)
 	ListProjectRepositories(ctx context.Context, projectID uuid.UUID) ([]ListProjectRepositoriesRow, error)
@@ -47,6 +49,7 @@ type Querier interface {
 	ListProviderConnections(ctx context.Context, ownerID uuid.UUID) ([]ProviderConnection, error)
 	MarkReportQueued(ctx context.Context, id uuid.UUID) error
 	RevokeAppKey(ctx context.Context, arg RevokeAppKeyParams) (int64, error)
+	SetCrashlyticsApps(ctx context.Context, arg SetCrashlyticsAppsParams) (int64, error)
 	SetDefaultProjectRepository(ctx context.Context, arg SetDefaultProjectRepositoryParams) (int64, error)
 	SetIssueState(ctx context.Context, arg SetIssueStateParams) error
 	UnlinkAppProject(ctx context.Context, arg UnlinkAppProjectParams) (int64, error)
@@ -54,6 +57,7 @@ type Querier interface {
 	UpdateApp(ctx context.Context, arg UpdateAppParams) (App, error)
 	UpdateOwner(ctx context.Context, arg UpdateOwnerParams) (Owner, error)
 	UpdateProject(ctx context.Context, arg UpdateProjectParams) (Project, error)
+	UpsertCrashlyticsConnection(ctx context.Context, arg UpsertCrashlyticsConnectionParams) (CrashlyticsConnection, error)
 	// Re-installing refreshes the account details. A connection already owned by
 	// another owner is left untouched and no row is returned.
 	UpsertProviderConnection(ctx context.Context, arg UpsertProviderConnectionParams) (ProviderConnection, error)
