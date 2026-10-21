@@ -73,15 +73,23 @@ type IngestConfig struct {
 	InstallationBurst     int
 }
 
+// CrashProvidersConfig holds operator-controlled credential encryption and allowed
+// Sentry origins. API clients cannot introduce arbitrary outbound destinations.
+type CrashProvidersConfig struct {
+	EncryptionKey string // base64-encoded 32-byte AES key; empty disables Sentry connections
+	SentryOrigins []string
+}
+
 type Config struct {
-	Env      string
-	LogLevel string
-	Server   ServerConfig
-	Database DatabaseConfig
-	Redis    RedisConfig
-	NATS     NATSConfig
-	Auth     AuthConfig
-	GitHub   GitHubConfig
-	Limits   LimitsConfig
-	Ingest   IngestConfig
+	Env            string
+	LogLevel       string
+	Server         ServerConfig
+	Database       DatabaseConfig
+	Redis          RedisConfig
+	NATS           NATSConfig
+	Auth           AuthConfig
+	GitHub         GitHubConfig
+	Limits         LimitsConfig
+	Ingest         IngestConfig
+	CrashProviders CrashProvidersConfig
 }

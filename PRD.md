@@ -3,12 +3,12 @@
 |                   |                                                        |
 | ----------------- | ------------------------------------------------------ |
 | **Status**        | Draft, under product review                            |
-| **Version**       | 1.1                                                    |
-| **Last updated**  | 2026-10-16                                             |
+| **Version**       | 1.2                                                    |
+| **Last updated**  | 2026-10-21                                             |
 | **Product owner** | @wail                                                  |
 | **Organisation**  | MicroClub USTHB                                        |
 | **Source**        | m-Seismo cahier des charges (2026-10-14)               |
-| **Platforms**     | iOS and Android apps; Flutter and React Native apps    |
+| **Platforms**     | iOS, Android, Flutter, React Native and web apps    |
 
 ### Revision history
 
@@ -16,6 +16,7 @@
 | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1.0     | First full product scope, derived from the cahier des charges. Technical architecture removed; only the features and the behaviour they must have are kept. |
 | 1.1     | Amendments from building the iOS SDK's first release (FR-03, FR-08, FR-11, FR-20, FR-21, NFR-09): see the implementation notes under each affected requirement, added per the change-control process in section 22. |
+| 1.2     | Per-app optional Sentry or Crashlytics selection, mobile/web crash references, and removal of the mandatory Firebase dependency (2026-10-21). |
 
 ### How to read this document
 
@@ -136,10 +137,10 @@ Explicitly excluded from v1:
 
 ### 3.4 Assumptions and constraints
 
-- Our apps already use Crashlytics. Crash correlation (section 11) depends on
-  the Crashlytics data export being turned on for each target Firebase project,
-  which is **not the case today** and requires the paid Firebase plan. Turning
-  it on, and documenting how, is part of v1 (FR-44).
+- Each app independently selects Sentry, Crashlytics, or no external crash
+  provider. One owner may use different providers for different apps. Sentry
+  integrations support mobile and web apps and never require Firebase.
+  Crashlytics export setup is needed only for apps selecting Crashlytics (FR-44).
 - Issues are filed on GitHub. m-Seismo is installed on the GitHub organisation
   with the smallest set of permissions it needs: write issues, read metadata.
 - Where m-Seismo is hosted, where attachments are stored and which repository
@@ -286,10 +287,15 @@ the state of the app at the time of the crash. `[SDK-08]` — v1 — see the
 implementation note under FR-08/FR-09: this currently applies to uncaught
 exceptions and recorded errors, not native/signal-level crashes.
 
-**FR-21** — **Works with Crashlytics.** m-Seismo's crash handling runs alongside
-Crashlytics and never replaces it: every crash still reaches Crashlytics
-exactly as before. Each report carries the Crashlytics installation and user
-identifiers and custom keys, so the two can be linked. `[SDK-08, SDK-11]` — v1
+**FR-21** — **Works with existing crash SDKs.** The app keeps its existing
+Sentry or Crashlytics setup. Sentry apps have no Crashlytics dependency. The
+following Crashlytics-specific behavior applies only to apps choosing it.
+m-Seismo never replaces the host app's crash SDK.
+
+Crash references must remain anonymous and retain the original crash session.
+`[SDK-08, SDK-11]` — v1
+
+The historical iOS implementation note below applies only to Crashlytics.
 
 > **iOS v1 implementation note / conflict (2026-10-16):** decided during the
 > iOS SDK build that the SDK will **not** integrate with the Crashlytics SDK
@@ -411,14 +417,24 @@ Prometheus, Loki and CloudWatch Logs. `[AG-07]` — v1.x
 
 ## 11. Crash correlation
 
-**FR-43** — **Link to Crashlytics.** When a report matches a Crashlytics crash
-(same installation, close in time), the issue links to that crash and includes
-its crash trace, its breadcrumbs and its custom keys. `[INT-02]` — v1
+**FR-43** — **Link to the app's crash provider.** An owner may configure Sentry,
+Crashlytics, or no crash provider independently for each app. Mobile and web
+reports can link to the matching external crash. For Sentry, an exact event ID
+from the app's existing Sentry SDK selects the event within that app's configured
+project. Crash context and a link are available for report/issue enrichment.
+Reporting still works without a provider. `[INT-02]` — v1
 
-**FR-44** — **Crashlytics data available.** The Crashlytics data export is
-turned on for every target Firebase project, the steps are documented for the
-team, and m-Seismo checks when it starts that it can read that data, warning the
-project admin if it cannot. `[INT-05]` — v1
+**FR-44** — **Provider access.** Connection setup and required permissions are
+documented for each provider. Sentry project access is verified before saving
+credentials, which remain on the backend. Firebase data export is required only
+for apps selecting Crashlytics. Provider outages must not block report acceptance.
+`[INT-05]` — v1
+
+> **Implementation status (2026-10-21):** Sentry project connection and lazy
+> report-event resolution are implemented. The Crashlytics export adapter and
+> automatic report-to-GitHub worker remain pending. The existing iOS SDK transport
+> also needs migration to the shared ingestion contract; mobile apps can use that
+> HTTP contract directly in the meantime.
 
 **FR-45** — **Readable crash traces without Crashlytics.** For crashes that did
 not go through Crashlytics, crash traces are translated back into readable file
@@ -696,8 +712,8 @@ v1 is ready for launch consideration when:
   iOS and Android, then on Flutter and React Native;
 - every v1 requirement in this document is met;
 - the shared test cases pass identically on all four platforms;
-- the Crashlytics data export is turned on for every target Firebase project and
-  the setup is documented;
+- Sentry access works for Sentry apps; Crashlytics data export is enabled for
+  Crashlytics apps; setup for both providers is documented;
 - crash correlation works on real crashes from at least one real app;
 - server-side context is collected for at least one real backend;
 - the success targets of section 1.4 are met on a pilot app;

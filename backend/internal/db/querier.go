@@ -18,11 +18,13 @@ type Querier interface {
 	CreateOwner(ctx context.Context, arg CreateOwnerParams) (Owner, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	DeleteApp(ctx context.Context, arg DeleteAppParams) (int64, error)
+	DeleteAppCrashProvider(ctx context.Context, appID uuid.UUID) error
 	DeleteOwner(ctx context.Context, id uuid.UUID) (int64, error)
 	DeleteProject(ctx context.Context, arg DeleteProjectParams) (int64, error)
 	DeleteProviderConnection(ctx context.Context, arg DeleteProviderConnectionParams) (int64, error)
 	GetActiveAppKeyByHash(ctx context.Context, keyHash []byte) (AppKey, error)
 	GetApp(ctx context.Context, arg GetAppParams) (App, error)
+	GetAppCrashProvider(ctx context.Context, appID uuid.UUID) (AppCrashProvider, error)
 	// Resolves one project repository to everything needed to open an issue in it.
 	GetIssueTarget(ctx context.Context, id uuid.UUID) (GetIssueTargetRow, error)
 	GetOpenIssueByFingerprint(ctx context.Context, arg GetOpenIssueByFingerprintParams) (Issue, error)
@@ -47,6 +49,7 @@ type Querier interface {
 	ListProviderConnections(ctx context.Context, ownerID uuid.UUID) ([]ProviderConnection, error)
 	MarkReportQueued(ctx context.Context, id uuid.UUID) error
 	RevokeAppKey(ctx context.Context, arg RevokeAppKeyParams) (int64, error)
+	SetAppCrashProvider(ctx context.Context, arg SetAppCrashProviderParams) (AppCrashProvider, error)
 	SetDefaultProjectRepository(ctx context.Context, arg SetDefaultProjectRepositoryParams) (int64, error)
 	SetIssueState(ctx context.Context, arg SetIssueStateParams) error
 	UnlinkAppProject(ctx context.Context, arg UnlinkAppProjectParams) (int64, error)

@@ -2,9 +2,23 @@ package config
 
 import (
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestCrashProviderEnvironmentSettings(t *testing.T) {
+	t.Setenv("SEISMO_ENV", "development")
+	t.Setenv("SEISMO_CRASH_PROVIDERS_ENCRYPTION_KEY", "operator-key")
+	t.Setenv("SEISMO_CRASH_PROVIDERS_SENTRY_ORIGINS", "https://sentry.io https://sentry.example.com")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CrashProviders.EncryptionKey != "operator-key" || !reflect.DeepEqual(cfg.CrashProviders.SentryOrigins, []string{"https://sentry.io", "https://sentry.example.com"}) {
+		t.Fatalf("crash-provider environment settings were not loaded")
+	}
+}
 
 func TestLoadRequiresJWTSecretOutsideDevelopment(t *testing.T) {
 	t.Setenv("SEISMO_ENV", "")

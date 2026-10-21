@@ -36,7 +36,8 @@ CREATE TYPE public.app_platform AS ENUM (
     'ios',
     'android',
     'flutter',
-    'react_native'
+    'react_native',
+    'web'
 );
 
 
@@ -514,6 +515,16 @@ ALTER TABLE ONLY public.reports
     ADD CONSTRAINT reports_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
+
+CREATE TABLE public.app_crash_providers (
+    app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
+    provider text NOT NULL CHECK (provider IN ('sentry', 'crashlytics')),
+    settings jsonb NOT NULL,
+    credentials bytea,
+    updated_at timestamp with time zone NOT NULL DEFAULT now(),
+    CHECK (provider <> 'sentry' OR credentials IS NOT NULL)
+);
+
 --
 -- PostgreSQL database dump complete
 --
@@ -528,4 +539,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016190043'),
     ('20261016192420'),
     ('20261017120000'),
-    ('20261018120000');
+    ('20261018120000'),
+    ('20261021120000');

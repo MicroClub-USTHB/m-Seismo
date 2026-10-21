@@ -35,6 +35,10 @@ func Load(configPath string) (*Config, error) {
 	}
 
 	cfg := &Config{
+		CrashProviders: CrashProvidersConfig{
+			EncryptionKey: v.GetString("crash_providers.encryption_key"),
+			SentryOrigins: v.GetStringSlice("crash_providers.sentry_origins"),
+		},
 		Env:      v.GetString("env"),
 		LogLevel: v.GetString("log_level"),
 		Server: ServerConfig{

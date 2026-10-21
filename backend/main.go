@@ -6,6 +6,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/app"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/auth"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/infra"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
@@ -36,5 +37,6 @@ func Options() fx.Option {
 		issue.Module,
 		ratelimit.Module,
 		ingest.Module,
+		crashprovider.Module,
 	)
 }

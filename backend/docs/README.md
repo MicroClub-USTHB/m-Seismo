@@ -4,6 +4,8 @@ In-depth documentation for the m-Seismo backend: owners, projects, apps,
 tracker connections (GitHub), and the issue service. For setup and a quick
 route list, start with [../README.md](../README.md).
 
+See [crash-providers.md](crash-providers.md) for per-app Sentry/Crashlytics selection, web reporting, and Sentry event resolution.
+
 ## Reading order
 
 | # | Page | Read it to… |
@@ -46,7 +48,7 @@ The local stack (Docker Compose, fake GitHub) is described in
 | PRD item | Status in this backend |
 |---|---|
 | FR-01 / FR-04: project keys, create, rotate, revoke | done, as **app keys** (`/apps/{id}/keys`) |
-| FR-46: issue opened automatically | `issue.Service` done; the ingestion trigger is not built |
+| FR-46: issue opened automatically | `issue.Service` done; ingestion stores/queues reports, but the consumer is pending |
 | FR-49: labels, assignees, milestone | carried by `Draft`; GitHub resolves milestones by title |
 | FR-51: two-way status | schema and `Opener.IsOpen` ready; no sync job yet |
 | FR-55: comment on a duplicate | schema, fingerprint and `Opener.Comment` ready; logic not built |
@@ -59,7 +61,7 @@ The local stack (Docker Compose, fake GitHub) is described in
 
 These are deliberate omissions or limitations in the current code:
 
-- **No ingestion endpoint.** Nothing calls `issue.Service` in production yet.
+- **No report-to-issue worker.** Ingestion stores and queues reports, but no consumer calls `issue.Service` for accepted reports yet.
 - **No GitHub webhooks.** `suspended_at` is never set, and an uninstalled App
   is only detected when a call fails.
 - **JWTs can't be revoked.** Changing a password doesn't log out other

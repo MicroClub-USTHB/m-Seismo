@@ -19,6 +19,7 @@ const (
 	AppPlatformAndroid     AppPlatform = "android"
 	AppPlatformFlutter     AppPlatform = "flutter"
 	AppPlatformReactNative AppPlatform = "react_native"
+	AppPlatformWeb         AppPlatform = "web"
 )
 
 func (e *AppPlatform) Scan(src interface{}) error {
@@ -107,6 +108,14 @@ type App struct {
 	BundleID  string      `json:"bundle_id"`
 	CreatedAt time.Time   `json:"created_at"`
 	UpdatedAt time.Time   `json:"updated_at"`
+}
+
+type AppCrashProvider struct {
+	AppID       uuid.UUID `json:"app_id"`
+	Provider    string    `json:"provider"`
+	Settings    []byte    `json:"settings"`
+	Credentials []byte    `json:"credentials"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type AppKey struct {

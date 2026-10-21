@@ -2,7 +2,7 @@
 
 Go service: ingestion, enrichment, deduplication, GitHub publishing. Status:
 owner accounts, projects, apps, GitHub connections and the issue service are
-in place. There is no ingestion endpoint yet.
+in place. The ingestion endpoint accepts reports and queues them. Per-app Sentry connections and event resolution are available; the report-to-issue worker and Crashlytics export adapter remain pending.
 
 **In-depth documentation:** [docs/](docs/README.md). It covers the
 architecture, data model, GitHub integration, issue service, API reference,
@@ -93,7 +93,7 @@ Every route except register, login and the provider callback needs
 | GET / POST | `/projects/{id}/repositories` | `{connection_id, repository: "owner/name", is_default}` |
 | PUT | `/projects/{id}/repositories/{repoID}/default` | |
 | DELETE | `/projects/{id}/repositories/{repoID}` | |
-| POST / GET | `/apps` | `{name, platform: ios\|android\|flutter\|react_native, bundle_id}` |
+| POST / GET | `/apps` | `{name, platform: ios\|android\|flutter\|react_native\|web, bundle_id}` |
 | GET / PATCH / DELETE | `/apps/{id}` | |
 | GET / POST | `/apps/{id}/keys` | the POST response contains the secret, shown once |
 | DELETE | `/apps/{id}/keys/{keyID}` | revoke |
@@ -113,3 +113,7 @@ go test ./...
 # full stack against real services and GitHub:
 SEISMO_E2E_APP_ID=<app uuid> go test -tags e2e -run TestOpenForAppE2E .
 ```
+
+## Crash providers
+
+Each app independently selects Sentry, Crashlytics, or no crash provider. See [docs/crash-providers.md](docs/crash-providers.md) for owner endpoints, credential setup, mobile/web integration, and current limitations.
