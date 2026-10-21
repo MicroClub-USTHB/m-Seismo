@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider/bitbucket/fakebitbucket"
 )
@@ -18,7 +19,15 @@ func main() {
 	addr := env("FAKEBITBUCKET_ADDR", ":9092")
 	srv := fakebitbucket.New(env("FAKEBITBUCKET_PUBLIC_URL", "http://localhost:9092"))
 	log.Printf("fakebitbucket: listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, srv.Handler()))
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+	log.Fatal(server.ListenAndServe())
 }
 
 func env(key, def string) string {

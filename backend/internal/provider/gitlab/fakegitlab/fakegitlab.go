@@ -161,10 +161,9 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	mux.HandleFunc("GET /oauth/authorize", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /oauth/authorize", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		fmt.Fprintf(w, "fakegitlab authorize page for client %q.\n\nFinish by calling redirect_uri?code=%sN&state=%s\n",
-			r.URL.Query().Get("client_id"), CodePrefix, r.URL.Query().Get("state"))
+		_, _ = fmt.Fprintf(w, "fakegitlab authorize page.\n\nFinish by calling redirect_uri?code=%sN&state=<the state of this URL>\n", CodePrefix)
 	})
 	mux.HandleFunc("POST /oauth/token", s.token)
 
@@ -265,8 +264,6 @@ func writeToken(w http.ResponseWriter, g *grant, lifetime time.Duration) {
 		"created_at":    time.Now().Unix(),
 	})
 }
-
-type ctxUser struct{}
 
 // requireToken accepts a grant's current, unexpired, unrevoked access
 // token, and adds GitLab's rate-limit headers.

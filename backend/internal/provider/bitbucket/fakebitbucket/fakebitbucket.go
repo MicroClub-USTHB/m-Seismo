@@ -172,10 +172,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	mux.HandleFunc("GET /site/oauth2/authorize", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /site/oauth2/authorize", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		fmt.Fprintf(w, "fakebitbucket authorize page for consumer %q.\n\nFinish by calling the callback with ?code=%sN&state=%s\n",
-			r.URL.Query().Get("client_id"), CodePrefix, r.URL.Query().Get("state"))
+		_, _ = fmt.Fprintf(w, "fakebitbucket authorize page.\n\nFinish by calling the callback with ?code=%sN&state=<the state of this URL>\n", CodePrefix)
 	})
 	mux.HandleFunc("POST /site/oauth2/access_token", s.token)
 

@@ -85,7 +85,10 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	if appID != uuid.Nil {
 		path = "/apps/" + appID.String() + "/connections"
 	}
-	http.Redirect(w, r, strings.TrimRight(h.frontendURL, "/")+path+"?"+back.Encode(), http.StatusFound)
+	// The base is the configured frontend URL and path is built from a UUID,
+	// so the target can't be steered elsewhere; only query values come from
+	// the flow, and they are encoded.
+	http.Redirect(w, r, strings.TrimRight(h.frontendURL, "/")+path+"?"+back.Encode(), http.StatusFound) //nolint:gosec // G710: see above
 }
 
 // listOwnerConnections lists the connections of every app of the owner.

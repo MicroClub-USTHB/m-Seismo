@@ -40,9 +40,10 @@ type Token struct {
 	Expiry       time.Time `json:"expiry,omitzero"`
 }
 
-// Encode serialises the token for provider.SecretStore.
+// Encode serialises the token for provider.SecretStore, which encrypts it
+// before it is stored.
 func (t Token) Encode() []byte {
-	b, _ := json.Marshal(t)
+	b, _ := json.Marshal(t) //nolint:gosec // G117: serialising the token is the point; the result is only ever stored encrypted
 	return b
 }
 
@@ -166,7 +167,7 @@ func (e Endpoint) post(ctx context.Context, form url.Values) (tok Token, oauthEr
 	if err != nil {
 		return Token{}, "", fmt.Errorf("%s: token endpoint: %w", e.Tracker, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var body struct {
 		AccessToken      string `json:"access_token"`

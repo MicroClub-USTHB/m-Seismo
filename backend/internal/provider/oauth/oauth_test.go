@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -45,6 +46,14 @@ func (s *memStore) Save(_ context.Context, id uuid.UUID, v []byte) error {
 	return nil
 }
 
+// mustSave stores tok for id, failing the test on error.
+func mustSave(t *testing.T, s *memStore, id uuid.UUID, tok Token) {
+	t.Helper()
+	if err := s.Save(context.Background(), id, tok.Encode()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (s *memStore) token(id uuid.UUID) Token {
 	raw, _ := s.Load(context.Background(), id)
 	t, _ := DecodeToken(raw)
@@ -76,7 +85,7 @@ func newTokenServer(t *testing.T, basic bool) *tokenServer {
 		}
 		if id != "cid" || secret != "csecret" {
 			w.WriteHeader(401)
-			fmt.Fprint(w, `{"error":"invalid_client"}`)
+			_, _ = fmt.Fprint(w, `{"error":"invalid_client"}`)
 			return
 		}
 		ts.mu.Lock()
@@ -85,15 +94,15 @@ func newTokenServer(t *testing.T, basic bool) *tokenServer {
 		case "authorization_code":
 			if r.PostForm.Get("code") != "good" || r.PostForm.Get("redirect_uri") != "https://seismo.test/cb" {
 				w.WriteHeader(400)
-				fmt.Fprint(w, `{"error":"invalid_grant","error_description":"bad code"}`)
+				_, _ = fmt.Fprint(w, `{"error":"invalid_grant","error_description":"bad code"}`)
 				return
 			}
-			fmt.Fprint(w, `{"access_token":"a0","refresh_token":"r0","expires_in":7200,"token_type":"bearer"}`)
+			_, _ = fmt.Fprint(w, `{"access_token":"a0","refresh_token":"r0","expires_in":7200,"token_type":"bearer"}`)
 		case "refresh_token":
 			rt := r.PostForm.Get("refresh_token")
 			if !ts.valid[rt] {
 				w.WriteHeader(400)
-				fmt.Fprint(w, `{"error":"invalid_grant","error_description":"refresh token used or revoked"}`)
+				_, _ = fmt.Fprint(w, `{"error":"invalid_grant","error_description":"refresh token used or revoked"}`)
 				return
 			}
 			delete(ts.valid, rt)
@@ -101,7 +110,7 @@ func newTokenServer(t *testing.T, basic bool) *tokenServer {
 			ts.refreshes.Add(1)
 			next := fmt.Sprintf("r%d", ts.gen)
 			ts.valid[next] = true
-			fmt.Fprintf(w, `{"access_token":"a%d","refresh_token":"%s","expires_in":7200}`, ts.gen, next)
+			_, _ = fmt.Fprintf(w, `{"access_token":"a%d","refresh_token":"%s","expires_in":7200}`, ts.gen, next)
 		default:
 			w.WriteHeader(400)
 		}
@@ -160,7 +169,7 @@ func TestTokensRefreshBeforeExpiry(t *testing.T) {
 	store := newMemStore()
 	id := uuid.New()
 	ctx := context.Background()
-	store.Save(ctx, id, Token{AccessToken: "a0", RefreshToken: "r0", Expiry: time.Now().Add(time.Hour)}.Encode())
+	mustSave(t, store, id, Token{AccessToken: "a0", RefreshToken: "r0", Expiry: time.Now().Add(time.Hour)})
 	tokens := NewTokens(store, ts.endpoint())
 
 	if got, err := tokens.Access(ctx, id); err != nil || got != "a0" {
@@ -170,7 +179,7 @@ func TestTokensRefreshBeforeExpiry(t *testing.T) {
 		t.Error("a token far from expiry must not be refreshed")
 	}
 
-	store.Save(ctx, id, Token{AccessToken: "a0", RefreshToken: "r0", Expiry: time.Now().Add(10 * time.Second)}.Encode())
+	mustSave(t, store, id, Token{AccessToken: "a0", RefreshToken: "r0", Expiry: time.Now().Add(10 * time.Second)})
 	got, err := tokens.Access(ctx, id)
 	if err != nil || got != "a1" {
 		t.Fatalf("expiring token: %q, %v", got, err)
@@ -190,7 +199,7 @@ func TestTokensConcurrentRefreshOnce(t *testing.T) {
 	store := newMemStore()
 	id := uuid.New()
 	ctx := context.Background()
-	store.Save(ctx, id, Token{AccessToken: "a0", RefreshToken: "r0", Expiry: time.Now()}.Encode())
+	mustSave(t, store, id, Token{AccessToken: "a0", RefreshToken: "r0", Expiry: time.Now()})
 	tokens := NewTokens(store, ts.endpoint())
 
 	var wg sync.WaitGroup
@@ -217,7 +226,7 @@ func TestTokensRenewAndRevoked(t *testing.T) {
 	store := newMemStore()
 	id := uuid.New()
 	ctx := context.Background()
-	store.Save(ctx, id, Token{AccessToken: "a0", RefreshToken: "r0"}.Encode()) // no expiry known
+	mustSave(t, store, id, Token{AccessToken: "a0", RefreshToken: "r0"}) // no expiry known
 	tokens := NewTokens(store, ts.endpoint())
 
 	if got, _ := tokens.Access(ctx, id); got != "a0" {
@@ -236,7 +245,7 @@ func TestTokensRenewAndRevoked(t *testing.T) {
 	if _, err := tokens.Renew(ctx, id, "a1"); !errors.Is(err, ErrRevoked) || !strings.Contains(err.Error(), "connect the app again") {
 		t.Errorf("revoked: err = %v, want ErrRevoked telling to reconnect", err)
 	}
-	store.Save(ctx, id, Token{AccessToken: "a1", RefreshToken: "r1", Expiry: time.Now()}.Encode())
+	mustSave(t, store, id, Token{AccessToken: "a1", RefreshToken: "r1", Expiry: time.Now()})
 	if _, err := tokens.Access(ctx, id); !errors.Is(err, ErrRevoked) || !strings.Contains(err.Error(), "connect the app again") {
 		t.Errorf("revoked, found at expiry: err = %v, want ErrRevoked telling to reconnect", err)
 	}
@@ -268,20 +277,21 @@ func newAPIServer(t *testing.T) *apiServer {
 		switch {
 		case r.URL.Path == "/api/missing":
 			w.WriteHeader(404)
-			fmt.Fprint(w, `{"message":"404 Project Not Found"}`)
+			_, _ = fmt.Fprint(w, `{"message":"404 Project Not Found"}`)
 		case r.URL.Path == "/api/nested-error":
 			w.WriteHeader(404)
-			fmt.Fprint(w, `{"type":"error","error":{"message":"Repository has no issue tracker."}}`)
+			_, _ = fmt.Fprint(w, `{"type":"error","error":{"message":"Repository has no issue tracker."}}`)
 		case tok == "stale":
 			w.WriteHeader(401)
-			fmt.Fprint(w, `{"message":"401 Unauthorized"}`)
+			_, _ = fmt.Fprint(w, `{"message":"401 Unauthorized"}`)
 		case s.limited.Load() > 0:
 			s.limited.Add(-1)
 			w.Header().Set("Retry-After", s.retry)
 			w.WriteHeader(429)
-			fmt.Fprint(w, `{"message":"slow down"}`)
+			_, _ = fmt.Fprint(w, `{"message":"slow down"}`)
 		default:
-			fmt.Fprintf(w, `{"path":%q,"raw":%q}`, r.URL.Path, r.URL.EscapedPath())
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"path": r.URL.Path, "raw": r.URL.EscapedPath()})
 		}
 	}))
 	t.Cleanup(s.Close)
@@ -298,7 +308,7 @@ func TestClientRenewsOn401(t *testing.T) {
 	store := newMemStore()
 	id := uuid.New()
 	ctx := context.Background()
-	store.Save(ctx, id, Token{AccessToken: "stale", RefreshToken: "r0"}.Encode())
+	mustSave(t, store, id, Token{AccessToken: "stale", RefreshToken: "r0"})
 
 	var out struct{ Path, Raw string }
 	_, err := api.client(0).Do(ctx, NewTokens(store, ts.endpoint()).For(id), "GET", "projects/group%2Fapp", nil, &out)

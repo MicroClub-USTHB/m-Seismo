@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider/gitlab/fakegitlab"
 )
@@ -18,7 +19,15 @@ func main() {
 	addr := env("FAKEGITLAB_ADDR", ":9091")
 	srv := fakegitlab.New(env("FAKEGITLAB_PUBLIC_URL", "http://localhost:9091"))
 	log.Printf("fakegitlab: listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, srv.Handler()))
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+	log.Fatal(server.ListenAndServe())
 }
 
 func env(key, def string) string {

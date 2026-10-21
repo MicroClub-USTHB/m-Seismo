@@ -178,7 +178,7 @@ func (c *Client) send(ctx context.Context, method string, target *url.URL, paylo
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("%s: %s %s: %w", c.Tracker, method, target.Path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("%s: read %s %s: %w", c.Tracker, method, target.Path, err)
