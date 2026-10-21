@@ -1,5 +1,6 @@
-// Package provider links owners to issue trackers (GitHub now, GitLab and
-// Bitbucket later) and hands out per-connection issue openers.
+// Package provider links apps to issue trackers (GitHub now, GitLab and
+// Bitbucket later) and hands out per-connection issue openers. Every
+// connection belongs to one app: each app brings its own credentials.
 //
 // Each tracker lives in its own subpackage that implements Provider and
 // registers it in the "providers" fx group. Nothing here knows about a
@@ -47,12 +48,20 @@ type Provider interface {
 	// query without checking them with the tracker.
 	CompleteInstall(ctx context.Context, query url.Values) (Account, error)
 
-	ListRepositories(ctx context.Context, externalID string) ([]Repository, error)
+	ListRepositories(ctx context.Context, c issue.Connection) ([]Repository, error)
 	// HasRepository reports whether the connection can reach repository.
-	HasRepository(ctx context.Context, externalID, repository string) (bool, error)
+	HasRepository(ctx context.Context, c issue.Connection, repository string) (bool, error)
+
+	// ValidateRepository checks the tracker's repository name format (e.g.
+	// owner/name on GitHub) without calling the tracker.
+	ValidateRepository(repository string) error
+	// Covers reports whether the connection can, in principle, reach
+	// repository, without calling the tracker. The issue service uses it to
+	// pick one of an app's connections for each target.
+	Covers(c issue.Connection, repository string) bool
 
 	// Opener returns an issue opener acting through the connection.
-	Opener(ctx context.Context, externalID string) (issue.Opener, error)
+	Opener(ctx context.Context, c issue.Connection) (issue.Opener, error)
 }
 
 // AsProvider annotates a constructor returning []Provider so its results
@@ -101,12 +110,22 @@ func (r *Registry) Trackers() []db.Tracker {
 }
 
 // Opener implements issue.OpenerSource.
-func (r *Registry) Opener(ctx context.Context, tracker db.Tracker, externalID string) (issue.Opener, error) {
-	p, err := r.Get(tracker)
+func (r *Registry) Opener(ctx context.Context, c issue.Connection) (issue.Opener, error) {
+	p, err := r.Get(c.Tracker)
 	if err != nil {
 		return nil, err
 	}
-	return p.Opener(ctx, externalID)
+	return p.Opener(ctx, c)
+}
+
+// Covers implements issue.OpenerSource. A connection on a tracker that is
+// not configured covers nothing.
+func (r *Registry) Covers(c issue.Connection, repository string) bool {
+	p, err := r.Get(c.Tracker)
+	if err != nil {
+		return false
+	}
+	return p.Covers(c, repository)
 }
 
 var _ issue.OpenerSource = (*Registry)(nil)

@@ -1,6 +1,6 @@
 -- name: CreateIssue :one
-INSERT INTO issues (project_repository_id, app_id, external_id, url, title, fingerprint)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO issues (project_repository_id, app_id, provider_connection_id, external_id, url, title, fingerprint)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: GetOpenIssueByFingerprint :one

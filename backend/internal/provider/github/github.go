@@ -1,12 +1,12 @@
-// Package github connects owners' GitHub accounts through a GitHub App and
-// opens issues as that App. It is the only package that talks to the
-// GitHub API.
+// Package github connects apps to GitHub through a GitHub App and opens
+// issues as that App. It is the only package that talks to the GitHub API.
 //
-// Access model: the owner installs the m-Seismo GitHub App on their user or
-// organisation (issues: write, metadata: read). Each installation becomes a
-// provider connection whose external ID is the installation ID. API calls
-// use short-lived installation tokens minted from the App's private key, so
-// no long-lived user token is ever stored.
+// Access model: for one of their apps, the owner installs the m-Seismo
+// GitHub App on a GitHub user or organisation (issues: write, metadata:
+// read). The installation becomes a connection of that app whose external
+// ID is the installation ID; apps of the same owner may share an
+// installation. API calls use short-lived installation tokens minted from
+// the App's private key, so no long-lived user token is ever stored.
 package github
 
 import (
@@ -273,8 +273,8 @@ func (p *Provider) installation(externalID string) (*installation, error) {
 	return inst, nil
 }
 
-func (p *Provider) ListRepositories(ctx context.Context, externalID string) ([]provider.Repository, error) {
-	inst, err := p.installation(externalID)
+func (p *Provider) ListRepositories(ctx context.Context, c issue.Connection) ([]provider.Repository, error) {
+	inst, err := p.installation(c.ExternalID)
 	if err != nil {
 		return nil, err
 	}
@@ -301,12 +301,12 @@ func (p *Provider) ListRepositories(ctx context.Context, externalID string) ([]p
 	}
 }
 
-func (p *Provider) HasRepository(ctx context.Context, externalID, repository string) (bool, error) {
+func (p *Provider) HasRepository(ctx context.Context, c issue.Connection, repository string) (bool, error) {
 	owner, name, err := splitRepository(repository)
 	if err != nil {
 		return false, err
 	}
-	inst, err := p.installation(externalID)
+	inst, err := p.installation(c.ExternalID)
 	if err != nil {
 		return false, err
 	}
@@ -323,12 +323,27 @@ func (p *Provider) HasRepository(ctx context.Context, externalID, repository str
 	return true, nil
 }
 
-func (p *Provider) Opener(_ context.Context, externalID string) (issue.Opener, error) {
-	inst, err := p.installation(externalID)
+func (p *Provider) Opener(_ context.Context, c issue.Connection) (issue.Opener, error) {
+	inst, err := p.installation(c.ExternalID)
 	if err != nil {
 		return nil, err
 	}
 	return &opener{p: p, inst: inst}, nil
+}
+
+// ValidateRepository accepts owner/name.
+func (p *Provider) ValidateRepository(repository string) error {
+	_, _, err := splitRepository(repository)
+	return err
+}
+
+// Covers is true when the repository is owned by the installation's
+// account: a GitHub App installation only ever reaches repositories of the
+// user or organisation it is installed on. Whether the installation was
+// given that particular repository is checked by HasRepository.
+func (p *Provider) Covers(c issue.Connection, repository string) bool {
+	owner, _, err := splitRepository(repository)
+	return err == nil && strings.EqualFold(owner, c.AccountLogin)
 }
 
 func splitRepository(repository string) (owner, name string, err error) {

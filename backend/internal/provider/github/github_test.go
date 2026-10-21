@@ -208,7 +208,7 @@ func TestRepositories(t *testing.T) {
 	p, _ := newTestProvider(t)
 	ctx := context.Background()
 
-	repos, err := p.ListRepositories(ctx, "42")
+	repos, err := p.ListRepositories(ctx, inst42)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,14 +216,51 @@ func TestRepositories(t *testing.T) {
 		t.Errorf("repos = %+v", repos)
 	}
 
-	if ok, err := p.HasRepository(ctx, "42", "octo-org/app"); err != nil || !ok {
+	if ok, err := p.HasRepository(ctx, inst42, "octo-org/app"); err != nil || !ok {
 		t.Errorf("HasRepository(octo-org/app) = %v, %v", ok, err)
 	}
-	if ok, err := p.HasRepository(ctx, "42", "octo-org/other"); err != nil || ok {
+	if ok, err := p.HasRepository(ctx, inst42, "octo-org/other"); err != nil || ok {
 		t.Errorf("HasRepository(octo-org/other) = %v, %v", ok, err)
 	}
-	if _, err := p.HasRepository(ctx, "42", "not-a-repo"); err == nil {
+	if _, err := p.HasRepository(ctx, inst42, "not-a-repo"); err == nil {
 		t.Error("malformed repository accepted")
+	}
+}
+
+// inst42 is the installation the fake GitHub knows, on octo-org.
+var inst42 = issue.Connection{ExternalID: "42", AccountLogin: "octo-org"}
+
+func TestCovers(t *testing.T) {
+	p, _ := newTestProvider(t)
+
+	cases := map[string]bool{
+		"octo-org/app":   true,
+		"Octo-Org/app":   true, // GitHub logins are case-insensitive
+		"other-org/app":  false,
+		"octo-org":       false,
+		"octo-org/a/b":   false,
+		"octo-orgx/app":  false,
+		"/app":           false,
+		"octo-org/":      false,
+		"":               false,
+		"octo-org/app/x": false,
+	}
+	for repo, want := range cases {
+		if got := p.Covers(inst42, repo); got != want {
+			t.Errorf("Covers(%q) = %v, want %v", repo, got, want)
+		}
+	}
+}
+
+func TestValidateRepository(t *testing.T) {
+	p, _ := newTestProvider(t)
+	if err := p.ValidateRepository("octo-org/app"); err != nil {
+		t.Errorf("valid name rejected: %v", err)
+	}
+	for _, bad := range []string{"", "octo-org", "octo-org/", "/app", "a/b/c"} {
+		if err := p.ValidateRepository(bad); err == nil {
+			t.Errorf("ValidateRepository(%q) accepted", bad)
+		}
 	}
 }
 
@@ -231,7 +268,7 @@ func TestOpener(t *testing.T) {
 	p, fake := newTestProvider(t)
 	ctx := context.Background()
 
-	op, err := p.Opener(ctx, "42")
+	op, err := p.Opener(ctx, inst42)
 	if err != nil {
 		t.Fatal(err)
 	}
