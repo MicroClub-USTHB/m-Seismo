@@ -12,6 +12,9 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 )
 
+// ScreenshotName is the attachment name of a report's screenshot.
+const ScreenshotName = "screenshot"
+
 // Attachment is a file sent with a report.
 type Attachment struct {
 	Name        string
