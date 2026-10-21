@@ -2,13 +2,13 @@
 
 use std::time::Duration;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use tokio::time::{Instant, timeout_at};
 
 use crate::{
     config::AgentConfig,
     model::{
-        CoverageStatus, LogEntry, MatchKind, Query, QueryResult, QueryStatus, RawLogLine,
+        CoverageStatus, LogEntry, MatchKind, Query, QueryResult, QueryStatus, RawLogLine, RawLogs,
         ReadLimits, SCHEMA_VERSION, SourceError, SourceErrorKind, Workload, WorkloadDiagnostics,
         WorkloadResult, WorkloadStatus,
     },
@@ -86,157 +86,39 @@ pub async fn execute<S: LogSource>(source: &S, query: &Query, config: &AgentConf
             continue;
         }
 
-        let workload_deadline =
-            (Instant::now() + Duration::from_millis(config.workload_timeout_ms)).min(deadline);
-        let raw_logs = match timeout_at(
-            workload_deadline,
-            source.read_logs(
-                &workload,
-                query.window,
-                ReadLimits::from_query(&query.limits, query.trace_id.is_some()),
-            ),
-        )
-        .await
-        {
-            Ok(Ok(raw_logs)) => raw_logs,
-            Ok(Err(error)) => {
+        let raw_logs = match read_stage(source, &workload, query, config, deadline).await {
+            Ok(raw_logs) => raw_logs,
+            Err(error) => {
                 result.workloads.push(unavailable_workload(workload, error));
-                result.status = QueryStatus::Partial;
-                continue;
-            }
-            Err(_) => {
-                result.workloads.push(unavailable_workload(
-                    workload,
-                    timeout_error("workload log query timed out"),
-                ));
                 result.status = QueryStatus::Partial;
                 continue;
             }
         };
 
         saw_usable_result = true;
-        result.truncated |= raw_logs.truncated;
-        if raw_logs.truncated
-            || raw_logs.error.is_some()
-            || raw_logs.discarded_line_count > 0
-            || raw_logs.coverage != CoverageStatus::Complete
-        {
+        let processed = process_logs(raw_logs, query, &mut remaining_bytes);
+        result.truncated |= processed.truncated;
+        if processed.truncated || processed.status == WorkloadStatus::Partial {
             result.status = QueryStatus::Partial;
         }
-        if let Some(oldest) = raw_logs.oldest_available
+        if let Some(oldest) = processed.oldest_available
             && result
                 .oldest_available
                 .is_none_or(|previous| oldest < previous)
         {
             result.oldest_available = Some(oldest);
         }
-
-        let filtered: Vec<RawLogLine> = raw_logs
-            .lines
-            .into_iter()
-            .filter(|line| {
-                line.timestamp.is_none_or(|timestamp| {
-                    timestamp >= query.window.from && timestamp <= query.window.to
-                })
-            })
-            .collect();
-
-        // Match against raw text, but redact the complete fetched sequence
-        // before selecting matches or context so block state is not sliced.
-        let trace_matches: Vec<usize> = query
-            .trace_id
-            .as_ref()
-            .map(|trace_id| {
-                filtered
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, line)| line.message.contains(trace_id).then_some(index))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let redacted = redact_bounded(
-            filtered.iter().map(|line| line.message.clone()),
-            usize::MAX,
-            MAX_INPUT_BYTES,
-        );
         result.dropped_line_count = result
             .dropped_line_count
-            .saturating_add(redacted.dropped_line_count)
-            .saturating_add(raw_logs.discarded_line_count);
-        result.truncated |= redacted.truncated;
-        if redacted.truncated {
-            result.status = QueryStatus::Partial;
-        }
-
-        let mut safe_by_index: Vec<Option<String>> = vec![None; filtered.len()];
-        for (index, line) in redacted.kept_indices.into_iter().zip(redacted.lines) {
-            if let Some(slot) = safe_by_index.get_mut(index) {
-                *slot = Some(line);
-            }
-        }
-
-        let selected = select_lines(
-            &filtered,
-            &trace_matches,
-            query.trace_id.is_some(),
-            query.limits.context_lines,
-        );
-        let mut newest_first: Vec<(usize, MatchKind)> = selected.into_iter().collect();
-        newest_first.sort_by(|(left, _), (right, _)| {
-            filtered[*right]
-                .timestamp
-                .cmp(&filtered[*left].timestamp)
-                .then_with(|| right.cmp(left))
-        });
-
-        let mut entries = Vec::new();
-        for (index, match_kind) in newest_first {
-            let Some(message) = safe_by_index.get(index).and_then(Option::as_ref) else {
-                continue;
-            };
-            if entries.len() >= query.limits.max_lines_per_workload {
-                result.truncated = true;
-                result.status = QueryStatus::Partial;
-                break;
-            }
-            let entry = LogEntry {
-                timestamp: filtered[index].timestamp,
-                stream: filtered[index].stream,
-                message: message.clone(),
-                match_kind,
-            };
-            let encoded_len = serde_json::to_vec(&entry).map_or(usize::MAX, |bytes| bytes.len());
-            if encoded_len > remaining_bytes {
-                result.truncated = true;
-                result.status = QueryStatus::Partial;
-                break;
-            }
-            remaining_bytes -= encoded_len;
-            entries.push(entry);
-        }
-        entries.sort_by_key(|entry| entry.timestamp);
+            .saturating_add(processed.dropped_line_count);
         result.workloads.push(WorkloadResult {
             workload,
-            status: if raw_logs.coverage == CoverageStatus::Complete
-                && !raw_logs.truncated
-                && raw_logs.error.is_none()
-                && raw_logs.discarded_line_count == 0
-            {
-                WorkloadStatus::Complete
-            } else {
-                WorkloadStatus::Partial
-            },
-            coverage: if raw_logs.error.is_some() || raw_logs.truncated {
-                CoverageStatus::Partial
-            } else {
-                raw_logs.coverage
-            },
-            entries,
-            diagnostics: raw_logs.diagnostics,
-            error: raw_logs.error,
-            dropped_line_count: redacted
-                .dropped_line_count
-                .saturating_add(raw_logs.discarded_line_count),
+            status: processed.status,
+            coverage: processed.coverage,
+            entries: processed.entries,
+            diagnostics: processed.diagnostics,
+            error: processed.error,
+            dropped_line_count: processed.dropped_line_count,
         });
     }
 
@@ -248,6 +130,147 @@ pub async fn execute<S: LogSource>(source: &S, query: &Query, config: &AgentConf
     }
     fit_response_size(&mut result, query.limits.max_bytes_total);
     result
+}
+
+struct Processed {
+    entries: Vec<LogEntry>,
+    status: WorkloadStatus,
+    coverage: CoverageStatus,
+    diagnostics: WorkloadDiagnostics,
+    error: Option<SourceError>,
+    dropped_line_count: u64,
+    oldest_available: Option<DateTime<Utc>>,
+    truncated: bool,
+}
+
+async fn read_stage<S: LogSource>(
+    source: &S,
+    workload: &Workload,
+    query: &Query,
+    config: &AgentConfig,
+    deadline: Instant,
+) -> Result<RawLogs, SourceError> {
+    let workload_deadline =
+        (Instant::now() + Duration::from_millis(config.workload_timeout_ms)).min(deadline);
+    timeout_at(
+        workload_deadline,
+        source.read_logs(
+            workload,
+            query.window,
+            ReadLimits::from_query(&query.limits, query.trace_id.is_some()),
+        ),
+    )
+    .await
+    .unwrap_or_else(|_| Err(timeout_error("workload log query timed out")))
+}
+
+// NOTE: no QueryResult access in here, so one workload can be processed on its own.
+fn process_logs(raw: RawLogs, query: &Query, remaining_bytes: &mut usize) -> Processed {
+    let status = if raw.coverage == CoverageStatus::Complete
+        && !raw.truncated
+        && raw.error.is_none()
+        && raw.discarded_line_count == 0
+    {
+        WorkloadStatus::Complete
+    } else {
+        WorkloadStatus::Partial
+    };
+    let coverage = if raw.error.is_some() || raw.truncated {
+        CoverageStatus::Partial
+    } else {
+        raw.coverage
+    };
+    let mut truncated = raw.truncated;
+
+    let filtered: Vec<RawLogLine> = raw
+        .lines
+        .into_iter()
+        .filter(|line| {
+            line.timestamp.is_none_or(|timestamp| {
+                timestamp >= query.window.from && timestamp <= query.window.to
+            })
+        })
+        .collect();
+
+    // Match against raw text, but redact the complete fetched sequence
+    // before selecting matches or context so block state is not sliced.
+    let trace_matches: Vec<usize> = query
+        .trace_id
+        .as_ref()
+        .map(|trace_id| {
+            filtered
+                .iter()
+                .enumerate()
+                .filter_map(|(index, line)| line.message.contains(trace_id).then_some(index))
+                .collect()
+        })
+        .unwrap_or_default();
+    let redacted = redact_bounded(
+        filtered.iter().map(|line| line.message.clone()),
+        usize::MAX,
+        MAX_INPUT_BYTES,
+    );
+    let dropped_line_count = redacted
+        .dropped_line_count
+        .saturating_add(raw.discarded_line_count);
+    truncated |= redacted.truncated;
+
+    let mut safe_by_index: Vec<Option<String>> = vec![None; filtered.len()];
+    for (index, line) in redacted.kept_indices.into_iter().zip(redacted.lines) {
+        if let Some(slot) = safe_by_index.get_mut(index) {
+            *slot = Some(line);
+        }
+    }
+
+    let selected = select_lines(
+        &filtered,
+        &trace_matches,
+        query.trace_id.is_some(),
+        query.limits.context_lines,
+    );
+    let mut newest_first: Vec<(usize, MatchKind)> = selected.into_iter().collect();
+    newest_first.sort_by(|(left, _), (right, _)| {
+        filtered[*right]
+            .timestamp
+            .cmp(&filtered[*left].timestamp)
+            .then_with(|| right.cmp(left))
+    });
+
+    let mut entries = Vec::new();
+    for (index, match_kind) in newest_first {
+        let Some(message) = safe_by_index.get(index).and_then(Option::as_ref) else {
+            continue;
+        };
+        if entries.len() >= query.limits.max_lines_per_workload {
+            truncated = true;
+            break;
+        }
+        let entry = LogEntry {
+            timestamp: filtered[index].timestamp,
+            stream: filtered[index].stream,
+            message: message.clone(),
+            match_kind,
+        };
+        let encoded_len = serde_json::to_vec(&entry).map_or(usize::MAX, |bytes| bytes.len());
+        if encoded_len > *remaining_bytes {
+            truncated = true;
+            break;
+        }
+        *remaining_bytes -= encoded_len;
+        entries.push(entry);
+    }
+    entries.sort_by_key(|entry| entry.timestamp);
+
+    Processed {
+        entries,
+        status,
+        coverage,
+        diagnostics: raw.diagnostics,
+        error: raw.error,
+        dropped_line_count,
+        oldest_available: raw.oldest_available,
+        truncated,
+    }
 }
 
 fn select_lines(
