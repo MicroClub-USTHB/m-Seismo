@@ -21,7 +21,7 @@ pub struct Params<'a> {
 
 #[derive(Debug)]
 pub struct Fetched {
-    /// Redacted, oldest first.
+    /// Raw, oldest first. The engine redacts them before they leave.
     pub entries: Vec<pb::LogEntry>,
     pub scope_label: String,
     /// The source stopped at `limit` lines, so older ones were probably cut.

@@ -199,12 +199,15 @@ async fn big_file_crosses_chunk_boundaries() {
 }
 
 #[tokio::test]
-async fn redacts_and_reports_missing_files() {
+async fn keeps_lines_raw_and_reports_missing_files() {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path().join("app.log");
     write(&p, &[format!("{} login password=hunter2", at(1))]);
     let got = fetch(&source(&p, 0), 0, 10, None, 10).await.unwrap();
-    assert!(got.entries[0].message.ends_with("password=[REDACTED]"));
+    assert!(
+        got.entries[0].message.ends_with("password=hunter2"),
+        "sources hand over raw lines"
+    );
 
     let e = fetch(&source(&dir.path().join("nope.log"), 0), 0, 10, None, 10)
         .await

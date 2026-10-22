@@ -1,5 +1,5 @@
 use super::{Fetched, Params, err, ns_to_ts, ts_to_ns};
-use crate::{config, redaction::redact};
+use crate::config;
 use seismo_proto::{self as pb, LogStream, MatchKind, SourceError, SourceErrorKind};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -133,7 +133,7 @@ impl Loki {
                     .and_then(|x| x.parse().ok())
                     .ok_or_else(bad)?;
                 let line = v.get(1).and_then(|x| x.as_str()).ok_or_else(bad)?;
-                rows.push((ns, stream, redact(line)));
+                rows.push((ns, stream, line.to_owned()));
             }
         }
         let hit_limit = rows.len() >= limit as usize;

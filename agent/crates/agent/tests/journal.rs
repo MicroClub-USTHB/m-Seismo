@@ -133,7 +133,7 @@ async fn limit_keeps_the_newest_lines() {
 }
 
 #[tokio::test]
-async fn trace_filter_redaction_and_binary_messages() {
+async fn trace_filter_and_binary_messages() {
     let dir = tempfile::tempdir().unwrap();
     let out = [
         entry(3, json!("login password=hunter2 trace_id=abc")),
@@ -148,7 +148,7 @@ async fn trace_filter_redaction_and_binary_messages() {
     let got = fetch(&cfg, 0, 10, Some("abc"), 10).await.unwrap();
     assert_eq!(
         msgs(&got),
-        ["trace_id=abc", "login password=[REDACTED] trace_id=abc"]
+        ["trace_id=abc", "login password=hunter2 trace_id=abc"]
     );
     assert_eq!(got.entries[0].match_kind, MatchKind::Trace as i32);
 }

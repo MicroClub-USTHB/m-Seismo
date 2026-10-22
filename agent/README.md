@@ -48,7 +48,7 @@ url = "http://loki:3100"
 # token_env = "LOKI_TOKEN"
 ```
 
-Log lines are redacted in the agent before they are sent. Plaintext gRPC
+Sources return raw lines, the engine redacts every line once before it leaves the agent. Plaintext gRPC
 for now, TLS is not done yet.
 
 ## Log sources

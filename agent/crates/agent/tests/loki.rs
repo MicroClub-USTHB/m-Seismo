@@ -58,7 +58,7 @@ fn query_params(head: &str) -> HashMap<String, String> {
 }
 
 #[tokio::test]
-async fn merges_streams_oldest_first_and_redacts() {
+async fn merges_streams_oldest_first() {
     let body = streams(&[
         (
             json!({"service_name": "postgres", "namespace": "prod", "stream": "stderr"}),
@@ -75,7 +75,7 @@ async fn merges_streams_oldest_first_and_redacts() {
         .unwrap();
 
     let msgs: Vec<_> = got.entries.iter().map(|e| e.message.as_str()).collect();
-    assert_eq!(msgs, ["a", "b", "c password=[REDACTED]"]);
+    assert_eq!(msgs, ["a", "b", "c password=hunter2"]);
     assert_eq!(got.entries[0].stream, LogStream::Stderr as i32);
     assert_eq!(got.entries[1].stream, LogStream::Stdout as i32);
     assert_eq!(got.entries[0].match_kind, MatchKind::Window as i32);

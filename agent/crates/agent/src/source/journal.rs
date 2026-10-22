@@ -1,5 +1,5 @@
 use super::{Fetched, Params, err, ns_to_ts, ts_to_ns};
-use crate::{config, redaction::redact};
+use crate::config;
 use chrono::DateTime;
 use seismo_proto::{self as pb, LogStream, MatchKind, SourceError, SourceErrorKind};
 use std::{collections::HashMap, process::Stdio};
@@ -65,7 +65,7 @@ impl Journal {
             .map(|(ns, line)| pb::LogEntry {
                 timestamp: Some(ns_to_ts(ns)),
                 stream: LogStream::Unknown as i32,
-                message: redact(&line),
+                message: line,
                 match_kind: match_kind as i32,
             })
             .collect();

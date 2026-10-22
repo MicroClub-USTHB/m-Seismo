@@ -1,4 +1,7 @@
-use crate::source::{Fetched, Params, Source};
+use crate::{
+    redaction::redact,
+    source::{Fetched, Params, Source},
+};
 use futures_util::future::join_all;
 use prost_types::Timestamp;
 use seismo_proto::{
@@ -198,6 +201,11 @@ fn workload(
             w.error = Some(e);
         }
         Ok(mut f) => {
+            // the one place raw lines get scrubbed, before the byte budget so
+            // it counts what we actually send
+            for e in &mut f.entries {
+                e.message = redact(&e.message);
+            }
             w.dropped_line_count = fit(&mut f.entries, budget);
             *dropped_total += w.dropped_line_count;
             let cut = f.hit_limit || w.dropped_line_count > 0;

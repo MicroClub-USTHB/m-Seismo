@@ -139,7 +139,7 @@ async fn limit_keeps_the_newest_lines_across_both_streams() {
 }
 
 #[tokio::test]
-async fn trace_filter_and_redaction() {
+async fn trace_filter() {
     let dir = tempfile::tempdir().unwrap();
     let out = [
         line(1, "login password=hunter2 trace_id=abc"),
@@ -148,7 +148,7 @@ async fn trace_filter_and_redaction() {
     let got = fetch(&fake(dir.path(), &out, &[], 0, ""), 0, 10, Some("abc"), 10)
         .await
         .unwrap();
-    assert_eq!(msgs(&got), ["login password=[REDACTED] trace_id=abc"]);
+    assert_eq!(msgs(&got), ["login password=hunter2 trace_id=abc"]);
     assert_eq!(got.entries[0].match_kind, MatchKind::Trace as i32);
 }
 

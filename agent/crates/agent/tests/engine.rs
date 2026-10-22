@@ -229,3 +229,13 @@ async fn rejects_bad_queries() {
         "never reached loki"
     );
 }
+
+#[tokio::test]
+async fn redacts_every_line_before_it_leaves() {
+    let fake = loki_by_service(&[("db", 200, lines(1, "login password=hunter2 ok"))]).await;
+    let r = engine(&fake.url, &["db"]).answer(&query()).await.unwrap();
+    assert_eq!(
+        r.workloads[0].entries[0].message,
+        "login password=[REDACTED] ok"
+    );
+}
