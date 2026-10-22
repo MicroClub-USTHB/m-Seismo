@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod backend;
 pub mod config;
 mod query;
 pub mod registry;
