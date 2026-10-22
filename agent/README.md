@@ -17,9 +17,44 @@ Run these commands from the repository root:
 
 - `crates/proto`: generated `seismo.v1` types from `spec/proto`.
 - `crates/agent`: the agent. Reads logs from one pluggable source (`[source] type = ...`) and answers the coordinator.
-- `crates/coordinator`: not implemented yet.
+- `crates/coordinator`: the coordinator. Agents dial in, it dials the backend and fans queries out.
 
 The build needs `protoc`.
+
+## Running the coordinator
+
+One per deployment. Agents register with it, it attaches to the backend and
+turns each `QueryLogs` into a query to every connected agent, then answers
+with one aggregate: a section per agent with its status (`OK`, `TRUNCATED`,
+`TIMEOUT`, `DISCONNECTED`, `ERROR`) and a warning for services claimed by
+more than one agent.
+
+```sh
+SEISMO_AGENT_TOKEN=... SEISMO_COORDINATOR_KEY=mco_... \
+  cargo run -p seismo-coordinator -- coordinator.toml
+```
+
+```toml
+# coordinator_id = "prod"           # sent in Hello, defaults to the hostname
+# listen = "[::]:50051"             # where agents dial in
+
+[agents]
+# token_env = "SEISMO_AGENT_TOKEN"  # env var with the registration token
+
+[backend]
+url = "http://backend:9090"
+# key_env = "SEISMO_COORDINATOR_KEY" # env var with the mco_ key
+
+# what the coordinator asks of every agent, QueryLogs doesn't carry it
+[query]
+# max_lines_per_workload = 1000
+# context_lines = 5
+# total_budget_bytes = 8388608      # split evenly between connected agents
+# margin_ms = 500                   # kept back from the backend deadline
+```
+
+The agent's `[coordinator] token` must match `agents.token_env`. Both sides
+reconnect with backoff.
 
 ## Running the agent
 
@@ -125,5 +160,6 @@ a plain substring match.
 
 ## Status
 
-Agent done, sources: `loki`, `file`, `journal`, `docker`. No Tempo or Mimir yet.
-Coordinator is a stub.
+Agent: sources `loki`, `file`, `journal`, `docker`. Coordinator: registry,
+fan-out and backend attach. Plaintext gRPC on both hops, TLS is not done yet.
+No Tempo or Mimir.
