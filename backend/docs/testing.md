@@ -87,8 +87,9 @@ Prerequisites:
 2. `.env` with a working GitHub App (see [github.md](github.md#creating-the-github-app)).
 3. Through the API: an owner, an app with its own GitHub connection, a
    project with a default repository on that connection's account, and the
-   app linked to the project. The curl walkthrough in
-   [api.md](api.md#walkthrough-with-curl) does all of this, and
+   app linked to the project. Running the [Bruno collection](../bruno)
+   folders in order (Auth, Apps, Projects, Project repositories, App
+   project links, App connections) does all of this, and
    `GET /apps/{id}/targets` should show a `connection_id` for every target.
 4. `SEISMO_E2E_APP_ID=<app uuid> go test -tags e2e -run TestOpenForAppE2E -v .`
 

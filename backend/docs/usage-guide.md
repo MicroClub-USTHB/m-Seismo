@@ -10,8 +10,9 @@ This guide shows how to **use** what the backend offers, from two sides:
   tracker. It covers which service to call, what each method promises, and
   how errors flow.
 
-Reference pages: [api.md](api.md) lists every endpoint;
-[architecture.md](architecture.md) explains how the pieces fit together.
+Reference pages: [../bruno](../bruno) is a runnable Bruno collection of
+every endpoint; [architecture.md](architecture.md) explains how the pieces
+fit together.
 
 - [Interfaces at a glance](#interfaces-at-a-glance)
 - **Part A: HTTP API**
@@ -38,7 +39,7 @@ Reference pages: [api.md](api.md) lists every endpoint;
 
 | Interface | Kind | Who uses it | Where |
 |---|---|---|---|
-| REST API `/api/v1` | HTTP + JSON, bearer JWT | admin console, scripts | [api.md](api.md) |
+| REST API `/api/v1` | HTTP + JSON, bearer JWT | admin console, scripts | [../bruno](../bruno) |
 | `issue.Service` | Go service | ingestion, future jobs | `internal/issue/service.go` |
 | `provider.Service` | Go service | anything managing app connections | `internal/provider/service.go` |
 | `app.Service.Authenticate` | Go method | the future ingestion endpoint (SDK keys) | `internal/app/service.go` |

@@ -1,0 +1,19 @@
+meta {
+  name: List Providers
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/providers
+  body: none
+  auth: inherit
+}
+
+docs {
+  200 `{"providers": ["bitbucket", "github", "gitlab"]}` — trackers
+  available on this deployment, sorted. GitHub is left out when
+  `github.app_id` isn't set. GitLab and Bitbucket are always listed:
+  each app registers its own OAuth application separately (see
+  **App connections → Set Tracker Credentials**) before it can connect.
+}

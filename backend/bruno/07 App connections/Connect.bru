@@ -1,0 +1,23 @@
+meta {
+  name: Connect
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/apps/{{appId}}/connect/github
+  body: none
+  auth: inherit
+}
+
+docs {
+  200 `{"url": ...}` — open it in a browser (JSON rather than a redirect,
+  so an SPA calling this with a bearer token can navigate to it itself).
+  The embedded state is valid 10 minutes, usable once, and remembers the
+  owner and this app. When the install/authorization finishes, the
+  tracker calls the public callback, which saves the connection.
+
+  `{tracker}` in the path: `github`, `gitlab` or `bitbucket`. For
+  `gitlab`/`bitbucket`, run **Set Tracker Credentials** first — 404 "this
+  app has no GitLab/Bitbucket OAuth application yet" otherwise.
+}

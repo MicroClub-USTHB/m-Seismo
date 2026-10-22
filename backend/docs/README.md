@@ -16,14 +16,16 @@ route list, start with [../README.md](../README.md).
 | 5 | [gitlab-bitbucket.md](gitlab-bitbucket.md) | see how GitLab and Bitbucket are reached with **per-app OAuth tokens**: the connect flow, encrypted token storage, refresh and rotation, issue field mapping, and how to set up a real GitLab application or Bitbucket consumer |
 | 6 | [issue-service.md](issue-service.md) | see how an app's issue is targeted, matched to one of the app's connections, opened and recorded |
 | 7 | [worker.md](worker.md) | see how an accepted report becomes an issue: the queue, retries and idempotency |
-| 8 | [api.md](api.md) | look up an endpoint, its body, responses and errors |
+| 8 | [../bruno](../bruno) | look up or run an endpoint: a Bruno collection with the body, responses and errors of each route |
 | 9 | [files.md](files.md) | find out what a specific file does |
 | 10 | [extending.md](extending.md) | add a tracker, a resource, a query or a setting |
 | 11 | [testing.md](testing.md) | run and write tests (unit, API scripts, e2e) |
 | 12 | [test-scripts.md](test-scripts.md) | the bash API test suite: every `lib.sh` function, the state file, token handling and the fakes' contracts |
 
-The local stack (Docker Compose, fake GitHub, GitLab and Bitbucket) is described in
-[deploy/README.md](../../deploy/README.md).
+The local stack (Docker Compose: Postgres, Redis, NATS and the backend) is
+described in [deploy/README.md](../../deploy/README.md); it needs a real
+GitHub App and/or GitLab application or Bitbucket consumer (see
+[github.md](github.md) and [gitlab-bitbucket.md](gitlab-bitbucket.md)).
 
 ## Glossary
 

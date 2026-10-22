@@ -1,0 +1,21 @@
+meta {
+  name: Update Project
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/projects/{{projectId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "Shop Mobile (renamed)"
+  }
+}
+
+docs {
+  200 project. `name` and `slug` both optional.
+}

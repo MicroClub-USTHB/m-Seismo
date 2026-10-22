@@ -8,10 +8,10 @@ accepted report.
 
 It also has two HTTP entry points, both owner-only:
 
-- [`POST /apps/{appID}/test-issue`](api.md#test-issue) calls `OpenForApp`
-  with a test draft.
-- [`GET /apps/{appID}/targets`](api.md#targets) calls `Targets`, to preview
-  where an issue would go.
+- `POST /apps/{appID}/test-issue` (see [../bruno/09 Test issue](../bruno/09%20Test%20issue))
+  calls `OpenForApp` with a test draft.
+- `GET /apps/{appID}/targets` (see [../bruno/08 Targets](../bruno/08%20Targets))
+  calls `Targets`, to preview where an issue would go.
 
 The API scripts use them to exercise the service end to end
 (`backend/scripts/api/issues.sh`).
