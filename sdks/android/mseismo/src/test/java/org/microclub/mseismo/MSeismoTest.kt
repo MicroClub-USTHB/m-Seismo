@@ -3,9 +3,14 @@ package org.microclub.mseismo
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import java.io.File
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.json.JSONObject
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -16,6 +21,12 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class MSeismoTest {
     private val app: Application = ApplicationProvider.getApplicationContext()
+    private val realSend = MSeismo.send
+
+    @After
+    fun restoreSend() {
+        MSeismo.send = realSend
+    }
 
     @Test
     fun installationIdIsCreatedOnceAndKeptOutOfBackups() {
@@ -95,6 +106,37 @@ class MSeismoTest {
         val release = Release("9.9.9", "99")
         MSeismo.configure(app, valid.copy(release = release))
         assertEquals(release, MSeismo.release)
+    }
+
+    @Test
+    fun reportIsIgnoredWhileOff() {
+        MSeismo.configure(app, Configuration(endpoint = "not a url", appKey = "nope"))
+        assertNull(MSeismo.report(title = "x"))
+    }
+
+    @Test
+    fun reportIsSentInTheBackground() {
+        val sent = CountDownLatch(1)
+        var json = JSONObject()
+        MSeismo.send = { _, _, reportJson ->
+            json = JSONObject(reportJson)
+            sent.countDown()
+            SendResult.Accepted
+        }
+        MSeismo.configure(app, valid)
+        val installationId = MSeismo.installationId
+
+        val id = MSeismo.report(title = "Broken", severity = Severity.HIGH)
+        // A failed configure right after report() must not drop or change that report.
+        MSeismo.configure(app, Configuration(endpoint = "not a url", appKey = "nope"))
+
+        assertTrue(sent.await(5, TimeUnit.SECONDS))
+        assertEquals(id, json.getString("id"))
+        assertEquals("manual", json.getString("trigger"))
+        assertEquals("Broken", json.getJSONObject("user_input").getString("title"))
+        assertEquals("high", json.getJSONObject("user_input").getString("severity"))
+        assertEquals(installationId, json.getString("installation_id"))
+        assertEquals(MSeismo.sessionId, json.getString("session_id"))
     }
 
     private val valid = Configuration(endpoint = "https://seismo.example.com", appKey = "msk_test")

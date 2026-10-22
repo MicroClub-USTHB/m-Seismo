@@ -28,6 +28,18 @@ class MyApp : Application() {
 
 `release` defaults to the app's `versionName` and `versionCode`.
 
+Send a report from anywhere, for example a "Report a bug" button. It is sent
+in the background and returns the report ID, or `null` when the SDK is off:
+
+```kotlin
+MSeismo.report(
+    title = "Checkout button does nothing",
+    description = "Tapped Pay twice.",
+    category = Category.BUG,
+    severity = Severity.HIGH,
+)
+```
+
 `configure` never throws. If the configuration is invalid it logs the reason
 (`adb logcat -s MSeismo`) and the SDK stays off. `endpoint` must be `https://`
 in release builds; `http://` is accepted only in debuggable builds, for a
@@ -49,13 +61,25 @@ Or open `sdks/android` in Android Studio and run the `example` configuration.
 
 ### Example app against the local backend
 
-The example reads its endpoint and key from Gradle properties. The default
-endpoint is `http://10.0.2.2:8080`, the host machine as seen from the
-emulator, where `make dev-up` serves the backend.
+The example reads its endpoint and key from Gradle properties. Start the
+backend with `make dev-up` from the repository root, then get a key:
+`scripts/dev-key.sh` creates an app linked to a project on the fake GitHub
+and prints its SDK key.
 
 ```sh
-./gradlew :example:installDebug -Pmseismo.appKey=msk_…
+KEY=$(scripts/dev-key.sh)
+
+# Emulator: 10.0.2.2 is your computer, the default endpoint.
+./gradlew :example:installDebug -Pmseismo.appKey=$KEY
+
+# Phone over USB: forward the port, then use 127.0.0.1.
+adb reverse tcp:8080 tcp:8080
+./gradlew :example:installDebug -Pmseismo.endpoint=http://127.0.0.1:8080 -Pmseismo.appKey=$KEY
 ```
+
+Tap **Send test report**, then check `adb logcat -s MSeismo` for
+`report … accepted`. The issue appears on the fake GitHub at
+`http://localhost:9090/_fake/issues`.
 
 To keep them, put `mseismo.appKey=msk_…` (and `mseismo.endpoint=…` if needed)
 in `~/.gradle/gradle.properties`, not in the repository.

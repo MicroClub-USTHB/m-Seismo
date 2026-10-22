@@ -3,9 +3,9 @@ name: Android SDK CI
 on:
   push:
     branches: [main]
-    paths: ["sdks/android/**"]
+    paths: ["sdks/android/**", "spec/**"]
   pull_request:
-    paths: ["sdks/android/**"]
+    paths: ["sdks/android/**", "spec/**"]
 
 jobs:
   build-and-test:

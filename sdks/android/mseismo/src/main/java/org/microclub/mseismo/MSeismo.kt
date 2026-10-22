@@ -8,6 +8,7 @@ import android.util.Log
 import java.io.File
 import java.io.RandomAccessFile
 import java.util.UUID
+import java.util.concurrent.Executors
 
 // Call configure() once in Application.onCreate.
 public object MSeismo {
@@ -52,6 +53,78 @@ public object MSeismo {
             this.configuration = null
             app = null
             Log.e(TAG, "configure failed; m-Seismo is off", t)
+        }
+    }
+
+    private val sender = Executors.newSingleThreadExecutor { Thread(it, "mseismo-send").apply { isDaemon = true } }
+    internal var send: (url: String, appKey: String, reportJson: String) -> SendResult = ReportTransport()::send
+
+    // Sends a report in the background. Returns its ID, or null when the SDK is off. Never throws.
+    @JvmStatic
+    @JvmOverloads
+    public fun report(
+        title: String? = null,
+        description: String? = null,
+        category: Category? = null,
+        severity: Severity? = null,
+    ): String? = try {
+        val config = configuration
+        val app = app
+        if (config == null || app == null) {
+            Log.w(TAG, "report ignored: m-Seismo is off")
+            null
+        } else {
+            val id = UUID.randomUUID().toString()
+            val occurredAt = System.currentTimeMillis()
+            val device = Device.current()
+            val input = UserInput(title, description, category, severity).takeIf { it != UserInput() }
+            sender.execute { deliver(app, config, id, occurredAt, Trigger.MANUAL, input, device) }
+            id
+        }
+    } catch (t: Throwable) {
+        Log.e(TAG, "report failed", t)
+        null
+    }
+
+    // Uses the app and configuration from when report() was called, even if configure() runs again meanwhile.
+    private fun deliver(
+        app: Application,
+        config: Configuration,
+        id: String,
+        occurredAt: Long,
+        trigger: Trigger,
+        input: UserInput?,
+        device: Device,
+    ) {
+        try {
+            val installationId = installationIdCache.get(app)
+            val release = config.release ?: releaseCache.get(app)
+            if (installationId == null || release == null) {
+                // shortcut: dropped, like a failed send below; the offline queue will keep and retry it.
+                Log.e(TAG, "report $id dropped: installation ID or release unavailable")
+                return
+            }
+            val report = Report(
+                id = id,
+                installationId = installationId,
+                sessionId = sessionId,
+                occurredAtMillis = occurredAt,
+                environment = config.environment,
+                release = release,
+                trigger = trigger,
+                autoSubmitted = false,
+                userInput = input,
+                device = device,
+            )
+            when (val result = send(config.reportsUrl, config.appKey, report.toJson())) {
+                SendResult.Accepted -> Log.i(TAG, "report $id accepted")
+                // shortcut: not retried yet, the report is lost; the offline queue will retry it.
+                is SendResult.Retry -> Log.w(TAG, "report $id not sent: ${result.reason}")
+                is SendResult.Rejected ->
+                    Log.e(TAG, "report $id rejected: HTTP ${result.status} ${result.code}: ${result.message}")
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "report $id failed", t)
         }
     }
 
