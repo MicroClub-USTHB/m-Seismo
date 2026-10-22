@@ -28,6 +28,12 @@ class MyApp : Application() {
 
 `release` defaults to the app's `versionName` and `versionCode`.
 
+Reports are saved on the device (`no_backup/mseismo-queue`, one file per
+report) before they are sent, and kept until the backend accepts or rejects
+them. Without a connection, or while the backend is down, they are retried
+after 2, 4, 8… seconds (up to 5 minutes), as soon as the network comes back,
+and on the next app launch. At most 100 are kept; the oldest go first.
+
 Send a report from anywhere, for example a "Report a bug" button. It is sent
 in the background and returns the report ID, or `null` when the SDK is off:
 

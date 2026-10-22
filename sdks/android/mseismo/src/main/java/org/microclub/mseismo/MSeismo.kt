@@ -3,12 +3,16 @@ package org.microclub.mseismo
 import android.app.Application
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Build
 import android.util.Log
 import java.io.File
 import java.io.RandomAccessFile
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 // Call configure() once in Application.onCreate.
 public object MSeismo {
@@ -49,6 +53,9 @@ public object MSeismo {
             app = application
             this.configuration = configuration
             Log.i(TAG, "configured: environment=${configuration.environment}")
+            // Send what the last launch left, and retry when the network returns.
+            worker.execute { safely { drain() } }
+            watchNetwork(application)
         } catch (t: Throwable) {
             this.configuration = null
             app = null
@@ -56,8 +63,14 @@ public object MSeismo {
         }
     }
 
-    private val sender = Executors.newSingleThreadExecutor { Thread(it, "mseismo-send").apply { isDaemon = true } }
+    // One thread for all background work: never blocks the app, needs no locks.
+    private val worker = Executors.newSingleThreadScheduledExecutor { Thread(it, "mseismo").apply { isDaemon = true } }
     internal var send: (url: String, appKey: String, reportJson: String) -> SendResult = ReportTransport()::send
+
+    // Worker thread only.
+    private var queue: OfflineQueue? = null
+    private var nextDrain: ScheduledFuture<*>? = null
+    private var watchingNetwork = false
 
     // Sends a report in the background. Returns its ID, or null when the SDK is off. Never throws.
     @JvmStatic
@@ -78,7 +91,7 @@ public object MSeismo {
             val occurredAt = System.currentTimeMillis()
             val device = Device.current()
             val input = UserInput(title, description, category, severity).takeIf { it != UserInput() }
-            sender.execute { deliver(app, config, id, occurredAt, Trigger.MANUAL, input, device) }
+            worker.execute { safely { deliver(app, config, id, occurredAt, Trigger.MANUAL, input, device) } }
             id
         }
     } catch (t: Throwable) {
@@ -96,35 +109,69 @@ public object MSeismo {
         input: UserInput?,
         device: Device,
     ) {
+        val installationId = installationIdCache.get(app)
+        val release = config.release ?: releaseCache.get(app)
+        if (installationId == null || release == null) {
+            // Storage hiccup: retry in 10 s.
+            worker.schedule({ safely { deliver(app, config, id, occurredAt, trigger, input, device) } }, 10, TimeUnit.SECONDS)
+            return
+        }
+        val report = Report(
+            id = id,
+            installationId = installationId,
+            sessionId = sessionId,
+            occurredAtMillis = occurredAt,
+            environment = config.environment,
+            release = release,
+            trigger = trigger,
+            autoSubmitted = false,
+            userInput = input,
+            device = device,
+        )
+        val json = report.toJson()
         try {
-            val installationId = installationIdCache.get(app)
-            val release = config.release ?: releaseCache.get(app)
-            if (installationId == null || release == null) {
-                // shortcut: dropped, like a failed send below; the offline queue will keep and retry it.
-                Log.e(TAG, "report $id dropped: installation ID or release unavailable")
-                return
-            }
-            val report = Report(
-                id = id,
-                installationId = installationId,
-                sessionId = sessionId,
-                occurredAtMillis = occurredAt,
-                environment = config.environment,
-                release = release,
-                trigger = trigger,
-                autoSubmitted = false,
-                userInput = input,
-                device = device,
-            )
-            when (val result = send(config.reportsUrl, config.appKey, report.toJson())) {
-                SendResult.Accepted -> Log.i(TAG, "report $id accepted")
-                // shortcut: not retried yet, the report is lost; the offline queue will retry it.
-                is SendResult.Retry -> Log.w(TAG, "report $id not sent: ${result.reason}")
-                is SendResult.Rejected ->
-                    Log.e(TAG, "report $id rejected: HTTP ${result.status} ${result.code}: ${result.message}")
-            }
+            queueFor(app).add(id, json)
+        } catch (e: Exception) {
+            // Can't save (storage full): one unsaved try beats losing it.
+            Log.w(TAG, "report $id could not be saved, sending it once without saving", e)
+            Log.i(TAG, "report $id: ${send(config.reportsUrl, config.appKey, json)}")
+            return
+        }
+        drain()
+    }
+
+    private fun queueFor(app: Application): OfflineQueue {
+        val dir = File(app.noBackupFilesDir, "mseismo-queue")
+        return queue?.takeIf { it.dir == dir } ?: OfflineQueue(dir).also { queue = it }
+    }
+
+    // Sends what is due, then schedules the next retry.
+    private fun drain() {
+        val app = app ?: return
+        val delay = queueFor(app).drain { json -> configuration?.let { send(it.reportsUrl, it.appKey, json) } }
+        nextDrain?.cancel(false)
+        nextDrain = delay?.let { worker.schedule({ safely { drain() } }, it, TimeUnit.MILLISECONDS) }
+    }
+
+    private fun watchNetwork(app: Application) = worker.execute {
+        safely {
+            if (watchingNetwork) return@safely
+            val connectivity = app.getSystemService(ConnectivityManager::class.java) ?: return@safely
+            connectivity.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    worker.execute { safely { queue?.retryNow(); drain() } }
+                }
+            })
+            watchingNetwork = true
+        }
+    }
+
+    // Logs background failures instead of crashing the app.
+    private inline fun safely(block: () -> Unit) {
+        try {
+            block()
         } catch (t: Throwable) {
-            Log.e(TAG, "report $id failed", t)
+            Log.e(TAG, "background work failed", t)
         }
     }
 

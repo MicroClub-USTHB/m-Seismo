@@ -7,7 +7,7 @@ import java.net.URL
 import java.util.UUID
 
 internal sealed interface SendResult {
-    object Accepted : SendResult
+    data object Accepted : SendResult
 
     // 429, 5xx, no answer, or something other than the backend answering (e.g. a Wi-Fi login page).
     data class Retry(val reason: String, val retryAfterSeconds: Long? = null) : SendResult

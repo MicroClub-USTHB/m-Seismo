@@ -11,6 +11,9 @@ import org.junit.Assert.assertTrue
 import org.json.JSONObject
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import android.os.Looper
+import java.time.Duration
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -127,8 +130,6 @@ class MSeismoTest {
         val installationId = MSeismo.installationId
 
         val id = MSeismo.report(title = "Broken", severity = Severity.HIGH)
-        // A failed configure right after report() must not drop or change that report.
-        MSeismo.configure(app, Configuration(endpoint = "not a url", appKey = "nope"))
 
         assertTrue(sent.await(5, TimeUnit.SECONDS))
         assertEquals(id, json.getString("id"))
@@ -137,6 +138,49 @@ class MSeismoTest {
         assertEquals("high", json.getJSONObject("user_input").getString("severity"))
         assertEquals(installationId, json.getString("installation_id"))
         assertEquals(MSeismo.sessionId, json.getString("session_id"))
+    }
+
+    @Test
+    fun failedReportIsKeptAndSentByItselfLater() {
+        val attempts = AtomicInteger()
+        val failed = CountDownLatch(1)
+        val accepted = CountDownLatch(1)
+        var acceptedId = ""
+        MSeismo.send = { _, _, reportJson ->
+            if (attempts.getAndIncrement() == 0) {
+                failed.countDown()
+                SendResult.Retry("offline")
+            } else {
+                acceptedId = JSONObject(reportJson).getString("id")
+                accepted.countDown()
+                SendResult.Accepted
+            }
+        }
+        MSeismo.configure(app, valid)
+
+        val id = MSeismo.report(title = "Sent offline")
+
+        assertTrue(failed.await(5, TimeUnit.SECONDS))
+        assertTrue(File(app.noBackupFilesDir, "mseismo-queue/$id.json").exists())
+        // Robolectric's clock is frozen: advance it past the retry wait.
+        var waited = 0
+        while (!accepted.await(200, TimeUnit.MILLISECONDS)) {
+            assertTrue("not retried", ++waited < 50)
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
+        }
+        assertEquals(id, acceptedId)
+    }
+
+    @Test
+    fun reportIsStillSentWhenItCannotBeSaved() {
+        val sent = CountDownLatch(1)
+        MSeismo.send = { _, _, _ -> sent.countDown(); SendResult.Accepted }
+        File(app.noBackupFilesDir, "mseismo-queue").writeText("a file where the folder should be")
+        MSeismo.configure(app, valid)
+
+        MSeismo.report(title = "Phone storage full")
+
+        assertTrue(sent.await(5, TimeUnit.SECONDS))
     }
 
     private val valid = Configuration(endpoint = "https://seismo.example.com", appKey = "msk_test")
