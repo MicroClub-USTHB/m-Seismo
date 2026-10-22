@@ -11,6 +11,7 @@ use std::{
 use tokio::{sync::mpsc, task::JoinSet};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Status, metadata::MetadataValue, transport::Endpoint};
+use tracing::{info, warn};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
@@ -25,8 +26,8 @@ pub async fn run(cfg: &config::Backend, coordinator_id: &str, registry: Arc<Regi
     loop {
         let started = Instant::now();
         match attach(cfg, coordinator_id, registry.clone()).await {
-            Ok(()) => eprintln!("backend closed the stream"),
-            Err(status) => eprintln!("backend attach ended: {status}"),
+            Ok(()) => info!("backend closed the stream"),
+            Err(status) => warn!("backend attach ended: {status}"),
         }
         if started.elapsed() >= BACKOFF_RESET_AFTER {
             backoff = BACKOFF_MIN;
