@@ -2,7 +2,7 @@ mod common;
 
 use common::{serve, streams};
 use prost_types::Timestamp;
-use seismo_agent::{config, engine::Engine, loki::Loki, session};
+use seismo_agent::{config, engine::Engine, session, source::Source};
 use seismo_proto::{
     AgentMessage, AgentSource, Cancel, CoordinatorMessage, Query, QueryLimits, TimeWindow,
     agent_message::Message,
@@ -153,11 +153,11 @@ async fn start(loki_delay: Duration) -> Harness {
             token_env: String::new(),
             token: "tok".into(),
         },
-        loki: loki_cfg(&loki.url),
+        source: config::Source::Loki(loki_cfg(&loki.url)),
     };
     let engine = Arc::new(Engine::new(
         cfg.services.clone(),
-        Loki::new(cfg.loki.clone()).unwrap(),
+        Source::build(&cfg.source).unwrap(),
     ));
     let agent = tokio::spawn(async move {
         let _keep_loki_alive = &loki;
@@ -277,11 +277,11 @@ async fn unreachable_coordinator_is_an_error() {
             token_env: String::new(),
             token: "t".into(),
         },
-        loki: loki_cfg("http://127.0.0.1:1"),
+        source: config::Source::Loki(loki_cfg("http://127.0.0.1:1")),
     };
     let engine = Arc::new(Engine::new(
         cfg.services.clone(),
-        Loki::new(cfg.loki.clone()).unwrap(),
+        Source::build(&cfg.source).unwrap(),
     ));
     let err = session::session(&cfg, engine).await.unwrap_err();
     assert_eq!(err.code(), Code::Unavailable);

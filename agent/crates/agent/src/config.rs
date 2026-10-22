@@ -8,10 +8,10 @@ pub struct Config {
     /// Falls back to the hostname, must stay stable across restarts.
     #[serde(default)]
     pub agent_id: String,
-    /// Service names this agent is responsible for, one Loki query each.
+    /// Service names this agent is responsible for, each is fetched on its own.
     pub services: Vec<String>,
     pub coordinator: Coordinator,
-    pub loki: Loki,
+    pub source: Source,
 }
 
 #[derive(Debug, Deserialize)]
@@ -22,6 +22,13 @@ pub struct Coordinator {
     pub token_env: String,
     #[serde(skip)]
     pub token: String,
+}
+
+/// Where this agent reads its logs from. Pick one with `type`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Source {
+    Loki(Loki),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -95,14 +102,16 @@ impl Config {
                 .ok_or("agent_id is unset and the hostname is unreadable")?;
         }
         cfg.coordinator.token = secret(&cfg.coordinator.token_env)?;
-        match &mut cfg.loki.auth {
-            Auth::None => {}
-            Auth::Basic {
-                password_env,
-                password,
-                ..
-            } => *password = secret(password_env)?,
-            Auth::Bearer { token_env, token } => *token = secret(token_env)?,
+        match &mut cfg.source {
+            Source::Loki(l) => match &mut l.auth {
+                Auth::None => {}
+                Auth::Basic {
+                    password_env,
+                    password,
+                    ..
+                } => *password = secret(password_env)?,
+                Auth::Bearer { token_env, token } => *token = secret(token_env)?,
+            },
         }
         Ok(cfg)
     }
@@ -125,7 +134,8 @@ mod tests {
         services = ["postgres"]
         [coordinator]
         url = "http://c:50051"
-        [loki]
+        [source]
+        type = "loki"
         url = "http://loki:3100"
     "#;
 
@@ -134,9 +144,10 @@ mod tests {
         let c = Config::parse(MIN, env).unwrap();
         assert_eq!(c.agent_id, "db");
         assert_eq!(c.coordinator.token, "tok");
-        assert_eq!(c.loki.service_label, "service_name");
-        assert_eq!(c.loki.trace_field, "trace_id");
-        assert!(matches!(c.loki.auth, Auth::None));
+        let Source::Loki(l) = c.source;
+        assert_eq!(l.service_label, "service_name");
+        assert_eq!(l.trace_field, "trace_id");
+        assert!(matches!(l.auth, Auth::None));
     }
 
     #[test]
@@ -148,9 +159,10 @@ mod tests {
     #[test]
     fn basic_auth_reads_password_from_env() {
         let text = format!(
-            "{MIN}\n[loki.auth]\ntype = \"basic\"\nusername = \"u\"\npassword_env = \"LOKI_PW\""
+            "{MIN}\n[source.auth]\ntype = \"basic\"\nusername = \"u\"\npassword_env = \"LOKI_PW\""
         );
-        match Config::parse(&text, env).unwrap().loki.auth {
+        let Source::Loki(l) = Config::parse(&text, env).unwrap().source;
+        match l.auth {
             Auth::Basic { password, .. } => assert_eq!(password, "hunter2"),
             other => panic!("{other:?}"),
         }
@@ -158,11 +170,15 @@ mod tests {
 
     #[test]
     fn rejects_bad_input() {
-        let missing_secret = format!("{MIN}\n[loki.auth]\ntype = \"bearer\"\ntoken_env = \"NOPE\"");
+        let missing_secret =
+            format!("{MIN}\n[source.auth]\ntype = \"bearer\"\ntoken_env = \"NOPE\"");
         for (text, why) in [
             (MIN.replace("[\"postgres\"]", "[]"), "no services"),
             (MIN.replace("[\"postgres\"]", "[\"\"]"), "empty service"),
-            (MIN.replace("[loki]", "[loki]\nbogus = 1"), "unknown field"),
+            (
+                MIN.replace("type = \"loki\"", "type = \"loki\"\nbogus = 1"),
+                "unknown field",
+            ),
             (missing_secret, "unset secret env"),
         ] {
             assert!(Config::parse(&text, env).is_err(), "{why}");

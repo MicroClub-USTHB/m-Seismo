@@ -1,4 +1,4 @@
-use crate::loki::{Fetched, Loki, Params};
+use crate::source::{Fetched, Params, Source};
 use futures_util::future::join_all;
 use prost_types::Timestamp;
 use seismo_proto::{
@@ -15,7 +15,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct Engine {
     services: Vec<String>,
-    loki: Loki,
+    source: Source,
 }
 
 fn source_err(kind: SourceErrorKind, detail: &str) -> SourceError {
@@ -55,7 +55,7 @@ fn fit(entries: &mut Vec<pb::LogEntry>, budget: &mut usize) -> u64 {
 }
 
 fn unavailable() -> WorkloadDiagnostics {
-    const WHY: &str = "not available from loki";
+    const WHY: &str = "not collected by this log source";
     let s = || StringDiagnostic {
         value: Some(pb::string_diagnostic::Value::UnavailableReason(WHY.into())),
     };
@@ -75,8 +75,12 @@ fn unavailable() -> WorkloadDiagnostics {
 }
 
 impl Engine {
-    pub fn new(services: Vec<String>, loki: Loki) -> Self {
-        Self { services, loki }
+    pub fn new(services: Vec<String>, source: Source) -> Self {
+        Self { services, source }
+    }
+
+    pub fn kind(&self) -> pb::AgentSource {
+        self.source.kind()
     }
 
     pub fn services(&self) -> &[String] {
@@ -118,9 +122,9 @@ impl Engine {
             n => n as usize,
         };
 
-        // one loki query per service, all at once
+        // one fetch per service, all at once
         let fetched = join_all(self.services.iter().map(|service| {
-            self.loki.fetch(Params {
+            self.source.fetch(Params {
                 service,
                 from,
                 to,

@@ -1,5 +1,10 @@
-use seismo_agent::{config::Config, engine::Engine, loki::Loki, session};
+use seismo_agent::{config::Config, engine::Engine, session, source::Source};
 use std::sync::Arc;
+
+fn die(what: &str, e: String) -> ! {
+    eprintln!("{what}: {e}");
+    std::process::exit(2);
+}
 
 #[tokio::main]
 async fn main() {
@@ -10,15 +15,9 @@ async fn main() {
         eprintln!("usage: seismo-agent <config.toml> (or set SEISMO_AGENT_CONFIG)");
         std::process::exit(2);
     };
-    let cfg = Config::load(&path).unwrap_or_else(|e| {
-        eprintln!("config: {e}");
-        std::process::exit(2);
-    });
-    let loki = Loki::new(cfg.loki.clone()).unwrap_or_else(|e| {
-        eprintln!("loki client: {e}");
-        std::process::exit(2);
-    });
-    let engine = Arc::new(Engine::new(cfg.services.clone(), loki));
+    let cfg = Config::load(&path).unwrap_or_else(|e| die("config", e));
+    let source = Source::build(&cfg.source).unwrap_or_else(|e| die("log source", e));
+    let engine = Arc::new(Engine::new(cfg.services.clone(), source));
     eprintln!("agent {} serving {:?}", cfg.agent_id, cfg.services);
     session::run(&cfg, engine).await
 }

@@ -4,7 +4,7 @@ use common::{serve, streams};
 use prost_types::Timestamp;
 use seismo_agent::{
     config,
-    loki::{Loki, Params},
+    source::{Params, loki::Loki},
 };
 use seismo_proto::{LogStream, MatchKind, SourceErrorKind};
 use serde_json::json;
@@ -33,7 +33,7 @@ async fn fetch(
     trace_id: Option<&str>,
     limit: u32,
     timeout: Duration,
-) -> Result<seismo_agent::loki::Fetched, seismo_proto::SourceError> {
+) -> Result<seismo_agent::source::Fetched, seismo_proto::SourceError> {
     loki.fetch(Params {
         service: "postgres",
         from: &ts(100),

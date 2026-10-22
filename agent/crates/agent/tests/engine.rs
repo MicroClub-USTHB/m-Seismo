@@ -2,7 +2,7 @@ mod common;
 
 use common::{serve, streams};
 use prost_types::Timestamp;
-use seismo_agent::{config, engine::Engine, loki::Loki};
+use seismo_agent::{config, engine::Engine, source::Source};
 use seismo_proto::{
     CoverageStatus, MatchKind, Query, QueryLimits, QueryStatus, SourceErrorKind, TimeWindow,
     WorkloadStatus,
@@ -14,16 +14,16 @@ use std::{
 };
 
 fn engine(url: &str, services: &[&str]) -> Engine {
-    let loki = Loki::new(config::Loki {
+    let source = Source::build(&config::Source::Loki(config::Loki {
         url: url.into(),
         service_label: "service_name".into(),
         scope_label: Some("namespace".into()),
         tenant: None,
         trace_field: "trace_id".into(),
         auth: config::Auth::None,
-    })
+    }))
     .unwrap();
-    Engine::new(services.iter().map(|s| s.to_string()).collect(), loki)
+    Engine::new(services.iter().map(|s| s.to_string()).collect(), source)
 }
 
 fn ts(s: i64) -> Timestamp {

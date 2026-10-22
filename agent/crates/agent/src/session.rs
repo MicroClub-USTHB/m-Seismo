@@ -1,6 +1,6 @@
 use crate::{config::Config, engine::Engine};
 use seismo_proto::{
-    self as pb, AgentSource, agent_client::AgentClient, agent_message::Message, coordinator_message,
+    self as pb, agent_client::AgentClient, agent_message::Message, coordinator_message,
 };
 use std::{
     collections::HashMap,
@@ -64,7 +64,7 @@ pub async fn session(cfg: &Config, engine: Arc<Engine>) -> Result<(), Status> {
     let register = pb::Register {
         protocol_version: PROTOCOL_VERSION,
         agent_id: cfg.agent_id.clone(),
-        source: AgentSource::Loki as i32,
+        source: engine.kind() as i32,
         services: engine.services().to_vec(),
     };
     tx.send(wire(Message::Register(register)))

@@ -1,31 +1,12 @@
+use super::{Fetched, Params, err, ns_to_ts, ts_to_ns};
 use crate::{config, redaction::redact};
-use prost_types::Timestamp;
 use seismo_proto::{self as pb, LogStream, MatchKind, SourceError, SourceErrorKind};
 use serde::Deserialize;
-use std::{collections::HashMap, time::Duration};
+use std::collections::HashMap;
 
 pub struct Loki {
     http: reqwest::Client,
     cfg: config::Loki,
-}
-
-pub struct Params<'a> {
-    pub service: &'a str,
-    pub from: &'a Timestamp,
-    pub to: &'a Timestamp,
-    pub trace_id: Option<&'a str>,
-    /// Loki applies this to the whole response, not per stream.
-    pub limit: u32,
-    pub timeout: Duration,
-}
-
-#[derive(Debug)]
-pub struct Fetched {
-    /// Redacted, oldest first.
-    pub entries: Vec<pb::LogEntry>,
-    pub scope_label: String,
-    /// Loki sent exactly `limit` lines, so older ones were probably cut.
-    pub hit_limit: bool,
 }
 
 #[derive(Deserialize)]
@@ -45,24 +26,6 @@ struct Stream {
     // NOTE: [ts_ns, line] but newer lokis append a structured metadata object,
     // so keep it loose and only look at the first two
     values: Vec<Vec<serde_json::Value>>,
-}
-
-fn err(kind: SourceErrorKind, detail: impl Into<String>) -> SourceError {
-    SourceError {
-        kind: kind as i32,
-        detail: detail.into(),
-    }
-}
-
-fn ts_to_ns(t: &Timestamp) -> i128 {
-    t.seconds as i128 * 1_000_000_000 + t.nanos as i128
-}
-
-fn ns_to_ts(ns: i128) -> Timestamp {
-    Timestamp {
-        seconds: ns.div_euclid(1_000_000_000) as i64,
-        nanos: ns.rem_euclid(1_000_000_000) as i32,
-    }
 }
 
 /// LogQL string literal escaping.
