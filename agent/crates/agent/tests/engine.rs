@@ -189,22 +189,6 @@ async fn byte_budget_keeps_newest_lines() {
 }
 
 #[tokio::test]
-async fn byte_budget_is_shared_between_workloads() {
-    let fake = loki_by_service(&[
-        ("a", 200, lines(2, "xxxxxxxxxx")),
-        ("b", 200, lines(2, "yyyyyyyyyy")),
-    ])
-    .await;
-    let mut q = query();
-    q.limits.as_mut().unwrap().max_bytes_total = 30;
-    let r = engine(&fake.url, &["a", "b"]).answer(&q).await.unwrap();
-
-    assert_eq!(r.workloads[0].entries.len(), 2);
-    assert_eq!(r.workloads[1].entries.len(), 1);
-    assert_eq!(r.dropped_line_count, 1);
-}
-
-#[tokio::test]
 async fn rejects_bad_queries() {
     let fake = loki_by_service(&[]).await;
     let e = engine(&fake.url, &["db"]);
@@ -279,4 +263,43 @@ async fn context_lines_from_the_query_reach_the_source() {
             ("n3", MatchKind::Context as i32),
         ]
     );
+}
+
+#[tokio::test]
+async fn byte_budget_is_split_evenly_between_workloads() {
+    let fake = loki_by_service(&[
+        ("a", 200, lines(2, "xxxxxxxxxx")),
+        ("b", 200, lines(2, "yyyyyyyyyy")),
+    ])
+    .await;
+    let mut q = query();
+    q.limits.as_mut().unwrap().max_bytes_total = 30;
+    let r = engine(&fake.url, &["a", "b"]).answer(&q).await.unwrap();
+
+    // 15 bytes each: one 10 byte line fits, the second does not
+    assert_eq!(r.workloads[0].entries.len(), 1);
+    assert_eq!(r.workloads[1].entries.len(), 1);
+    assert_eq!(r.dropped_line_count, 2);
+}
+
+#[tokio::test]
+async fn a_chatty_service_cannot_starve_a_quiet_one() {
+    // the chatty one comes first, it used to take the whole budget
+    let fake = loki_by_service(&[
+        ("chatty", 200, lines(50, "xxxxxxxxxx")),
+        ("quiet", 200, lines(1, "yyyyyyyyyy")),
+    ])
+    .await;
+    let mut q = query();
+    q.limits.as_mut().unwrap().max_bytes_total = 100;
+    let r = engine(&fake.url, &["chatty", "quiet"])
+        .answer(&q)
+        .await
+        .unwrap();
+
+    // quiet keeps its 10 bytes, chatty gets the other 90
+    assert_eq!(r.workloads[1].entries.len(), 1);
+    assert_eq!(r.workloads[1].status, WorkloadStatus::Complete as i32);
+    assert_eq!(r.workloads[0].entries.len(), 9);
+    assert_eq!(r.dropped_line_count, 41);
 }

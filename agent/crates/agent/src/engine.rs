@@ -120,7 +120,7 @@ impl Engine {
         } else {
             limits.max_lines_per_workload
         };
-        let mut budget = match limits.max_bytes_total {
+        let budget = match limits.max_bytes_total {
             0 => DEFAULT_BYTES,
             n => n as usize,
         };
@@ -139,12 +139,30 @@ impl Engine {
         }))
         .await;
 
+        // the one place raw lines get scrubbed, before the byte budget so it
+        // counts what we actually send
+        let mut fetched = fetched;
+        for f in fetched.iter_mut().flatten() {
+            for e in &mut f.entries {
+                e.message = redact(&e.message);
+            }
+        }
+        let sizes: Vec<Option<usize>> = fetched
+            .iter()
+            .map(|r| {
+                r.as_ref()
+                    .ok()
+                    .map(|f| f.entries.iter().map(|e| e.message.len()).sum())
+            })
+            .collect();
+        let shares = split_budget(budget, &sizes);
+
         let (mut workloads, mut dropped_total, mut first_err) = (Vec::new(), 0, None);
-        for (service, res) in self.services.iter().zip(fetched) {
+        for ((service, res), share) in self.services.iter().zip(fetched).zip(shares) {
             workloads.push(workload(
                 service,
                 res,
-                &mut budget,
+                share,
                 &mut dropped_total,
                 &mut first_err,
             ));
@@ -181,7 +199,7 @@ impl Engine {
 fn workload(
     service: &str,
     res: Result<Fetched, SourceError>,
-    budget: &mut usize,
+    mut share: usize,
     dropped_total: &mut u64,
     first_err: &mut Option<SourceError>,
 ) -> WorkloadResult {
@@ -202,12 +220,7 @@ fn workload(
             w.error = Some(e);
         }
         Ok(mut f) => {
-            // the one place raw lines get scrubbed, before the byte budget so
-            // it counts what we actually send
-            for e in &mut f.entries {
-                e.message = redact(&e.message);
-            }
-            w.dropped_line_count = fit(&mut f.entries, budget);
+            w.dropped_line_count = fit(&mut f.entries, &mut share);
             *dropped_total += w.dropped_line_count;
             let cut = f.hit_limit || w.dropped_line_count > 0;
             let (status, coverage) = if cut {
@@ -224,4 +237,38 @@ fn workload(
         }
     }
     w
+}
+
+/// Max-min fair split of `total` bytes: nobody gets more than they need, and
+/// what the small ones leave over is shared out between the bigger ones.
+/// `None` is a workload with nothing to send (it failed).
+fn split_budget(total: usize, sizes: &[Option<usize>]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..sizes.len()).filter(|i| sizes[*i].is_some()).collect();
+    order.sort_by_key(|i| sizes[*i]);
+    let (mut left, mut shares) = (total, vec![0; sizes.len()]);
+    for (n, i) in order.iter().enumerate() {
+        let take = sizes[*i].unwrap_or(0).min(left / (order.len() - n));
+        shares[*i] = take;
+        left -= take;
+    }
+    shares
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_budget;
+
+    #[test]
+    fn small_workloads_keep_what_they_need() {
+        // 100 bytes, one wants 10, the other 500: the big one gets the rest
+        assert_eq!(split_budget(100, &[Some(500), Some(10)]), [90, 10]);
+        // everyone is big: equal split
+        assert_eq!(
+            split_budget(90, &[Some(500), Some(500), Some(500)]),
+            [30, 30, 30]
+        );
+        // failed workloads take no share, plenty of room: nobody is cut
+        assert_eq!(split_budget(100, &[None, Some(20), Some(30)]), [0, 20, 30]);
+        assert_eq!(split_budget(100, &[]), Vec::<usize>::new());
+    }
 }
