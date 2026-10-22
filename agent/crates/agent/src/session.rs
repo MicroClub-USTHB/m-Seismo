@@ -14,6 +14,7 @@ use tonic::{
     metadata::MetadataValue,
     transport::{Certificate, ClientTlsConfig, Endpoint},
 };
+use tracing::{info, warn};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
@@ -29,8 +30,8 @@ pub async fn run(cfg: &Config, engine: Arc<Engine>) -> ! {
     loop {
         let started = Instant::now();
         match session(cfg, engine.clone()).await {
-            Ok(()) => eprintln!("coordinator closed the stream"),
-            Err(status) => eprintln!("session ended: {status}"),
+            Ok(()) => info!("coordinator closed the stream"),
+            Err(status) => warn!("session ended: {status}"),
         }
         if started.elapsed() >= BACKOFF_RESET_AFTER {
             backoff = BACKOFF_MIN;
