@@ -1,10 +1,21 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
-import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table'
 import { useState } from 'react'
 import { api, ApiError, type Owner } from '../lib/api'
 import { getStoredOwner } from '../lib/auth'
 import { Shell } from '../lib/Shell'
+import { McButton } from '../components/mc-button'
+import { McInput } from '../components/mc-input'
+import { McCard, McCardHeader } from '../components/mc-card'
+import { McDataTable, type McDataTableColumnDef } from '../components/mc-data-table'
+import {
+  McDialog,
+  McDialogContent,
+  McDialogFooter,
+  McDialogHeader,
+  McDialogTitle,
+  McDialogTrigger,
+} from '../components/mc-dialog'
 
 export const Route = createFileRoute('/')({
   beforeLoad: () => {
@@ -13,7 +24,7 @@ export const Route = createFileRoute('/')({
   component: Dashboard,
 })
 
-const columns: ColumnDef<Owner>[] = [
+const columns: McDataTableColumnDef<Owner>[] = [
   { accessorKey: 'name', header: 'Name' },
   { accessorKey: 'email', header: 'Email' },
   {
@@ -29,65 +40,35 @@ function Dashboard() {
     queryFn: () => api.get<Owner[]>('/owners'),
   })
 
-  const table = useReactTable({
-    data: owners.data ?? [],
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  })
-
   return (
     <Shell>
-      <AddUserForm />
+      <McCard direction="row" className="items-center justify-between">
+        <McCardHeader title="Users" description="Owners with access to this m-Seismo workspace." />
+        <AddUserForm />
+      </McCard>
 
-      <section>
-        <h2 className="mb-3 text-sm font-medium text-gray-700">Users</h2>
+      {owners.isError && (
+        <p className="text-sm text-destructive">
+          {owners.error instanceof ApiError ? owners.error.message : 'could not load users'}
+        </p>
+      )}
 
-          {owners.isLoading && <p className="text-sm text-gray-500">Loading…</p>}
-          {owners.isError && (
-            <p className="text-sm text-red-600">
-              {owners.error instanceof ApiError
-                ? owners.error.message
-                : 'could not load users'}
-            </p>
-          )}
-
-          {owners.data && (
-            <table className="w-full overflow-hidden rounded-lg border bg-white text-sm">
-              <thead className="bg-gray-100 text-left text-gray-600">
-                {table.getHeaderGroups().map((hg) => (
-                  <tr key={hg.id}>
-                    {hg.headers.map((h) => (
-                      <th key={h.id} className="px-4 py-2 font-medium">
-                        {flexRender(h.column.columnDef.header, h.getContext())}
-                      </th>
-                    ))}
-                  </tr>
-                ))}
-              </thead>
-              <tbody>
-                {table.getRowModel().rows.map((row) => (
-                  <tr key={row.id} className="border-t">
-                    {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-4 py-2 text-gray-800">
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-      </section>
+      <McDataTable
+        columns={columns}
+        data={owners.data ?? []}
+        getRowId={(owner) => owner.id}
+        empty={<p className="p-6 text-center text-sm text-muted-foreground">No users yet.</p>}
+      />
     </Shell>
   )
 }
 
 function AddUserForm() {
   const queryClient = useQueryClient()
+  const [open, setOpen] = useState(false)
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
   const [password, setPassword] = useState('')
-  const [open, setOpen] = useState(false)
 
   const createUser = useMutation({
     mutationFn: () => api.post<Owner>('/auth/register', { email, name, password }),
@@ -100,71 +81,56 @@ function AddUserForm() {
     },
   })
 
-  if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="rounded bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
-      >
-        Add user
-      </button>
-    )
-  }
-
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault()
-        createUser.mutate()
-      }}
-      className="max-w-sm space-y-3 rounded-lg border bg-white p-4"
-    >
-      <h2 className="text-sm font-medium text-gray-700">Add user</h2>
+    <McDialog open={open} onOpenChange={setOpen}>
+      <McDialogTrigger render={<McButton>Add user</McButton>} />
+      <McDialogContent>
+        <McDialogHeader>
+          <McDialogTitle>Add user</McDialogTitle>
+        </McDialogHeader>
 
-      <input
-        type="text"
-        placeholder="Name"
-        required
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-      />
-      <input
-        type="email"
-        placeholder="Email"
-        required
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-      />
-      <input
-        type="password"
-        placeholder="Password (min 8 characters)"
-        required
-        minLength={8}
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-      />
-
-      {createUser.isError && (
-        <p className="text-sm text-red-600">
-          {createUser.error instanceof ApiError ? createUser.error.message : 'could not create user'}
-        </p>
-      )}
-
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={createUser.isPending}
-          className="rounded bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+        <form
+          id="add-user-form"
+          onSubmit={(e) => {
+            e.preventDefault()
+            createUser.mutate()
+          }}
+          className="flex flex-col gap-3"
         >
-          {createUser.isPending ? 'Creating…' : 'Create'}
-        </button>
-        <button type="button" onClick={() => setOpen(false)} className="px-3 py-2 text-sm text-gray-600">
-          Cancel
-        </button>
-      </div>
-    </form>
+          <McInput label="Name" required value={name} onChange={(e) => setName(e.target.value)} />
+          <McInput
+            label="Email"
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          <McInput
+            label="Password"
+            type="password"
+            required
+            minLength={8}
+            description="Minimum 8 characters."
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+
+          {createUser.isError && (
+            <p className="text-sm text-destructive">
+              {createUser.error instanceof ApiError ? createUser.error.message : 'could not create user'}
+            </p>
+          )}
+        </form>
+
+        <McDialogFooter>
+          <McButton variant="secondary" onClick={() => setOpen(false)}>
+            Cancel
+          </McButton>
+          <McButton type="submit" form="add-user-form" isLoading={createUser.isPending}>
+            Create
+          </McButton>
+        </McDialogFooter>
+      </McDialogContent>
+    </McDialog>
   )
 }
