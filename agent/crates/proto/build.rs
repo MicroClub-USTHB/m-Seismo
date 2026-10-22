@@ -1,8 +1,8 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_prost_build::configure()
-        // XXX: generated AgentClient::connect clashes with the Connect rpc,
-        // servers only for now
-        .build_client(false)
+        // NOTE: the generated transport helper `AgentClient::connect` clashes with
+        // the `Connect` rpc, so we build our own Channel and use `::new`
+        .build_transport(false)
         .compile_protos(
             &[
                 "../../../spec/proto/seismo/v1/agent.proto",
