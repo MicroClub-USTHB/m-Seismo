@@ -116,6 +116,7 @@ async fn asks_every_agent_with_its_share_of_the_limits() {
     let reg = registry(500, 8 << 20);
     let (mut b, mut a) = (join(&reg, "b", &["redis"]), join(&reg, "a", &["db"]));
     let mut q = logs(LONG);
+    let backend_deadline = q.deadline.unwrap();
     q.trace_id = Some("abc".into());
 
     let query = {
@@ -148,8 +149,13 @@ async fn asks_every_agent_with_its_share_of_the_limits() {
     assert_eq!(limits.context_lines, 5);
     // the agent must answer before the backend's deadline minus our margin
     let agent_deadline = qa.deadline.unwrap();
-    let backend_deadline = logs(LONG).deadline.unwrap();
-    assert!(agent_deadline.seconds < backend_deadline.seconds);
+    let ns = |t: &Timestamp| t.seconds as i128 * 1_000_000_000 + t.nanos as i128;
+    let early_by = Duration::from_nanos((ns(&backend_deadline) - ns(&agent_deadline)) as u64);
+    // margin is 500ms, give or take the time the query itself took
+    assert!(
+        early_by > Duration::from_millis(450) && early_by <= Duration::from_millis(500),
+        "{early_by:?}"
+    );
 }
 
 #[tokio::test]
