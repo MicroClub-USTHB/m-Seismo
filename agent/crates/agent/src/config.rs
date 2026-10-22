@@ -30,6 +30,7 @@ pub struct Coordinator {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Source {
     Loki(Loki),
+    Docker(Docker),
     File(File),
     Journal(Journal),
 }
@@ -77,6 +78,18 @@ pub struct Journal {
     pub command: Vec<String>,
 }
 
+/// Reads container logs by running `docker logs`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Docker {
+    /// Service name -> container name or id. Defaults to the service name.
+    #[serde(default)]
+    pub containers: HashMap<String, String>,
+    /// Program and leading args, e.g. `["sudo", "docker"]`.
+    #[serde(default = "default_docker")]
+    pub command: Vec<String>,
+}
+
 /// Secrets never live in the file, only the env var names do.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -98,6 +111,10 @@ pub enum Auth {
 
 fn default_token_env() -> String {
     DEFAULT_TOKEN_ENV.into()
+}
+
+fn default_docker() -> Vec<String> {
+    vec!["docker".into()]
 }
 
 fn default_journalctl() -> Vec<String> {
@@ -150,6 +167,11 @@ impl Config {
             Source::File(f) => {
                 if let Some(s) = cfg.services.iter().find(|s| !f.files.contains_key(*s)) {
                     return Err(format!("source.files has no entry for service {s}"));
+                }
+            }
+            Source::Docker(d) => {
+                if d.command.first().is_none_or(|c| c.is_empty()) {
+                    return Err("source.command must not be empty".into());
                 }
             }
             Source::Journal(j) => {

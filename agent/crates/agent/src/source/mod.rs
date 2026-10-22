@@ -1,5 +1,6 @@
 //! Where log lines come from. Every source answers the same question: the
 //! lines of one service inside a time window, newest kept when it has to cut.
+pub mod docker;
 pub mod file;
 pub mod journal;
 pub mod loki;
@@ -31,6 +32,7 @@ pub struct Fetched {
 // doesn't need async-trait or boxing
 pub enum Source {
     Loki(loki::Loki),
+    Docker(docker::Docker),
     File(file::File),
     Journal(journal::Journal),
 }
@@ -39,6 +41,7 @@ impl Source {
     pub fn build(cfg: &config::Source) -> Result<Self, String> {
         match cfg {
             config::Source::Loki(c) => Ok(Self::Loki(loki::Loki::new(c.clone())?)),
+            config::Source::Docker(c) => Ok(Self::Docker(docker::Docker::new(c))),
             config::Source::File(c) => Ok(Self::File(file::File::new(c))),
             config::Source::Journal(c) => Ok(Self::Journal(journal::Journal::new(c))),
         }
@@ -48,6 +51,7 @@ impl Source {
     pub fn kind(&self) -> AgentSource {
         match self {
             Self::Loki(_) => AgentSource::Loki,
+            Self::Docker(_) => AgentSource::Docker,
             Self::File(_) => AgentSource::File,
             Self::Journal(_) => AgentSource::Journal,
         }
@@ -56,6 +60,7 @@ impl Source {
     pub async fn fetch(&self, p: Params<'_>) -> Result<Fetched, SourceError> {
         match self {
             Self::Loki(s) => s.fetch(p).await,
+            Self::Docker(s) => s.fetch(p).await,
             Self::File(s) => s.fetch(p).await,
             Self::Journal(s) => s.fetch(p).await,
         }

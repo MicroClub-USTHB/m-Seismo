@@ -98,6 +98,25 @@ postgres = "postgresql@16-main.service"
 The agent's user needs to be in `systemd-journal` (or use `command`) to see
 other units' logs. The `trace_id` filter is a plain substring match.
 
+### `docker`
+
+Container logs, through `docker logs --timestamps`. Each service maps to a
+container name or id (default: the service name). stdout and stderr are
+interleaved by time and keep their stream. Needs a logging driver that
+supports reading (`json-file`, `local`, `journald`).
+
+```toml
+[source]
+type = "docker"
+# command = ["sudo", "docker"]      # default ["docker"]
+
+[source.containers]
+postgres = "myproj-postgres-1"
+```
+
+The agent's user needs access to the Docker socket. The `trace_id` filter is
+a plain substring match.
+
 ## Status
 
 Agent done for Loki logs. No Tempo, Mimir or `context_lines` yet.
