@@ -15,5 +15,6 @@ class ExampleApp : Application() {
                 environment = "development",
             ),
         )
+        MSeismo.log("Example app started")
     }
 }

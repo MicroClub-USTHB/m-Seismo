@@ -33,17 +33,17 @@ class MSeismoTest {
 
     @Test
     fun installationIdIsCreatedOnceAndKeptOutOfBackups() {
-        val first = MSeismo.loadInstallationId(app)
-        assertEquals(first, MSeismo.loadInstallationId(app))
-        assertEquals(first, File(app.noBackupFilesDir, MSeismo.INSTALLATION_ID_FILE).readText())
+        val first = loadInstallationId(app)
+        assertEquals(first, loadInstallationId(app))
+        assertEquals(first, File(app.noBackupFilesDir, INSTALLATION_ID_FILE).readText())
     }
 
     @Test
     fun corruptInstallationIdIsReplaced() {
-        File(app.noBackupFilesDir, MSeismo.INSTALLATION_ID_FILE).writeText("3f2a-cut-short")
-        val id = MSeismo.loadInstallationId(app)
+        File(app.noBackupFilesDir, INSTALLATION_ID_FILE).writeText("3f2a-cut-short")
+        val id = loadInstallationId(app)
         assertEquals(36, id.length)
-        assertEquals(id, MSeismo.loadInstallationId(app))
+        assertEquals(id, loadInstallationId(app))
     }
 
     @Test
@@ -52,11 +52,11 @@ class MSeismoTest {
 
         info.versionName = null
         shadowOf(app.packageManager).installPackage(info)
-        assertEquals("unknown", MSeismo.releaseOf(app).version)
+        assertEquals("unknown", releaseOf(app).version)
 
         info.versionName = "1.2.3-" + "x".repeat(100)
         shadowOf(app.packageManager).installPackage(info)
-        assertEquals(MAX_FIELD_LENGTH, MSeismo.releaseOf(app).version.length)
+        assertEquals(MAX_FIELD_LENGTH, releaseOf(app).version.length)
     }
 
     @Test
@@ -71,7 +71,7 @@ class MSeismoTest {
     @Test
     fun firstUseLoadsOnceAndKeepsTheValue() {
         var calls = 0
-        val cache = MSeismo.FirstUse("test") { calls++; "value" }
+        val cache = FirstUse("test") { calls++; "value" }
         assertNull(cache.get(null))
         assertEquals("value", cache.get(app))
         assertEquals("value", cache.get(app))
@@ -81,7 +81,7 @@ class MSeismoTest {
     @Test
     fun firstUseWaitsBeforeRetryingAFailure() {
         var calls = 0
-        val cache = MSeismo.FirstUse<String>("test", retryMs = 60_000) { calls++; error("disk unavailable") }
+        val cache = FirstUse<String>("test", retryMs = 60_000) { calls++; error("disk unavailable") }
         assertNull(cache.get(app))
         assertNull(cache.get(app))
         assertEquals(1, calls)
@@ -90,7 +90,7 @@ class MSeismoTest {
     @Test
     fun firstUseRetriesAFailureOnceTheWaitIsOver() {
         var calls = 0
-        val cache = MSeismo.FirstUse("test", retryMs = 0) { if (calls++ == 0) error("disk unavailable") else "value" }
+        val cache = FirstUse("test", retryMs = 0) { if (calls++ == 0) error("disk unavailable") else "value" }
         assertNull(cache.get(app))
         assertEquals("value", cache.get(app))
         assertEquals(2, calls)
@@ -181,6 +181,49 @@ class MSeismoTest {
         MSeismo.report(title = "Phone storage full")
 
         assertTrue(sent.await(5, TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun reportCarriesRedactedContext() {
+        val sent = CountDownLatch(1)
+        var json = JSONObject()
+        MSeismo.send = { _, _, reportJson -> json = JSONObject(reportJson); sent.countDown(); SendResult.Accepted }
+        MSeismo.configure(app, valid)
+
+        MSeismo.log("signed in as jane@example.com")
+        MSeismo.breadcrumb(BreadcrumbKind.TAP, "Pay button")
+        MSeismo.recordRequest("https://api.example.com/pay", "POST", 502, 120, requestBody = "card 4111 1111 1111 1111")
+        MSeismo.report(title = "Pay fails")
+
+        assertTrue(sent.await(5, TimeUnit.SECONDS))
+        val logs = json.getJSONArray("logs").toString()
+        assertTrue(logs, "signed in as [REDACTED]" in logs && "jane@example.com" !in logs)
+        assertTrue("Pay button" in json.getJSONArray("breadcrumbs").toString())
+        val request = json.getJSONArray("network_requests").let { it.getJSONObject(it.length() - 1) }
+        assertEquals(502, request.getInt("status_code"))
+        assertTrue("bodies are off by default", !request.has("request_body") && !json.getBoolean("bodies_captured"))
+        assertTrue(json.getJSONObject("device").has("network_type"))
+    }
+
+    @Test
+    fun hugeLogLinesAreCutBeforeBeingKeptInMemory() {
+        MSeismo.log("x".repeat(1_000_000))
+        assertEquals(4_000, MSeismo.logs.snapshot().last().message.length)
+    }
+
+    @Test
+    fun screensAndBackgroundingAreRecorded() {
+        MSeismo.configure(app, valid)
+        org.robolectric.Robolectric.buildActivity(android.app.Activity::class.java).setup()
+        app.onTrimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN)
+
+        val sent = CountDownLatch(1)
+        var crumbs = ""
+        MSeismo.send = { _, _, reportJson -> crumbs = JSONObject(reportJson).getJSONArray("breadcrumbs").toString(); sent.countDown(); SendResult.Accepted }
+        MSeismo.report()
+        assertTrue(sent.await(5, TimeUnit.SECONDS))
+        assertTrue(crumbs, """"kind":"navigation","message":"Activity"""" in crumbs)
+        assertTrue(crumbs, """"message":"background"""" in crumbs)
     }
 
     private val valid = Configuration(endpoint = "https://seismo.example.com", appKey = "msk_test")

@@ -11,14 +11,21 @@ private val APP_KEY = Regex("msk_[A-Za-z0-9_-]+")
 /**
  * @property endpoint backend base URL. `http://` only works in debug builds.
  * @property release defaults to the app's versionName and versionCode.
+ * @property captureNetworkBodies send request and response bodies. Off by default.
+ * @property redactionAllowList text never redacted, e.g. a public support email.
+ * @property redactionDenyList text always redacted, e.g. an internal codename.
  */
-public data class Configuration(
+public data class Configuration @JvmOverloads constructor(
     val endpoint: String,
     val appKey: String,
     val environment: String = "production",
     val release: Release? = null,
     val shakeEnabled: Boolean = true,
     val screenshotEnabled: Boolean = false,
+    val captureNetworkBodies: Boolean = false,
+    val redactionRules: List<Regex> = DEFAULT_REDACTION_RULES,
+    val redactionAllowList: List<String> = emptyList(),
+    val redactionDenyList: List<String> = emptyList(),
 ) {
     internal val reportsUrl: String
         get() = endpoint.trimEnd('/') + "/api/v1/reports"
@@ -41,9 +48,20 @@ public data class Configuration(
         }
     }
 
+    public companion object {
+        // Email, phone, card number, bearer token.
+        @JvmField
+        public val DEFAULT_REDACTION_RULES: List<Regex> = listOf(
+            Regex("""(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"""),
+            Regex("""\+?\d[\d\-.\s]{8,}\d"""),
+            Regex("""\b(?:\d[ -]?){13,16}\b"""),
+            Regex("""Bearer\s+[A-Za-z0-9\-_.]+"""),
+        )
+    }
+
     override fun toString(): String =
         "Configuration(endpoint=$endpoint, appKey=msk_***, environment=$environment, release=$release, " +
-            "shakeEnabled=$shakeEnabled, screenshotEnabled=$screenshotEnabled)"
+            "shakeEnabled=$shakeEnabled, screenshotEnabled=$screenshotEnabled, captureNetworkBodies=$captureNetworkBodies)"
 }
 
 public data class Release(val version: String, val build: String)

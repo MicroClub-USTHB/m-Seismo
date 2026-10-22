@@ -28,6 +28,25 @@ class MyApp : Application() {
 
 `release` defaults to the app's `versionName` and `versionCode`.
 
+Each report also carries context, already redacted on the device:
+
+- **Device**: OS, model, language, battery, free memory, network type and
+  orientation, read automatically.
+- **Logs**: the last 200 lines you pass to `MSeismo.log("Cart loaded")`.
+- **Breadcrumbs**: the last 50 user actions. Screens opened and the app
+  going to the background are recorded automatically; add your own with
+  `MSeismo.breadcrumb(BreadcrumbKind.TAP, "Pay button")`.
+- **Network requests**: the last 50 you pass to
+  `MSeismo.recordRequest(url, method, statusCode, durationMs)`, for example
+  from an OkHttp interceptor. Request and response bodies are only kept when
+  `Configuration(captureNetworkBodies = true)`.
+
+Before anything leaves the phone, emails, phone numbers, card numbers and
+`Bearer` tokens are replaced with `[REDACTED]`. Change this with
+`redactionRules` (default `Configuration.DEFAULT_REDACTION_RULES`),
+`redactionAllowList` (never redacted) and `redactionDenyList` (always
+redacted).
+
 Reports are saved on the device (`no_backup/mseismo-queue`, one file per
 report) before they are sent, and kept until the backend accepts or rejects
 them. Without a connection, or while the backend is down, they are retried

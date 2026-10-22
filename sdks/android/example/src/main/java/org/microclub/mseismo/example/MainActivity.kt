@@ -6,6 +6,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import org.microclub.mseismo.BreadcrumbKind
 import org.microclub.mseismo.Category
 import org.microclub.mseismo.MSeismo
 import org.microclub.mseismo.Severity
@@ -31,6 +32,7 @@ class MainActivity : Activity() {
         val send = Button(this).apply {
             text = "Send test report"
             setOnClickListener {
+                MSeismo.breadcrumb(BreadcrumbKind.TAP, "Send test report button")
                 val id = MSeismo.report(
                     title = "Test report from the example app",
                     description = "Sent with the Send test report button.",

@@ -1,14 +1,11 @@
 package org.microclub.mseismo
 
 import android.app.Application
-import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.net.ConnectivityManager
 import android.net.Network
-import android.os.Build
 import android.util.Log
 import java.io.File
-import java.io.RandomAccessFile
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
@@ -17,15 +14,17 @@ import java.util.concurrent.TimeUnit
 // Call configure() once in Application.onCreate.
 public object MSeismo {
     internal const val TAG = "MSeismo"
-    internal const val INSTALLATION_ID_FILE = "mseismo_installation_id"
     public const val SDK_NAME: String = "mseismo-android"
+    @JvmStatic
     public val SDK_VERSION: String = BuildConfig.SDK_VERSION
 
+    @JvmStatic
     @Volatile
     public var configuration: Configuration? = null
         private set
 
     // New on every launch.
+    @JvmStatic
     public val sessionId: String = UUID.randomUUID().toString()
 
     @Volatile
@@ -36,9 +35,11 @@ public object MSeismo {
     private val releaseCache = FirstUse("release", load = ::releaseOf)
 
     // Null until configured.
+    @JvmStatic
     public val installationId: String?
         get() = installationIdCache.get(app)
 
+    @JvmStatic
     public val release: Release?
         get() = configuration?.release ?: releaseCache.get(app)
 
@@ -56,6 +57,7 @@ public object MSeismo {
             // Send what the last launch left, and retry when the network returns.
             worker.execute { safely { drain() } }
             watchNetwork(application)
+            watchLifecycle(application)
         } catch (t: Throwable) {
             this.configuration = null
             app = null
@@ -67,10 +69,50 @@ public object MSeismo {
     private val worker = Executors.newSingleThreadScheduledExecutor { Thread(it, "mseismo").apply { isDaemon = true } }
     internal var send: (url: String, appKey: String, reportJson: String) -> SendResult = ReportTransport()::send
 
+    // Text is cut when recorded, so huge lines can't fill memory.
+    internal val logs = RingBuffer<LogLine>(200)
+    private val breadcrumbs = RingBuffer<Breadcrumb>(50)
+    private val requests = RingBuffer<NetworkRequest>(50)
+
+    // Works before configure(). Never throws.
+    @JvmStatic
+    public fun log(message: String) {
+        safely { logs.add(LogLine(System.currentTimeMillis(), message.limit(MaxChars.LOG_MESSAGE))) }
+    }
+
+    // Never throws.
+    @JvmStatic
+    public fun breadcrumb(kind: BreadcrumbKind, message: String) {
+        safely { breadcrumbs.add(Breadcrumb(System.currentTimeMillis(), kind, message.limit(MaxChars.BREADCRUMB))) }
+    }
+
+    // Call it from your HTTP client, e.g. an OkHttp interceptor. Bodies are dropped unless captureNetworkBodies. Never throws.
+    @JvmStatic
+    @JvmOverloads
+    public fun recordRequest(
+        url: String,
+        method: String,
+        statusCode: Int?,
+        durationMs: Long,
+        requestBody: String? = null,
+        responseBody: String? = null,
+    ) {
+        safely {
+            val bodies = configuration?.captureNetworkBodies == true
+            requests.add(
+                NetworkRequest(
+                    System.currentTimeMillis(), url.limit(MaxChars.URL), method.limit(MaxChars.METHOD), statusCode, durationMs,
+                    requestBody?.takeIf { bodies }?.limit(MaxChars.BODY), responseBody?.takeIf { bodies }?.limit(MaxChars.BODY),
+                ),
+            )
+        }
+    }
+
     // Worker thread only.
     private var queue: OfflineQueue? = null
     private var nextDrain: ScheduledFuture<*>? = null
     private var watchingNetwork = false
+    private var watchedLifecycleOf: Application? = null
 
     // Sends a report in the background. Returns its ID, or null when the SDK is off. Never throws.
     @JvmStatic
@@ -88,10 +130,35 @@ public object MSeismo {
             null
         } else {
             val id = UUID.randomUUID().toString()
-            val occurredAt = System.currentTimeMillis()
-            val device = Device.current()
             val input = UserInput(title, description, category, severity).takeIf { it != UserInput() }
-            worker.execute { safely { deliver(app, config, id, occurredAt, Trigger.MANUAL, input, device) } }
+            val occurredAt = System.currentTimeMillis()
+            val recentLogs = logs.snapshot()
+            val recentBreadcrumbs = breadcrumbs.snapshot()
+            val recentRequests = requests.snapshot()
+            worker.execute {
+                safely {
+                    // Read on the worker: system services can be slow.
+                    val device = Device.current(app)
+                    deliver(app, config, id) { installationId, release ->
+                        Report(
+                            id = id,
+                            installationId = installationId,
+                            sessionId = sessionId,
+                            occurredAtMillis = occurredAt,
+                            environment = config.environment,
+                            release = release,
+                            trigger = Trigger.MANUAL,
+                            autoSubmitted = false,
+                            userInput = input,
+                            device = device,
+                            logs = recentLogs,
+                            breadcrumbs = recentBreadcrumbs,
+                            networkRequests = recentRequests,
+                            bodiesCaptured = config.captureNetworkBodies,
+                        )
+                    }
+                }
+            }
             id
         }
     } catch (t: Throwable) {
@@ -100,35 +167,17 @@ public object MSeismo {
     }
 
     // Uses the app and configuration from when report() was called, even if configure() runs again meanwhile.
-    private fun deliver(
-        app: Application,
-        config: Configuration,
-        id: String,
-        occurredAt: Long,
-        trigger: Trigger,
-        input: UserInput?,
-        device: Device,
-    ) {
+    // build gets the installation ID and release, which are read here, off the caller's thread.
+    private fun deliver(app: Application, config: Configuration, id: String, build: (String, Release) -> Report) {
         val installationId = installationIdCache.get(app)
         val release = config.release ?: releaseCache.get(app)
         if (installationId == null || release == null) {
             // Storage hiccup: retry in 10 s.
-            worker.schedule({ safely { deliver(app, config, id, occurredAt, trigger, input, device) } }, 10, TimeUnit.SECONDS)
+            worker.schedule({ safely { deliver(app, config, id, build) } }, 10, TimeUnit.SECONDS)
             return
         }
-        val report = Report(
-            id = id,
-            installationId = installationId,
-            sessionId = sessionId,
-            occurredAtMillis = occurredAt,
-            environment = config.environment,
-            release = release,
-            trigger = trigger,
-            autoSubmitted = false,
-            userInput = input,
-            device = device,
-        )
-        val json = report.toJson()
+        val redactor = Redactor(config.redactionRules, config.redactionAllowList, config.redactionDenyList)
+        val json = redactor.redact(build(installationId, release)).toJsonUnder()
         try {
             queueFor(app).add(id, json)
         } catch (e: Exception) {
@@ -166,6 +215,13 @@ public object MSeismo {
         }
     }
 
+    @Synchronized
+    private fun watchLifecycle(app: Application) {
+        if (watchedLifecycleOf === app) return
+        recordLifecycle(app, ::breadcrumb)
+        watchedLifecycleOf = app
+    }
+
     // Logs background failures instead of crashing the app.
     private inline fun safely(block: () -> Unit) {
         try {
@@ -175,64 +231,5 @@ public object MSeismo {
         }
     }
 
-    // noBackupFilesDir: backups would copy the ID to other phones. The lock stops two processes making two IDs.
-    internal fun loadInstallationId(context: Context): String {
-        val file = File(context.noBackupFilesDir, INSTALLATION_ID_FILE)
-        RandomAccessFile(file, "rw").use { raf ->
-            val lock = raf.channel.lock()
-            try {
-                val stored = raf.readLine()?.trim()
-                if (stored != null && isUuid(stored)) return stored
-                // Missing or corrupt: make a new one.
-                val id = UUID.randomUUID().toString()
-                raf.setLength(0)
-                raf.writeBytes(id)
-                raf.fd.sync()
-                return id
-            } finally {
-                lock.release()
-            }
-        }
-    }
 
-    private fun isUuid(value: String): Boolean =
-        value.length == 36 && runCatching { UUID.fromString(value) }.isSuccess
-
-    internal fun releaseOf(context: Context): Release {
-        val info = context.packageManager.getPackageInfo(context.packageName, 0)
-        val build = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else {
-            @Suppress("DEPRECATION")
-            info.versionCode.toLong()
-        }
-        val version = info.versionName.orEmpty().take(MAX_FIELD_LENGTH).ifEmpty { "unknown" }
-        return Release(version = version, build = build.toString())
-    }
-
-    // Caches a value. After a failure, waits retryMs before trying again.
-    internal class FirstUse<T : Any>(
-        private val name: String,
-        private val retryMs: Long = 10_000,
-        private val load: (Context) -> T,
-    ) {
-        @Volatile
-        private var value: T? = null
-        private var retryAtNanos: Long? = null
-
-        fun get(app: Application?): T? {
-            if (app == null) return null
-            value?.let { return it }
-            synchronized(this) {
-                value?.let { return it }
-                val retryAt = retryAtNanos
-                if (retryAt != null && System.nanoTime() - retryAt < 0) return null
-                return try {
-                    load(app).also { value = it }
-                } catch (t: Throwable) {
-                    retryAtNanos = System.nanoTime() + retryMs * 1_000_000
-                    Log.e(TAG, "could not read the $name; retrying in $retryMs ms", t)
-                    null
-                }
-            }
-        }
-    }
 }

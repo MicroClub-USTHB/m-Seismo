@@ -6,6 +6,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import androidx.test.core.app.ApplicationProvider
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -50,7 +51,8 @@ class ReportTest {
                 "category": "bug",
                 "severity": "high"
               },
-              "device": { "os_name": "Android", "os_version": "15", "model": "Google Pixel 8", "locale": "fr-DZ" }
+              "device": { "os_name": "Android", "os_version": "15", "model": "Google Pixel 8", "locale": "fr-DZ" },
+              "bodies_captured": false
             }
             """,
         )
@@ -97,12 +99,58 @@ class ReportTest {
         assertEquals("abc", "abc".limit(3))
     }
 
+    private val full = report.copy(
+        device = Device("Android", "15", "Google Pixel 8", "fr-DZ", 0.62, 1_073_741_824, "wifi", "portrait"),
+        logs = listOf(LogLine(1_760_796_181_004, "Cart loaded with 3 items")),
+        breadcrumbs = BreadcrumbKind.entries.map { Breadcrumb(1_760_796_175_512, it, "CartView") },
+        networkRequests = listOf(NetworkRequest(1_760_796_189_866, "https://api.example.com/v1/payments", "POST", 502, 120, "{}", "bad gateway")),
+        bodiesCaptured = true,
+    )
+
     @Test
-    fun currentDeviceHasTheRequiredFields() {
-        val device = Device.current()
+    fun currentDeviceFollowsTheSchema() {
+        val device = Device.current(ApplicationProvider.getApplicationContext())
+        val schema = JSONObject(File("../../../spec/report.schema.json").readText())
+            .getJSONObject("properties").getJSONObject("device").getJSONObject("properties")
         assertEquals("Android", device.osName)
-        assertTrue(device.osVersion.isNotEmpty())
-        assertTrue(device.model.isNotEmpty())
+        assertTrue(device.osVersion.isNotEmpty() && device.model.isNotEmpty())
+        assertTrue(schema.getJSONObject("network_type").getJSONArray("enum").contains(device.networkType!!))
+        assertTrue(schema.getJSONObject("orientation").getJSONArray("enum").contains(device.orientation!!))
+        device.batteryLevel?.let { assertTrue(it in 0.0..1.0) }
+    }
+
+    @Test
+    fun contextFollowsTheSpecSchema() {
+        val properties = JSONObject(File("../../../spec/report.schema.json").readText()).getJSONObject("properties")
+        val json = JSONObject(full.toJson())
+
+        for (name in listOf("logs", "breadcrumbs", "network_requests")) {
+            val items = properties.getJSONObject(name).getJSONObject("items")
+            val array = json.getJSONArray(name)
+            for (i in 0 until array.length()) assertFieldsAllowed(array.getJSONObject(i), items.getJSONObject("properties"), items.getJSONArray("required"))
+        }
+        val kinds = properties.getJSONObject("breadcrumbs").getJSONObject("items").getJSONObject("properties").getJSONObject("kind").getJSONArray("enum")
+        BreadcrumbKind.entries.forEach { assertTrue("kind $it", kinds.contains(it.name.lowercase())) }
+        assertFieldsAllowed(json.getJSONObject("device"), properties.getJSONObject("device").getJSONObject("properties"), JSONArray())
+        assertEquals("bad gateway", json.getJSONArray("network_requests").getJSONObject(0).getString("response_body"))
+        assertTrue(json.getBoolean("bodies_captured"))
+    }
+
+    @Test
+    fun bodiesAreLeftOutUnlessCaptured() {
+        val request = JSONObject(full.copy(bodiesCaptured = false).toJson()).getJSONArray("network_requests").getJSONObject(0)
+        assertFalse(request.has("request_body") || request.has("response_body"))
+    }
+
+    @Test
+    fun aReportOverTheSizeLimitShedsContextUntilItFits() {
+        val huge = full.copy(
+            logs = List(200) { LogLine(1L, "x".repeat(4_000)) },
+            networkRequests = List(50) { NetworkRequest(1L, "https://a.b/c", "GET", 200, 1, "y".repeat(16_000), "z".repeat(16_000)) },
+        )
+        val json = huge.toJsonUnder()
+        assertTrue(json.toByteArray().size <= 900_000)
+        assertEquals(huge.id, JSONObject(json).getString("id"))
     }
 
     private fun assertFieldsAllowed(json: JSONObject, allowed: JSONObject, required: JSONArray) {
