@@ -93,7 +93,7 @@ func New(o Options, store provider.SecretStore, creds provider.CredentialStore) 
 	}
 
 	p := &Provider{
-		opts: o,
+		opts:  o,
 		creds: creds,
 		api: &oauth.Client{
 			Tracker:          "gitlab",

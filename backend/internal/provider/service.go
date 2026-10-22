@@ -131,9 +131,9 @@ func (s *Service) SetCredentials(ctx context.Context, ownerID, appID uuid.UUID, 
 // CredentialStatus reports whether the app has registered an OAuth
 // application for tracker, without exposing the client secret.
 type CredentialStatus struct {
-	Tracker     db.Tracker `json:"tracker"`
-	Configured  bool       `json:"configured"`
-	ClientID    string     `json:"client_id,omitempty"`
+	Tracker    db.Tracker `json:"tracker"`
+	Configured bool       `json:"configured"`
+	ClientID   string     `json:"client_id,omitempty"`
 }
 
 // GetCredentialStatus reports the app's OAuth application status for
