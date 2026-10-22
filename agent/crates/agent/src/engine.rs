@@ -4,12 +4,16 @@ use crate::{
 };
 use futures_util::future::join_all;
 use prost_types::Timestamp;
+use regex::Regex;
 use seismo_proto::{
     self as pb, BoolDiagnostic, CoverageStatus, QueryStatus, SourceError, SourceErrorKind,
     StringDiagnostic, UintDiagnostic, Workload, WorkloadDiagnostics, WorkloadResult,
     WorkloadStatus,
 };
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    sync::OnceLock,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 // NOTE: used when the coordinator leaves a limit at 0, it never should
 const DEFAULT_LINES: u32 = 1000;
@@ -252,6 +256,73 @@ fn split_budget(total: usize, sizes: &[Option<usize>]) -> Vec<usize> {
         left -= take;
     }
     shares
+}
+
+// NOTE: metrics scan deeper than a log query since only counts leave the host
+const METRICS_LINES: u32 = 100_000;
+
+// XXX: text heuristic, a "no error" line counts too. good enough for a rate
+fn is_error(msg: &str) -> bool {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)\b(error|fatal|panic|critical)\b").unwrap())
+        .is_match(msg)
+}
+
+impl Engine {
+    /// Line and error-line counts per service over the window. Same fetch as
+    /// a log query, so every source works as is.
+    pub async fn metrics(&self, q: &pb::MetricsQuery) -> Result<pb::MetricsResult, pb::QueryError> {
+        let fail = || pb::QueryError {
+            query_id: q.query_id.clone(),
+            error: Some(source_err(
+                SourceErrorKind::Unspecified,
+                "window needs from and to, and the deadline must not have passed",
+            )),
+        };
+        let (Some(win), Some(timeout)) = (&q.window, remaining(q.deadline.as_ref())) else {
+            return Err(fail());
+        };
+        let (Some(from), Some(to)) = (&win.from, &win.to) else {
+            return Err(fail());
+        };
+        let fetched = join_all(self.services.iter().map(|service| {
+            self.source.fetch(Params {
+                service,
+                from,
+                to,
+                trace_id: None,
+                limit: METRICS_LINES,
+                context: 0,
+                timeout,
+            })
+        }))
+        .await;
+        let services = self
+            .services
+            .iter()
+            .zip(fetched)
+            .map(|(service, res)| {
+                let mut m = pb::ServiceMetrics {
+                    service: service.clone(),
+                    ..Default::default()
+                };
+                match res {
+                    Ok(f) => {
+                        m.lines = f.entries.len() as u64;
+                        m.error_lines =
+                            f.entries.iter().filter(|e| is_error(&e.message)).count() as u64;
+                        m.truncated = f.hit_limit;
+                    }
+                    Err(e) => m.error = Some(e),
+                }
+                m
+            })
+            .collect();
+        Ok(pb::MetricsResult {
+            query_id: q.query_id.clone(),
+            services,
+        })
+    }
 }
 
 #[cfg(test)]

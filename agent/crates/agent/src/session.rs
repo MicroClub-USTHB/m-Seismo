@@ -108,6 +108,22 @@ pub async fn session(cfg: &Config, engine: Arc<Engine>) -> Result<(), Status> {
                 });
                 inflight.lock().unwrap().insert(id, handle);
             }
+            Some(coordinator_message::Message::MetricsQuery(q)) => {
+                let (tx, engine, map) = (tx.clone(), engine.clone(), inflight.clone());
+                let id = q.query_id.clone();
+                let handle = tasks.spawn({
+                    let id = id.clone();
+                    async move {
+                        let reply = match engine.metrics(&q).await {
+                            Ok(r) => Message::MetricsResult(r),
+                            Err(e) => Message::Error(e),
+                        };
+                        map.lock().unwrap().remove(&id);
+                        let _ = tx.send(wire(reply)).await;
+                    }
+                });
+                inflight.lock().unwrap().insert(id, handle);
+            }
             Some(coordinator_message::Message::Cancel(c)) => {
                 if let Some(h) = inflight.lock().unwrap().remove(&c.query_id) {
                     h.abort();
