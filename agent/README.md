@@ -51,6 +51,35 @@ url = "http://loki:3100"
 Log lines are redacted in the agent before they are sent. Plaintext gRPC
 for now, TLS is not done yet.
 
+## Log sources
+
+Pick one per agent with `[source] type = ...`.
+
+### `loki`
+
+See the example above. One `query_range` per service.
+
+### `file`
+
+Plain log files, one per service. Reads from the end of the file, so a small
+window on a big log stays cheap, and follows rotated copies (`app.log.1`,
+`app.log.2`, uncompressed only) when the window reaches back that far.
+
+```toml
+[source]
+type = "file"
+rotated = 3                         # how many app.log.N to look into
+
+[source.files]
+postgres = "/var/log/postgresql/postgresql.log"
+```
+
+A line needs a timestamp the agent can read: RFC3339, `YYYY-MM-DD HH:MM:SS[,fff]`
+(taken as UTC), or JSON with `time`, `timestamp`, `ts`, `@timestamp` or `t`
+(string or epoch number). Lines without one (stack traces) stick to the line
+above. The `trace_id` filter is a plain substring match. A fetch reads at most
+64 MiB, past that it reports the result as truncated.
+
 ## Status
 
 Agent done for Loki logs. No Tempo, Mimir or `context_lines` yet.

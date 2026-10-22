@@ -16,7 +16,9 @@ futures-util = "0.3.34"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync"] }
 tokio-stream = "0.1.19"
 tonic.workspace = true
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+tempfile = "3.27.0"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util"] }
 tokio-stream = { version = "0.1.19", features = ["net"] }

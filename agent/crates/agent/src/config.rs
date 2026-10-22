@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::{collections::HashMap, path::PathBuf};
 
 pub const DEFAULT_TOKEN_ENV: &str = "SEISMO_AGENT_TOKEN";
 
@@ -29,6 +30,7 @@ pub struct Coordinator {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Source {
     Loki(Loki),
+    File(File),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -48,6 +50,18 @@ pub struct Loki {
     pub trace_field: String,
     #[serde(default)]
     pub auth: Auth,
+}
+
+/// Reads plain log files, one per service.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct File {
+    /// Service name -> its log file. Every entry of `services` needs one.
+    pub files: HashMap<String, PathBuf>,
+    /// How many rotated copies (`path.1`, `path.2`...) to look into when the
+    /// window reaches back past the start of the current file.
+    #[serde(default = "default_rotated")]
+    pub rotated: u32,
 }
 
 /// Secrets never live in the file, only the env var names do.
@@ -71,6 +85,10 @@ pub enum Auth {
 
 fn default_token_env() -> String {
     DEFAULT_TOKEN_ENV.into()
+}
+
+fn default_rotated() -> u32 {
+    3
 }
 
 fn default_service_label() -> String {
@@ -112,6 +130,11 @@ impl Config {
                 } => *password = secret(password_env)?,
                 Auth::Bearer { token_env, token } => *token = secret(token_env)?,
             },
+            Source::File(f) => {
+                if let Some(s) = cfg.services.iter().find(|s| !f.files.contains_key(*s)) {
+                    return Err(format!("source.files has no entry for service {s}"));
+                }
+            }
         }
         Ok(cfg)
     }
@@ -144,7 +167,7 @@ mod tests {
         let c = Config::parse(MIN, env).unwrap();
         assert_eq!(c.agent_id, "db");
         assert_eq!(c.coordinator.token, "tok");
-        let Source::Loki(l) = c.source;
+        let Source::Loki(l) = c.source else { panic!() };
         assert_eq!(l.service_label, "service_name");
         assert_eq!(l.trace_field, "trace_id");
         assert!(matches!(l.auth, Auth::None));
@@ -161,11 +184,31 @@ mod tests {
         let text = format!(
             "{MIN}\n[source.auth]\ntype = \"basic\"\nusername = \"u\"\npassword_env = \"LOKI_PW\""
         );
-        let Source::Loki(l) = Config::parse(&text, env).unwrap().source;
+        let Source::Loki(l) = Config::parse(&text, env).unwrap().source else {
+            panic!()
+        };
         match l.auth {
             Auth::Basic { password, .. } => assert_eq!(password, "hunter2"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn file_source_needs_a_file_per_service() {
+        let ok = r#"
+            services = ["a", "b"]
+            [coordinator]
+            url = "http://c:1"
+            [source]
+            type = "file"
+            [source.files]
+            a = "/var/log/a.log"
+            b = "/var/log/b.log"
+        "#;
+        let c = Config::parse(ok, env).unwrap();
+        let Source::File(f) = c.source else { panic!() };
+        assert_eq!(f.rotated, 3);
+        assert!(Config::parse(&ok.replace("b = \"/var/log/b.log\"", ""), env).is_err());
     }
 
     #[test]

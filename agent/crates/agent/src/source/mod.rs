@@ -1,5 +1,6 @@
 //! Where log lines come from. Every source answers the same question: the
 //! lines of one service inside a time window, newest kept when it has to cut.
+pub mod file;
 pub mod loki;
 
 use crate::config;
@@ -29,12 +30,14 @@ pub struct Fetched {
 // doesn't need async-trait or boxing
 pub enum Source {
     Loki(loki::Loki),
+    File(file::File),
 }
 
 impl Source {
     pub fn build(cfg: &config::Source) -> Result<Self, String> {
         match cfg {
             config::Source::Loki(c) => Ok(Self::Loki(loki::Loki::new(c.clone())?)),
+            config::Source::File(c) => Ok(Self::File(file::File::new(c))),
         }
     }
 
@@ -42,12 +45,14 @@ impl Source {
     pub fn kind(&self) -> AgentSource {
         match self {
             Self::Loki(_) => AgentSource::Loki,
+            Self::File(_) => AgentSource::File,
         }
     }
 
     pub async fn fetch(&self, p: Params<'_>) -> Result<Fetched, SourceError> {
         match self {
             Self::Loki(s) => s.fetch(p).await,
+            Self::File(s) => s.fetch(p).await,
         }
     }
 }
