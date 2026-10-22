@@ -24,7 +24,7 @@ pub struct Coordinator {
     pub token: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Loki {
     pub url: String,
@@ -44,7 +44,7 @@ pub struct Loki {
 }
 
 /// Secrets never live in the file, only the env var names do.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Auth {
     #[default]

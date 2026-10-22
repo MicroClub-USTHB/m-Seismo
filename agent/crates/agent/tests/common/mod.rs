@@ -1,3 +1,6 @@
+// NOTE: each test crate uses a different subset of this
+#![allow(dead_code)]
+
 //! Tiny canned-response HTTP server, enough to stand in for Loki.
 use std::{
     sync::{Arc, Mutex},
