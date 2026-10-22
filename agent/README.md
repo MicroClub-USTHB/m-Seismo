@@ -15,4 +15,4 @@ Run these commands from the repository root:
 
 ## Status
 
-Skeleton.
+Skeleton. Rewrite in progress, protocol lives in `spec/proto`.
