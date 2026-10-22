@@ -97,6 +97,17 @@ type IngestConfig struct {
 	InstallationBurst     int
 }
 
+// SuperadminConfig seeds one owner account at startup, so a fresh
+// deployment has someone able to log into the dashboard and create other
+// owners (there is no separate role or permission: the seeded owner is a
+// regular owner, just pre-created from configuration instead of
+// POST /auth/register). Empty Email or Password skips seeding.
+type SuperadminConfig struct {
+	Email    string
+	Password string
+	Name     string
+}
+
 // WorkerConfig controls the pipeline worker that turns accepted reports
 // into issues.
 type WorkerConfig struct {
@@ -112,18 +123,19 @@ type WorkerConfig struct {
 }
 
 type Config struct {
-	Env       string
-	LogLevel  string
-	Server    ServerConfig
-	Database  DatabaseConfig
-	Redis     RedisConfig
-	NATS      NATSConfig
-	Auth      AuthConfig
-	GitHub    GitHubConfig
-	GitLab    OAuthTrackerConfig
-	Bitbucket OAuthTrackerConfig
-	Secrets   SecretsConfig
-	Limits    LimitsConfig
-	Ingest    IngestConfig
-	Worker    WorkerConfig
+	Env        string
+	LogLevel   string
+	Server     ServerConfig
+	Database   DatabaseConfig
+	Redis      RedisConfig
+	NATS       NATSConfig
+	Auth       AuthConfig
+	GitHub     GitHubConfig
+	GitLab     OAuthTrackerConfig
+	Bitbucket  OAuthTrackerConfig
+	Secrets    SecretsConfig
+	Superadmin SuperadminConfig
+	Limits     LimitsConfig
+	Ingest     IngestConfig
+	Worker     WorkerConfig
 }

@@ -76,6 +76,10 @@ services:
       SEISMO_NATS_URL: nats://nats:4222
       SEISMO_AUTH_JWT_SECRET: ${SEISMO_AUTH_JWT_SECRET:-}
       SEISMO_AUTH_JWT_TTL: ${SEISMO_AUTH_JWT_TTL:-24h}
+      # Seeds one owner at startup; see deploy/.env.example.
+      SEISMO_SUPERADMIN_EMAIL: ${SEISMO_SUPERADMIN_EMAIL:-}
+      SEISMO_SUPERADMIN_PASSWORD: ${SEISMO_SUPERADMIN_PASSWORD:-}
+      SEISMO_SUPERADMIN_NAME: ${SEISMO_SUPERADMIN_NAME:-Super Admin}
       # GitHub App: set these in deploy/.env (see deploy/.env.example).
       SEISMO_GITHUB_APP_ID: ${SEISMO_GITHUB_APP_ID:-}
       SEISMO_GITHUB_APP_SLUG: ${SEISMO_GITHUB_APP_SLUG:-}

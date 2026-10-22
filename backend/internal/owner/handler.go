@@ -1,12 +1,16 @@
 package owner
 
 import (
+	"context"
+	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/fx"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/auth"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
 )
 
@@ -15,7 +19,25 @@ var Module = fx.Module("owner",
 		NewService,
 		httpx.AsRoutes(NewHandler),
 	),
+	fx.Invoke(seedSuperadmin),
 )
+
+// seedSuperadmin runs EnsureSuperadmin once the server starts serving, so a
+// transient DB hiccup at boot fails the same way any other startup error
+// does rather than being swallowed.
+func seedSuperadmin(lc fx.Lifecycle, cfg *config.Config, svc *Service) {
+	lc.Append(fx.Hook{OnStart: func(ctx context.Context) error {
+		sa := cfg.Superadmin
+		if sa.Email == "" || sa.Password == "" {
+			return nil
+		}
+		if err := svc.EnsureSuperadmin(ctx, sa.Email, sa.Password, sa.Name); err != nil {
+			return fmt.Errorf("owner: seed superadmin: %w", err)
+		}
+		slog.Info("superadmin ready", "email", sa.Email)
+		return nil
+	}})
+}
 
 type Handler struct {
 	svc     *Service

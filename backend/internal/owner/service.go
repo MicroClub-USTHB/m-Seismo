@@ -172,6 +172,25 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (Own
 	return toOwner(updated), nil
 }
 
+// EnsureSuperadmin seeds one owner from config.SuperadminConfig, so a fresh
+// deployment has someone able to log in and create other owners. It is a
+// no-op when email or password is empty, and when an owner with that email
+// already exists — it never overwrites an existing password, so changing
+// it after the first boot (or rotating SEISMO_SUPERADMIN_PASSWORD) does not
+// reset it back on the next restart.
+func (s *Service) EnsureSuperadmin(ctx context.Context, email, password, name string) error {
+	if email == "" || password == "" {
+		return nil
+	}
+	if _, _, err := s.Register(ctx, RegisterInput{Email: email, Password: password, Name: name}); err != nil {
+		if kind, _ := apperr.Classify(err); kind == apperr.KindConflict {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 // Delete removes the owner and, by cascade, everything they own.
 func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	n, err := s.q.DeleteOwner(ctx, id)
