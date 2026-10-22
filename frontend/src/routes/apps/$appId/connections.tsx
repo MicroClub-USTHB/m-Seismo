@@ -17,6 +17,18 @@ import {
 } from '../../../lib/api'
 import { getStoredOwner } from '../../../lib/auth'
 import { Shell } from '../../../lib/Shell'
+import { McButton } from '../../../components/mc-button'
+import { McInput } from '../../../components/mc-input'
+import { McCard } from '../../../components/mc-card'
+import { McBadge } from '../../../components/mc-badge'
+import { McSeparator } from '../../../components/mc-separator'
+import {
+  McSelect,
+  McSelectContent,
+  McSelectItem,
+  McSelectTrigger,
+  McSelectValue,
+} from '../../../components/mc-select'
 
 interface CallbackSearch {
   provider?: string
@@ -59,32 +71,37 @@ function AppConnectionsPage() {
 
   return (
     <Shell>
-      <Link to="/apps" className="text-sm text-gray-600 underline hover:no-underline">
-        ← Apps
-      </Link>
-
-      <h2 className="text-xl font-semibold text-gray-900">{app.data?.name ?? '…'}</h2>
+      <div className="space-y-1">
+        <Link to="/projects" className="text-sm text-muted-foreground hover:text-foreground hover:underline">
+          ← Projects
+        </Link>
+        <h2 className="header-xs text-foreground">{app.data?.name ?? '…'}</h2>
+      </div>
 
       {search.status && (
-        <p
-          className={`rounded border px-3 py-2 text-sm ${
+        <McCard
+          className={
             search.status === 'connected'
-              ? 'border-green-200 bg-green-50 text-green-800'
-              : 'border-red-200 bg-red-50 text-red-800'
-          }`}
+              ? 'border-success/30 bg-success/10'
+              : 'border-destructive/30 bg-destructive/10'
+          }
         >
-          {search.status === 'connected'
-            ? `Connected to ${search.provider}.`
-            : `Could not connect to ${search.provider}: ${search.reason}`}
-        </p>
+          <p className={`text-sm ${search.status === 'connected' ? 'text-success' : 'text-destructive'}`}>
+            {search.status === 'connected'
+              ? `Connected to ${search.provider}.`
+              : `Could not connect to ${search.provider}: ${search.reason}`}
+          </p>
+        </McCard>
       )}
 
       <section className="space-y-4">
-        <h3 className="text-sm font-medium text-gray-700">Source</h3>
-        <p className="text-sm text-gray-500">
-          Connect the tracker this app opens issues on. GitLab and Bitbucket need this app's own OAuth
-          application registered first.
-        </p>
+        <div>
+          <h3 className="text-sm font-medium text-foreground">Source</h3>
+          <p className="text-sm text-muted-foreground">
+            Connect the tracker this app opens issues on. GitLab and Bitbucket need this app's own OAuth
+            application registered first.
+          </p>
+        </div>
 
         <div className="grid gap-4 sm:grid-cols-3">
           {(providers.data?.providers ?? ALL_TRACKERS).map((tracker) => (
@@ -93,12 +110,12 @@ function AppConnectionsPage() {
         </div>
       </section>
 
-      <section>
-        <h3 className="mb-3 text-sm font-medium text-gray-700">Connections</h3>
+      <section className="space-y-3">
+        <h3 className="text-sm font-medium text-foreground">Connections</h3>
 
-        {connections.isLoading && <p className="text-sm text-gray-500">Loading…</p>}
+        {connections.isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
         {connections.data && connections.data.length === 0 && (
-          <p className="text-sm text-gray-500">No connections yet — connect a source above.</p>
+          <p className="text-sm text-muted-foreground">No connections yet — connect a source above.</p>
         )}
         {connections.data && connections.data.length > 0 && (
           <ConnectionsTable appId={appId} connections={connections.data} />
@@ -132,8 +149,8 @@ function TrackerCard({ appId, tracker }: { appId: string; tracker: Tracker }) {
   const canConnect = !needsOwnCredentials || status.data?.configured
 
   return (
-    <div className="space-y-2 rounded-lg border bg-white p-4">
-      <h4 className="font-medium capitalize text-gray-900">{tracker}</h4>
+    <McCard className="gap-3">
+      <h4 className="font-medium capitalize text-foreground">{tracker}</h4>
 
       {needsOwnCredentials && !status.isLoading && !status.data?.configured && (
         <CredentialsForm
@@ -144,24 +161,25 @@ function TrackerCard({ appId, tracker }: { appId: string; tracker: Tracker }) {
       )}
 
       {needsOwnCredentials && status.data?.configured && (
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-muted-foreground">
           OAuth app registered (client ID <code>{status.data.client_id}</code>).
         </p>
       )}
 
-      <button
+      <McButton
         onClick={() => connect.mutate()}
-        disabled={!canConnect || connect.isPending}
-        className="w-full rounded bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+        disabled={!canConnect}
+        isLoading={connect.isPending}
+        className="w-full"
       >
-        {connect.isPending ? 'Redirecting…' : 'Connect'}
-      </button>
+        Connect
+      </McButton>
       {connect.isError && (
-        <p className="text-xs text-red-600">
+        <p className="text-xs text-destructive">
           {connect.error instanceof ApiError ? connect.error.message : 'could not start the connect flow'}
         </p>
       )}
-    </div>
+    </McCard>
   )
 }
 
@@ -192,36 +210,29 @@ function CredentialsForm({
         e.preventDefault()
         save.mutate()
       }}
-      className="space-y-2 rounded border border-dashed border-gray-300 p-2"
+      className="flex flex-col gap-2 rounded-lg border border-dashed border-border p-2"
     >
-      <input
-        type="text"
+      <McInput
         placeholder="Client ID"
         required
         value={clientId}
         onChange={(e) => setClientId(e.target.value)}
-        className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
       />
-      <input
+      <McInput
         type="password"
         placeholder="Client secret"
         required
         value={clientSecret}
         onChange={(e) => setClientSecret(e.target.value)}
-        className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
       />
       {save.isError && (
-        <p className="text-xs text-red-600">
+        <p className="text-xs text-destructive">
           {save.error instanceof ApiError ? save.error.message : 'could not save credentials'}
         </p>
       )}
-      <button
-        type="submit"
-        disabled={save.isPending}
-        className="w-full rounded border border-gray-900 px-2 py-1 text-xs font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-50"
-      >
-        {save.isPending ? 'Saving…' : 'Save OAuth app'}
-      </button>
+      <McButton type="submit" variant="secondary" isLoading={save.isPending} className="w-full">
+        Save OAuth app
+      </McButton>
     </form>
   )
 }
@@ -234,34 +245,30 @@ function ConnectionsTable({ appId, connections }: { appId: string; connections: 
   })
 
   return (
-    <table className="w-full overflow-hidden rounded-lg border bg-white text-sm">
-      <thead className="bg-gray-100 text-left text-gray-600">
-        <tr>
-          <th className="px-4 py-2 font-medium">Tracker</th>
-          <th className="px-4 py-2 font-medium">Account</th>
-          <th className="px-4 py-2 font-medium">Status</th>
-          <th className="px-4 py-2 font-medium" />
-        </tr>
-      </thead>
-      <tbody>
-        {connections.map((c) => (
-          <tr key={c.id} className="border-t">
-            <td className="px-4 py-2 capitalize text-gray-800">{c.tracker}</td>
-            <td className="px-4 py-2 text-gray-800">{c.account_login}</td>
-            <td className="px-4 py-2 text-gray-800">{c.suspended_at ? 'Suspended' : 'Active'}</td>
-            <td className="px-4 py-2 text-right">
-              <button
-                onClick={() => disconnect.mutate(c.id)}
-                disabled={disconnect.isPending}
-                className="text-xs text-red-600 underline hover:no-underline disabled:opacity-50"
-              >
-                Disconnect
-              </button>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <McCard className="divide-y divide-border p-0">
+      {connections.map((c) => (
+        <div key={c.id} className="flex items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-3 text-sm">
+            <span className="capitalize text-foreground">{c.tracker}</span>
+            <span className="text-muted-foreground">{c.account_login}</span>
+            <McBadge
+              variant={c.suspended_at ? 'destructive' : 'outline'}
+              className={c.suspended_at ? undefined : 'text-success'}
+            >
+              {c.suspended_at ? 'Suspended' : 'Active'}
+            </McBadge>
+          </div>
+          <McButton
+            variant="link"
+            destructive
+            onClick={() => disconnect.mutate(c.id)}
+            disabled={disconnect.isPending}
+          >
+            Disconnect
+          </McButton>
+        </div>
+      ))}
+    </McCard>
   )
 }
 
@@ -295,53 +302,56 @@ function ProjectsSection({ appId }: { appId: string }) {
   )
 
   return (
-    <section>
-      <h3 className="mb-3 text-sm font-medium text-gray-700">Projects</h3>
-      <p className="mb-3 text-sm text-gray-500">
-        This app's issues go to the default repository of every project linked here.
-      </p>
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-sm font-medium text-foreground">Projects</h3>
+        <p className="text-sm text-muted-foreground">
+          This app's issues go to the default repository of every project linked here.
+        </p>
+      </div>
 
       {linked.data && linked.data.length > 0 && (
-        <ul className="mb-3 divide-y rounded-lg border bg-white text-sm">
+        <McCard className="divide-y divide-border p-0">
           {linked.data.map((p) => (
-            <li key={p.id} className="flex items-center justify-between px-4 py-2">
-              <span className="text-gray-800">{p.name}</span>
-              <button
+            <div key={p.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
+              <span className="text-foreground">{p.name}</span>
+              <McButton
+                variant="link"
+                destructive
                 onClick={() => unlink.mutate(p.id)}
                 disabled={unlink.isPending}
-                className="text-xs text-red-600 underline hover:no-underline disabled:opacity-50"
               >
                 Unlink
-              </button>
-            </li>
+              </McButton>
+            </div>
           ))}
-        </ul>
+        </McCard>
       )}
       {linked.data && linked.data.length === 0 && (
-        <p className="mb-3 text-sm text-gray-500">No projects linked yet.</p>
+        <p className="text-sm text-muted-foreground">No projects linked yet.</p>
       )}
 
       {linkableProjects.length > 0 && (
         <div className="flex gap-2">
-          <select
-            value={selected}
-            onChange={(e) => setSelected(e.target.value)}
-            className="rounded border border-gray-300 px-2 py-1.5 text-sm"
-          >
-            <option value="">Select a project…</option>
-            {linkableProjects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          <button
+          <McSelect value={selected} onValueChange={(value) => setSelected(value ?? '')}>
+            <McSelectTrigger className="w-64">
+              <McSelectValue placeholder="Select a project…" />
+            </McSelectTrigger>
+            <McSelectContent>
+              {linkableProjects.map((p) => (
+                <McSelectItem key={p.id} value={p.id}>
+                  {p.name}
+                </McSelectItem>
+              ))}
+            </McSelectContent>
+          </McSelect>
+          <McButton
             onClick={() => selected && link.mutate(selected)}
-            disabled={!selected || link.isPending}
-            className="rounded bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+            disabled={!selected}
+            isLoading={link.isPending}
           >
             Link
-          </button>
+          </McButton>
         </div>
       )}
     </section>
@@ -370,44 +380,43 @@ function KeysSection({ appId }: { appId: string }) {
   })
 
   return (
-    <section>
-      <h3 className="mb-3 text-sm font-medium text-gray-700">SDK keys</h3>
+    <section className="space-y-3">
+      <h3 className="text-sm font-medium text-foreground">SDK keys</h3>
 
       {lastSecret && (
-        <p className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          New key secret (shown once): <code className="font-mono">{lastSecret}</code>
-        </p>
+        <McCard className="border-warning/30 bg-warning/10">
+          <p className="text-sm text-warning">
+            New key secret (shown once): <code className="font-mono">{lastSecret}</code>
+          </p>
+        </McCard>
       )}
 
       {keys.data && keys.data.length > 0 && (
-        <ul className="mb-3 divide-y rounded-lg border bg-white text-sm">
+        <McCard className="divide-y divide-border p-0">
           {keys.data.map((k) => (
-            <li key={k.id} className="flex items-center justify-between px-4 py-2">
-              <span className="font-mono text-gray-800">
-                {k.prefix} {k.revoked_at && <span className="text-gray-400">(revoked)</span>}
+            <div key={k.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
+              <span className="font-mono text-foreground">
+                {k.prefix} {k.revoked_at && <span className="text-muted-foreground">(revoked)</span>}
               </span>
               {!k.revoked_at && (
-                <button
+                <McButton
+                  variant="link"
+                  destructive
                   onClick={() => revokeKey.mutate(k.id)}
                   disabled={revokeKey.isPending}
-                  className="text-xs text-red-600 underline hover:no-underline disabled:opacity-50"
                 >
                   Revoke
-                </button>
+                </McButton>
               )}
-            </li>
+            </div>
           ))}
-        </ul>
+        </McCard>
       )}
-      {keys.data && keys.data.length === 0 && <p className="mb-3 text-sm text-gray-500">No keys yet.</p>}
+      {keys.data && keys.data.length === 0 && <p className="text-sm text-muted-foreground">No keys yet.</p>}
 
-      <button
-        onClick={() => createKey.mutate()}
-        disabled={createKey.isPending}
-        className="rounded bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
-      >
-        {createKey.isPending ? 'Creating…' : 'Create key'}
-      </button>
+      <McButton onClick={() => createKey.mutate()} isLoading={createKey.isPending}>
+        Create key
+      </McButton>
     </section>
   )
 }
@@ -423,42 +432,43 @@ function TestIssueSection({ appId }: { appId: string }) {
   })
 
   return (
-    <section>
-      <h3 className="mb-3 text-sm font-medium text-gray-700">Targets</h3>
-      <p className="mb-3 text-sm text-gray-500">
-        Where this app's issues would be opened right now, without opening any.
-      </p>
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-sm font-medium text-foreground">Targets</h3>
+        <p className="text-sm text-muted-foreground">
+          Where this app's issues would be opened right now, without opening any.
+        </p>
+      </div>
 
       {targets.data && targets.data.length === 0 && (
-        <p className="mb-3 text-sm text-gray-500">No targets yet — link a project with a default repository.</p>
+        <p className="text-sm text-muted-foreground">No targets yet — link a project with a default repository.</p>
       )}
       {targets.data && targets.data.length > 0 && (
-        <ul className="mb-3 divide-y rounded-lg border bg-white text-sm">
+        <McCard className="divide-y divide-border p-0">
           {targets.data.map((t) => (
-            <li key={t.project_repository_id} className="px-4 py-2">
-              <div className="flex items-center justify-between">
-                <span className="text-gray-800">
-                  {t.repository} <span className="text-gray-400">({t.tracker})</span>
-                </span>
-                <span className={t.connection_id ? 'text-xs text-green-700' : 'text-xs text-red-600'}>
-                  {t.connection_id ? `via ${t.account_login}` : t.error}
-                </span>
-              </div>
-            </li>
+            <div key={t.project_repository_id} className="flex items-center justify-between px-4 py-2.5 text-sm">
+              <span className="text-foreground">
+                {t.repository} <span className="text-muted-foreground">({t.tracker})</span>
+              </span>
+              <McBadge
+                variant={t.connection_id ? 'outline' : 'destructive'}
+                className={t.connection_id ? 'text-success' : undefined}
+              >
+                {t.connection_id ? `via ${t.account_login}` : t.error}
+              </McBadge>
+            </div>
           ))}
-        </ul>
+        </McCard>
       )}
 
-      <button
-        onClick={() => sendTest.mutate()}
-        disabled={sendTest.isPending}
-        className="rounded bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
-      >
-        {sendTest.isPending ? 'Sending…' : 'Send test issue'}
-      </button>
-      {sendTest.isSuccess && <p className="mt-2 text-sm text-green-700">Test issue sent.</p>}
+      <McSeparator />
+
+      <McButton onClick={() => sendTest.mutate()} isLoading={sendTest.isPending}>
+        Send test issue
+      </McButton>
+      {sendTest.isSuccess && <p className="text-sm text-success">Test issue sent.</p>}
       {sendTest.isError && (
-        <p className="mt-2 text-sm text-red-600">
+        <p className="text-sm text-destructive">
           {sendTest.error instanceof ApiError ? sendTest.error.message : 'could not send test issue'}
         </p>
       )}

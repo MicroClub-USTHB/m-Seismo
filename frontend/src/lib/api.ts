@@ -67,7 +67,7 @@ export interface SessionResponse {
 }
 
 export type Tracker = 'github' | 'gitlab' | 'bitbucket'
-export type Platform = 'ios' | 'android' | 'flutter' | 'react_native'
+export type Platform = 'web' | 'ios' | 'android'
 
 export interface App {
   id: string
@@ -113,6 +113,15 @@ export interface AppProjectLink {
   id: string
   name: string
   slug: string
+}
+
+/** An app linked to a project (GET /projects/{id}/apps) — a platform
+ * build sharing that project's repositories. */
+export interface ProjectApp {
+  id: string
+  name: string
+  platform: Platform
+  bundle_id: string
 }
 
 export interface ProjectRepository {
