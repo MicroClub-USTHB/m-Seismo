@@ -1,0 +1,21 @@
+meta {
+  name: Update App
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/apps/{{appId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "Shop iOS (renamed)"
+  }
+}
+
+docs {
+  200 app. `name`, `platform`, `bundle_id` all optional.
+}

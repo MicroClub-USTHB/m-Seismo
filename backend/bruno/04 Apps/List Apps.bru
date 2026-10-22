@@ -1,0 +1,15 @@
+meta {
+  name: List Apps
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/apps
+  body: none
+  auth: inherit
+}
+
+docs {
+  200 `[app]`, newest first.
+}

@@ -28,7 +28,7 @@ dev-reset:
 	$(COMPOSE_DEV) down -v
 
 dev-logs:
-	$(COMPOSE_DEV) logs -f backend fakegithub
+	$(COMPOSE_DEV) logs -f backend
 
 # End-to-end API tests against the running stack (see backend/scripts/api).
 api-test:

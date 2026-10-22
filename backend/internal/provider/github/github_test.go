@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 )
@@ -169,7 +171,10 @@ func newTestProvider(t *testing.T, opts ...func(*Options)) (*Provider, *fakeGitH
 
 func TestInstallURL(t *testing.T) {
 	p, _ := newTestProvider(t)
-	got := p.InstallURL("a b")
+	got, err := p.InstallURL(context.Background(), uuid.New(), "a b")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.HasSuffix(got, "/apps/m-seismo/installations/new?state=a+b") {
 		t.Errorf("InstallURL = %s", got)
 	}
@@ -178,8 +183,9 @@ func TestInstallURL(t *testing.T) {
 func TestCompleteInstall(t *testing.T) {
 	p, _ := newTestProvider(t)
 	ctx := context.Background()
+	appID := uuid.New()
 
-	acct, err := p.CompleteInstall(ctx, url.Values{"installation_id": {"42"}, "code": {"good-code"}, "setup_action": {"install"}})
+	acct, err := p.CompleteInstall(ctx, appID, url.Values{"installation_id": {"42"}, "code": {"good-code"}, "setup_action": {"install"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +202,7 @@ func TestCompleteInstall(t *testing.T) {
 	}
 	for name, q := range rejects {
 		t.Run(name, func(t *testing.T) {
-			_, err := p.CompleteInstall(ctx, q)
+			_, err := p.CompleteInstall(ctx, appID, q)
 			if kind, _ := apperr.Classify(err); kind != apperr.KindInvalid {
 				t.Errorf("err = %v, want an invalid-input error", err)
 			}
@@ -208,7 +214,7 @@ func TestRepositories(t *testing.T) {
 	p, _ := newTestProvider(t)
 	ctx := context.Background()
 
-	repos, err := p.ListRepositories(ctx, "42")
+	repos, err := p.ListRepositories(ctx, inst42)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,14 +222,51 @@ func TestRepositories(t *testing.T) {
 		t.Errorf("repos = %+v", repos)
 	}
 
-	if ok, err := p.HasRepository(ctx, "42", "octo-org/app"); err != nil || !ok {
+	if ok, err := p.HasRepository(ctx, inst42, "octo-org/app"); err != nil || !ok {
 		t.Errorf("HasRepository(octo-org/app) = %v, %v", ok, err)
 	}
-	if ok, err := p.HasRepository(ctx, "42", "octo-org/other"); err != nil || ok {
+	if ok, err := p.HasRepository(ctx, inst42, "octo-org/other"); err != nil || ok {
 		t.Errorf("HasRepository(octo-org/other) = %v, %v", ok, err)
 	}
-	if _, err := p.HasRepository(ctx, "42", "not-a-repo"); err == nil {
+	if _, err := p.HasRepository(ctx, inst42, "not-a-repo"); err == nil {
 		t.Error("malformed repository accepted")
+	}
+}
+
+// inst42 is the installation the fake GitHub knows, on octo-org.
+var inst42 = issue.Connection{ExternalID: "42", AccountLogin: "octo-org"}
+
+func TestCovers(t *testing.T) {
+	p, _ := newTestProvider(t)
+
+	cases := map[string]bool{
+		"octo-org/app":   true,
+		"Octo-Org/app":   true, // GitHub logins are case-insensitive
+		"other-org/app":  false,
+		"octo-org":       false,
+		"octo-org/a/b":   false,
+		"octo-orgx/app":  false,
+		"/app":           false,
+		"octo-org/":      false,
+		"":               false,
+		"octo-org/app/x": false,
+	}
+	for repo, want := range cases {
+		if got := p.Covers(inst42, repo); got != want {
+			t.Errorf("Covers(%q) = %v, want %v", repo, got, want)
+		}
+	}
+}
+
+func TestValidateRepository(t *testing.T) {
+	p, _ := newTestProvider(t)
+	if err := p.ValidateRepository("octo-org/app"); err != nil {
+		t.Errorf("valid name rejected: %v", err)
+	}
+	for _, bad := range []string{"", "octo-org", "octo-org/", "/app", "a/b/c"} {
+		if err := p.ValidateRepository(bad); err == nil {
+			t.Errorf("ValidateRepository(%q) accepted", bad)
+		}
 	}
 }
 
@@ -231,7 +274,7 @@ func TestOpener(t *testing.T) {
 	p, fake := newTestProvider(t)
 	ctx := context.Background()
 
-	op, err := p.Opener(ctx, "42")
+	op, err := p.Opener(ctx, inst42)
 	if err != nil {
 		t.Fatal(err)
 	}

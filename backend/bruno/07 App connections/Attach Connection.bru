@@ -1,0 +1,26 @@
+meta {
+  name: Attach Connection
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/apps/{{appId}}/connections
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "connection_id": "{{connectionId}}"
+  }
+}
+
+docs {
+  201 connection: this app's own connection to the same tracker account,
+  without going through the tracker again. Only works for GitHub
+  installations (one installation, several apps) — GitLab and Bitbucket
+  connections can't be attached, since each app runs its own OAuth flow
+  (422 if you try). Idempotent: attaching the same account again returns
+  the app's existing connection.
+}

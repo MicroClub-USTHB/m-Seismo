@@ -39,25 +39,36 @@ func toProject(p db.Project) Project {
 	return Project{ID: p.ID, Name: p.Name, Slug: p.Slug, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
 }
 
-// Repository is a tracker repository linked to a project.
+// Repository is a tracker repository linked to a project: where the
+// project's code lives. It carries no credentials; each app reporting into
+// the project reaches it through its own connection.
 type Repository struct {
-	ID           uuid.UUID  `json:"id"`
-	ProjectID    uuid.UUID  `json:"project_id"`
-	ConnectionID uuid.UUID  `json:"connection_id"`
-	Tracker      db.Tracker `json:"tracker"`
-	AccountLogin string     `json:"account_login"`
-	Repository   string     `json:"repository"`
-	IsDefault    bool       `json:"is_default"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID         uuid.UUID  `json:"id"`
+	ProjectID  uuid.UUID  `json:"project_id"`
+	Tracker    db.Tracker `json:"tracker"`
+	Repository string     `json:"repository"`
+	IsDefault  bool       `json:"is_default"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+func toRepository(r db.ProjectRepository) Repository {
+	return Repository{
+		ID:         r.ID,
+		ProjectID:  r.ProjectID,
+		Tracker:    r.Tracker,
+		Repository: r.Repository,
+		IsDefault:  r.IsDefault,
+		CreatedAt:  r.CreatedAt,
+	}
 }
 
 type Service struct {
 	pool      *pgxpool.Pool
 	q         *db.Queries
-	providers *provider.Service
+	providers *provider.Registry
 }
 
-func NewService(pool *pgxpool.Pool, q *db.Queries, providers *provider.Service) *Service {
+func NewService(pool *pgxpool.Pool, q *db.Queries, providers *provider.Registry) *Service {
 	return &Service{pool: pool, q: q, providers: providers}
 }
 
@@ -158,22 +169,14 @@ func (s *Service) ListRepositories(ctx context.Context, ownerID, projectID uuid.
 	}
 	out := make([]Repository, len(rows))
 	for i, r := range rows {
-		out[i] = Repository{
-			ID:           r.ID,
-			ProjectID:    r.ProjectID,
-			ConnectionID: r.ProviderConnectionID,
-			Tracker:      r.Tracker,
-			AccountLogin: r.AccountLogin,
-			Repository:   r.Repository,
-			IsDefault:    r.IsDefault,
-			CreatedAt:    r.CreatedAt,
-		}
+		out[i] = toRepository(r)
 	}
 	return out, nil
 }
 
 type LinkRepositoryInput struct {
-	ConnectionID uuid.UUID `json:"connection_id"`
+	// Tracker is the issue tracker hosting the repository, e.g. "github".
+	Tracker db.Tracker `json:"tracker"`
 	// Repository is the tracker's full name, e.g. "octo-org/app" on GitHub.
 	Repository string `json:"repository"`
 	// IsDefault makes this the project's default repository (FR-59). The
@@ -181,9 +184,10 @@ type LinkRepositoryInput struct {
 	IsDefault bool `json:"is_default"`
 }
 
-// LinkRepository links a repository, reached through one of the owner's
-// connections, to the project. The tracker is asked whether the connection
-// can actually reach it.
+// LinkRepository links a repository to the project. Only the tracker and
+// the name format are checked: projects hold no credentials, so whether an
+// app can reach the repository is checked per app, through its own
+// connections (GET /apps/{id}/targets, and when an issue is opened).
 func (s *Service) LinkRepository(ctx context.Context, ownerID, projectID uuid.UUID, in LinkRepositoryInput) (Repository, error) {
 	if _, err := s.get(ctx, ownerID, projectID); err != nil {
 		return Repository{}, err
@@ -192,8 +196,14 @@ func (s *Service) LinkRepository(ctx context.Context, ownerID, projectID uuid.UU
 	if repository == "" {
 		return Repository{}, apperr.Invalid("repository is required")
 	}
-	conn, err := s.providers.VerifyRepository(ctx, ownerID, in.ConnectionID, repository)
+	if in.Tracker == "" {
+		return Repository{}, apperr.Invalid("tracker is required")
+	}
+	p, err := s.providers.Get(in.Tracker)
 	if err != nil {
+		return Repository{}, err
+	}
+	if err := p.ValidateRepository(repository); err != nil {
 		return Repository{}, err
 	}
 
@@ -213,10 +223,10 @@ func (s *Service) LinkRepository(ctx context.Context, ownerID, projectID uuid.UU
 		}
 
 		linked, err = q.LinkProjectRepository(ctx, db.LinkProjectRepositoryParams{
-			ProjectID:            projectID,
-			ProviderConnectionID: conn.ID,
-			Repository:           repository,
-			IsDefault:            isDefault,
+			ProjectID:  projectID,
+			Tracker:    in.Tracker,
+			Repository: repository,
+			IsDefault:  isDefault,
 		})
 		return err
 	})
@@ -227,16 +237,7 @@ func (s *Service) LinkRepository(ctx context.Context, ownerID, projectID uuid.UU
 		return Repository{}, err
 	}
 
-	return Repository{
-		ID:           linked.ID,
-		ProjectID:    linked.ProjectID,
-		ConnectionID: linked.ProviderConnectionID,
-		Tracker:      conn.Tracker,
-		AccountLogin: conn.AccountLogin,
-		Repository:   linked.Repository,
-		IsDefault:    linked.IsDefault,
-		CreatedAt:    linked.CreatedAt,
-	}, nil
+	return toRepository(linked), nil
 }
 
 // SetDefaultRepository makes repositoryID the project's default.

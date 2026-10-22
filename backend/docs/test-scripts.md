@@ -41,18 +41,22 @@ backend/scripts/api/
   apps.sh
   providers.sh
   issues.sh
-  all.sh          runs the six in order and combines the result
+  gitlab.sh       GitLab and Bitbucket: thin scripts that set fixtures and
+  bitbucket.sh    run the shared OAuth tracker suite
+  oauth_suite.sh  that shared suite — sourced, never run
+  all.sh          runs the eight in order and combines the result
   .env.test       state file (generated, git-ignored)
 ```
 
 ```mermaid
 flowchart LR
-    all[all.sh] -->|bash| auth[auth.sh] & owners[owners.sh] & projects[projects.sh] & apps[apps.sh] & providers[providers.sh] & issues[issues.sh]
-    auth & owners & projects & apps & providers & issues -->|source| lib[lib.sh]
+    all[all.sh] -->|bash| auth[auth.sh] & owners[owners.sh] & projects[projects.sh] & apps[apps.sh] & providers[providers.sh] & issues[issues.sh] & gitlab[gitlab.sh] & bitbucket[bitbucket.sh]
+    auth & owners & projects & apps & providers & issues & gitlab & bitbucket -->|source| lib[lib.sh]
+    gitlab & bitbucket -->|source| suite[oauth_suite.sh]
     lib <-->|read before every request / write on change| state[(.env.test)]
     lib -->|curl| api[backend :8080]
-    lib -->|curl| fake[fake GitHub :9090]
-    api --> fake
+    lib -->|curl| fakes[fake GitHub :9090 · GitLab :9091 · Bitbucket :9092]
+    api --> fakes
 ```
 
 Design principles:
@@ -60,9 +64,10 @@ Design principles:
 - **Each script is independent.** It creates what it needs (projects, apps,
   repository links, a GitHub connection) and cleans up after itself, so you
   can run `projects.sh` alone. `all.sh` only orders them.
-- **Scripts share an identity, not data.** The owner, token and GitHub
-  connection in `.env.test` are reused across scripts and runs, and
-  re-verified each time. Everything else is created fresh, with a unique
+- **Scripts share an identity, not data.** The owner, its token, one test
+  app and that app's GitHub connection in `.env.test` are reused across
+  scripts and runs, and re-verified each time. Apps created by a script get
+  their own connection by attaching the saved one (no new install). Everything else is created fresh, with a unique
   `run` suffix, so runs never collide.
 - **Tests go through HTTP only.** Nothing reads the database directly. The
   fake GitHub's inspection endpoints (`/_fake/...`) are the only way to look
@@ -81,7 +86,7 @@ Every script has the same shape:
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"   # 1. load the library and config
 wait_for_server                                   # 2. block until /healthz is 200 (≤ 60 s)
 ensure_token                                      # 3. valid bearer token in .env.test
-ensure_github_connection                          #    (issues.sh only) reuse or create
+ensure_github_connection                          #    (issues.sh only) saved app + its connection
 run=$(rand)                                       # 4. unique suffix for this run's data
 
 section "…"                                       # 5. groups of requests + assertions
@@ -114,6 +119,7 @@ OWNER_EMAIL='owner-176086901212345@example.com'
 OWNER_PASSWORD='pw-176086901254321-secret'
 TOKEN='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3Mi…'
 OWNER_ID='4c0b0e3e-…'
+APP_ID='71a2…'
 CONNECTION_ID='9d1f…'
 ```
 
@@ -122,13 +128,15 @@ CONNECTION_ID='9d1f…'
 | `OWNER_EMAIL`, `OWNER_PASSWORD` | `refresh_token` (on register) | credentials of the suite's owner |
 | `TOKEN` | `refresh_token` | current bearer token for that owner |
 | `OWNER_ID` | `refresh_token` | that owner's UUID |
-| `CONNECTION_ID` | `github_connect` | the owner's GitHub connection reused by `issues.sh` |
+| `APP_ID` | `ensure_app` | the suite's test app, which owns the saved connection |
+| `CONNECTION_ID` | `ensure_github_connection` | `APP_ID`'s GitHub connection. `issues.sh` attaches it to the apps it creates. |
 
 The file is git-ignored by the root `.gitignore` rule `.env.*`. Delete it,
 or run `all.sh --fresh`, to start with a new owner. If the database is
 reset (`make dev-reset`), the saved owner no longer exists: the next
 `refresh_token` sees the login fail, registers a new owner, and clears
-`CONNECTION_ID`.
+`APP_ID` and `CONNECTION_ID`. `ensure_app` also replaces a saved app that no
+longer exists, and clears its connection.
 
 ---
 
@@ -152,7 +160,7 @@ sequenceDiagram
         L->>A: POST /auth/login (OWNER_EMAIL/PASSWORD)
         alt login fails (no owner yet / DB reset)
             L->>A: POST /auth/register (new random owner)
-            L->>F: save OWNER_EMAIL, OWNER_PASSWORD, clear CONNECTION_ID
+            L->>F: save OWNER_EMAIL, OWNER_PASSWORD, clear APP_ID, CONNECTION_ID
         end
         L->>F: save TOKEN, OWNER_ID
         L->>A: GET /owners/me → PASS "new bearer token … works"
@@ -199,6 +207,8 @@ brackets.
 | `API_URL` | `http://localhost:8080/api/v1` | base of every relative `http`/`api` path; trailing `/` removed |
 | `BASE_URL` | derived: `API_URL` minus `/api/v1` | `/healthz`; trimmed from logged request lines |
 | `FAKE_GITHUB_URL` | `http://localhost:9090` | `fake_issue_count`, `fake_stat` |
+| `FAKE_GITLAB_URL` | `http://localhost:9091` | `fake_tracker_*` for `gitlab` |
+| `FAKE_BITBUCKET_URL` | `http://localhost:9092` | `fake_tracker_*` for `bitbucket` |
 | `GITHUB_MODE` | `fake` | `fake`: automatic connect and fake-only tests. `real`: interactive connect, fake-only tests skipped. |
 | `GITHUB_TEST_REPO` | `octo-org/seismo-test` | repository linked as the default in `providers.sh` and `issues.sh` |
 | `STATE_FILE` | `$LIB_DIR/.env.test` | where identity and token are kept |
@@ -213,9 +223,10 @@ brackets.
 | `HEADERS` | `http`, `api` | response headers, CR stripped, one per line |
 | `LAST_REQUEST` | `http`, `api` | `METHOD /path` for failure messages |
 | `PASS`, `FAIL`, `SKIP` | `pass`, `fail`, `skip` | counters reported by `summary` |
-| `CREATED_ID` | `create_project`, `create_app`, `link_repo` | ID of what was just created, or empty on failure |
+| `CREATED_ID` | `create_project`, `create_app`, `link_repo`, `attach_connection` | ID of what was just created, or empty on failure |
 | `NEW_EMAIL`, `NEW_PASSWORD`, `NEW_TOKEN`, `NEW_OWNER_ID` | `new_owner` | a throwaway second owner |
-| `OWNER_EMAIL`, `OWNER_PASSWORD`, `TOKEN`, `OWNER_ID`, `CONNECTION_ID` | `load_state` / `save_var` | mirror of the state file |
+| `CONNECTION_ID` | `github_connect` (not saved), `ensure_github_connection` (saved) | the connection just made, or the saved one |
+| `OWNER_EMAIL`, `OWNER_PASSWORD`, `TOKEN`, `OWNER_ID`, `APP_ID`, `CONNECTION_ID` | `load_state` / `save_var` | mirror of the state file |
 | `JSON_TOOL`, `PY` | sourcing | `jq` or `python`, and the Python executable |
 | `LIB_DIR`, `TMP_DIR` | sourcing | library directory; per-run temporary directory |
 
@@ -342,27 +353,59 @@ For a condition that isn't a plain comparison, compute it first:
 | `new_owner` | `new_owner` | registers a throwaway owner (not saved to the file) and sets `NEW_EMAIL`, `NEW_PASSWORD`, `NEW_TOKEN`, `NEW_OWNER_ID`. Delete it at the end with `http DELETE /owners/me "" "$NEW_TOKEN"`. |
 | `create_project` | `create_project NAME` | `POST /projects`; sets `CREATED_ID`; `fail` and return 1 on a non-201 |
 | `create_app` | `create_app NAME` | `POST /apps` (platform `ios`, unique bundle ID); sets `CREATED_ID` |
-| `link_repo` | `link_repo PROJECT_ID REPO [IS_DEFAULT]` | links `REPO` through `CONNECTION_ID`; sets `CREATED_ID`. To use another connection for one call: `CONNECTION_ID=$other link_repo …`. The value is captured before `api` re-reads the state file. |
+| `link_repo` | `link_repo PROJECT_ID REPO [IS_DEFAULT] [TRACKER]` | `POST /projects/{id}/repositories {"tracker":TRACKER (default github),"repository":REPO,"is_default":…}`; sets `CREATED_ID`. Projects hold no credentials, so no connection is involved. |
+| `ensure_app` | `ensure_app` | reuses the saved `APP_ID` if `GET /apps/{id}` still answers 200; otherwise creates "API test app", saves it as `APP_ID` and clears `CONNECTION_ID` |
 
 ### GitHub
 
 | Function | Signature | Behaviour |
 |---|---|---|
-| `github_connect` | `github_connect` | Runs the connect flow, then sets and **saves** `CONNECTION_ID`. **Fake mode:** gets the install URL, takes its `state`, picks a random installation `N`, and calls `/providers/github/callback?installation_id=N&code=fake-code-N&state=…` the way GitHub's redirect would. It expects `302` with `status=connected`. **Real mode:** prints the install URL and polls `GET /providers/connections` every 3 s, for up to 5 minutes, until a new connection appears. |
-| `ensure_github_connection` | `ensure_github_connection` | reuses the saved `CONNECTION_ID` if this owner still has it; otherwise `github_connect` |
+| `fake_install_id` | `fake_install_id` | prints a fresh random installation ID on `octo-org` for the fake (below 33 million). Add `100000000` for one on `other-org`. |
+| `github_connect` | `github_connect APP_ID [INSTALLATION_ID]` | Runs the connect flow **for that app** and sets `CONNECTION_ID`, but does **not** save it. **Fake mode:** calls `GET /apps/{APP_ID}/connect/github`, takes the `state` from the install URL, and calls `/providers/github/callback?installation_id=N&code=fake-code-N&state=…` the way GitHub's redirect would. `N` is `INSTALLATION_ID`, or `fake_install_id` when not given. It expects `302` with `status=connected`. **Real mode:** prints the install URL and polls `GET /apps/{APP_ID}/connections` every 3 s, for up to 5 minutes, until a new connection appears. |
+| `ensure_github_connection` | `ensure_github_connection` | `ensure_app`, then reuses the saved `CONNECTION_ID` if that app still lists it; otherwise `github_connect "$APP_ID"` and saves the result |
+| `attach_connection` | `attach_connection APP_ID CONNECTION_ID` | `POST /apps/{APP_ID}/connections {"connection_id":…}`: gives the app its own connection to the same installation, with no OAuth. Sets `CREATED_ID` to the app's connection; `fail` on a non-201. |
 | `fake_issue_count` | `fake_issue_count TITLE` | prints how many issues on the fake GitHub have that exact title. Use it in `$( … )`. |
 | `fake_stat` | `fake_stat NAME` | prints a counter from `/_fake/stats`: `secondary_limited`, `primary_limited` or `issues`. Use it in `$( … )`. |
 | `require_fake` | `require_fake DESC` | returns 0 in fake mode; otherwise records `SKIP DESC` and returns 1. Use as `if require_fake "…"; then … fi`. |
 
-`github_connect` saves the new `CONNECTION_ID`. To create a throwaway
-connection without replacing the saved one, keep the old value and put it
-back:
+### GitLab and Bitbucket
+
+These drive the OAuth connect flow against the fake GitLab and Bitbucket.
+The callback is called directly, the way the tracker's redirect would.
+
+| Function | Signature | Behaviour |
+|---|---|---|
+| `start_connect` | `start_connect APP_ID TRACKER` | `GET /apps/{APP_ID}/connect/{TRACKER}`; sets `INSTALL_URL` and `STATE` (the one-time state in it). Returns 1 on a non-200. |
+| `tracker_callback` | `tracker_callback TRACKER QUERY` | `GET /providers/{TRACKER}/callback?QUERY`; sets `LOCATION` to the redirect. Use it for the rejected cases: `error=access_denied&state=…`, a bad code, no code, a replayed state. |
+| `tracker_connect` | `tracker_connect APP_ID TRACKER [CODE]` | the whole flow: `start_connect`, then the callback with `code=CODE&state=…` (CODE defaults to a fresh `fake-code-N`); expects `status=connected` and sets `CONNECTION_ID` (not saved) and `LOCATION`. `fake-code-N-short` gives a token that expires at once, so the backend must refresh it. |
+| `fake_tracker_url` | `fake_tracker_url TRACKER` | prints the fake's base URL (`github`, `gitlab` or `bitbucket`) |
+| `fake_tracker_issues` | `fake_tracker_issues TRACKER` | `GET {fake}/_fake/issues` into `BODY` |
+| `fake_tracker_stat` | `fake_tracker_stat TRACKER NAME` | prints a counter from `{fake}/_fake/stats`: `exchanges`, `refreshes`, `rate_limited` or `issues`. Use it in `$( … )`. |
+| `fake_tracker_up` | `fake_tracker_up TRACKER` | returns 0 when the fake answers `/healthz`; the OAuth suites skip themselves otherwise |
+
+`oauth_suite.sh` defines `run_oauth_tracker_suite`. The calling script
+sets `TRACKER`, `AUTH_PATH`, `LOGIN_PREFIX`, `REPO_OK`, `REPO_BROKEN`,
+`REPO_LIMITED`, `REPO_EXHAUSTED`, `REPO_COUNT`, `AUTHOR_FIELD` and the
+function `fake_author N`. It can also define `tracker_specifics`, which runs
+before the cleanup with the suite's variables (`$app_b`, `$conn_b`,
+`$project`, `$run`) in scope. `gitlab.sh` is twenty lines of fixtures plus
+its specific checks.
+
+Connections belong to apps, so a test that needs a GitHub-connected app
+creates the app and then either attaches the saved connection or connects a
+fresh installation:
 
 ```bash
-saved=$CONNECTION_ID
-github_connect; other=$CONNECTION_ID
-save_var CONNECTION_ID "$saved"
+ensure_github_connection                      # the saved app's connection, in $CONNECTION_ID
+shared=$CONNECTION_ID
+create_app "My App $run"; app=$CREATED_ID
+attach_connection "$app" "$shared"            # same installation, no install step (works in real mode)
+# or, fake mode only, a separate installation (e.g. to keep a rate limit away from the shared one):
+github_connect "$app"                         # $CONNECTION_ID is the new one; nothing is saved
+github_connect "$app" "$((100000000 + $(fake_install_id)))"   # an installation on other-org
 ```
+
+Deleting the app deletes its connections, so nothing else needs cleaning up.
 
 ---
 
@@ -376,8 +419,10 @@ Check counts are from a full fake-mode run.
 | `owners.sh` | 27 | read/update the saved owner (name, blank name, unknown field, empty PATCH) · email and password changes on a throwaway owner (`current_password` missing/wrong/right, email conflict, login with old/new credentials) · delete (then token gives 404, login 401) · saved owner unaffected |
 | `projects.sh` | 35 | create (derived and explicit slug, duplicate, invalid slug, empty name, unknown field) · read (list, get, unknown and malformed IDs) · update (rename, slug conflict, slug change, invalid slug) · empty repository list · isolation (another owner gets 404 for read/update/delete/repositories; slugs unique per owner) · delete (then 404, delete twice 404) |
 | `apps.sh` | 43 | create (platform, bundle ID and name validation) · read/update · SDK keys (format `msk_` + 43, prefix, secret never listed, revoke, revoke twice, revoked vs active) · project links (idempotent PUT, unknown project) · test-issue without targets gives 422 · isolation · unlink and delete (keys go with the app) |
-| `providers.sh` | 47 | provider list, unknown tracker, auth required · rejected callbacks (unknown state; *fake:* forged `installation_id`, state replay, missing OAuth code, pending org approval) · successful connect · repository listing · linking (first repository becomes default, duplicate 409, unreachable 422, malformed 422, unknown connection 404) · *fake:* default switching, exactly one default, rollback on a failed switch · isolation · unlink · *fake:* disconnect |
-| `issues.sh` | 60 | open an issue (ref, URL, recorded ID; *fake:* exactly one issue, label, body on the tracker) · default title · *fake:* fan-out to every linked project · non-default repositories ignored · partial failure 201 with a per-target error · total failure 502 · projects without a default skipped · **GitHub secondary limit waited out** (one 403, one issue, ≥ 1 s) · **primary quota exhausted** (429 + `Retry-After` ≈ 1 h, fast, GitHub not called again) · **per-app throttle** (429 + `Retry-After`, other apps unaffected) · validation and isolation |
+| `providers.sh` | 87 | provider list (github, gitlab, bitbucket), unknown tracker, auth required, unknown app · **old owner-level routes give 404** · rejected callbacks (unknown state → back to `/apps`; *fake:* forged `installation_id`, state replay, missing OAuth code, pending org approval, each back to the app's page, none creating a connection) · per-app connect (redirect to `/apps/{id}/connections`) · **connections are per app** (app B doesn't see, use or delete app A's; owner-wide list includes it) · repository listing (*fake:* other-org repositories not listed) · **attach** (own row, idempotent, unknown 404, unknown field 422; *fake:* the connect flow on the same installation reuses the row) · linking by tracker (first becomes default, duplicate 409, malformed 422, missing tracker 422, unconfigured tracker 404, old `connection_id` body 422) · *fake:* default switching, rollback · owner isolation (*fake:* **another owner connecting the same installation → error "already connected by another owner"**) · disconnect (only that app; the other app and project repositories untouched) · deleting an app deletes its connections · unlink |
+| `issues.sh` | 99 | **targets preview** · open an issue through the app's own connection (ref, URL, recorded ID, `connection_id`; *fake:* exactly one issue, label, body on the tracker) · default title · **each app uses its own connection** (a second app on the same project has no connection → 502 "no github connection…", nothing sent; after attaching → 201 through its own connection; disconnecting it leaves the first app intact) · *fake:* **two GitHub accounts** (other-org target uncovered → partial 201; after connecting an other-org installation, each repository goes through the matching connection) · *fake:* fan-out · non-default repositories ignored · partial failure 201 · total failure 502 · projects without a default skipped (and absent from targets) · **GitHub secondary limit waited out** · **primary quota exhausted** (429 + `Retry-After` ≈ 1 h, fast, GitHub not called again; **an app sharing that installation is limited too, without a GitHub call**) · **per-app throttle** · validation and isolation (targets 404 for another owner) |
+| `gitlab.sh` | 84 | shared OAuth suite: provider listed · authorize URL (path, client ID, `response_type=code`, `redirect_uri`, state) · rejected callbacks (denied, replayed state, rejected code, missing code, state of another tracker; none creates a connection) · connect (account = the authorising user; no token in any response) · repositories (all pages) · **an OAuth connection cannot be attached to another app** · **app B runs its own OAuth; the same user may authorise both apps, with separate tokens** · issues through **each app's own token** (author on the fake is the app's user) · **token refresh** (an expiring token is refreshed once, the rotated token saved and reused) · **revoked authorization** (502 "connect the app again", reconnect fixes it) · 500 → 502 · short 429 waited out · long 429 → fast 429 + `Retry-After` · app without a GitLab connection · another owner cannot connect the same GitLab user · disconnect · deleting apps deletes connections. Then GitLab: subgroup projects (URL-encoded path, full-path ref), labels, malformed paths |
+| `bitbucket.sh` | 83 | the same shared OAuth suite for Bitbucket (HTTP Basic client credentials, `next`-link pagination, a refresh token that stays the same). Then Bitbucket: labels at the end of the body (no native labels), `kind: bug`, a repository without an issue tracker (502 with Bitbucket's reason), malformed names |
 
 ---
 
@@ -391,10 +436,10 @@ the backend's GitHub provider calls, plus inspection endpoints.
 | `GET /healthz` | — | `{"status":"ok"}` |
 | `GET /apps/{slug}/installations/new?state=` | — | plain-text page explaining how to finish by hand |
 | `POST /login/oauth/access_token` | form `client_secret=fake-secret` | `code=fake-code-N` → `{"access_token":"fake-user-token-N"}`; anything else → `{"error":"bad_verification_code"}` |
-| `GET /user/installations` | `Bearer fake-user-token-N` | exactly installation `N` on `octo-org` (Organization) |
+| `GET /user/installations` | `Bearer fake-user-token-N` | exactly installation `N`: on `octo-org` (Organization), or on `other-org` when `N ≥ 100000000` |
 | `POST /app/installations/{N}/access_tokens` | an App JWT (`Bearer ey…`, signature not checked) | `{"token":"fake-installation-token-N","expires_at":…}` |
-| `GET /installation/repositories` | installation token | the five fixture repositories |
-| `GET /repos/{o}/{r}` | installation token | 200 for fixtures, 404 otherwise |
+| `GET /installation/repositories` | installation token | the fixture repositories of the installation's account (five on `octo-org`, `other-org/tools` on `other-org`) |
+| `GET /repos/{o}/{r}` | installation token | 200 for fixtures **on the installation's account**, 404 otherwise, as on GitHub. The same rule applies to the milestone, issue and comment endpoints. |
 | `GET /repos/{o}/{r}/milestones` | installation token | `[{"number":1,"title":"v1.0"}]` |
 | `POST /repos/{o}/{r}/issues` | installation token | stores and returns the issue; see special repositories below |
 | `GET /repos/{o}/{r}/issues/{n}`, `POST …/comments` | installation token | read / comment |
@@ -409,11 +454,38 @@ Special repositories:
 | `octo-org/broken` | always `500` (a GitHub outage) |
 | `octo-org/slow-down` | first attempt for each title: `403` secondary limit with `Retry-After: 1`; then works |
 | `octo-org/exhausted` | always `403` with `X-RateLimit-Remaining: 0` and a reset in one hour |
+| `other-org/tools` | works, but only for installations on `other-org` |
 
 Every installation-authenticated response carries `X-RateLimit-Limit: 5000`,
 `X-RateLimit-Remaining` (counted per token), `X-RateLimit-Used`,
 `X-RateLimit-Reset` (the next full hour) and `X-RateLimit-Resource: core`.
 Issues and counters are kept in memory and reset when the container restarts.
+
+---
+
+## The fake GitLab and Bitbucket contracts
+
+`internal/provider/gitlab/fakegitlab` (`:9091`) and
+`internal/provider/bitbucket/fakebitbucket` (`:9092`) are importable
+packages. The provider unit tests run them in-process, and
+`cmd/fakegitlab` and `cmd/fakebitbucket` serve them in the dev stack. The
+full fixture lists are in
+[gitlab-bitbucket.md → The fakes](gitlab-bitbucket.md#the-fakes). What the
+scripts rely on:
+
+| | Fake GitLab | Fake Bitbucket |
+|---|---|---|
+| Authorize page | `GET /oauth/authorize` (text) | `GET /site/oauth2/authorize` (text) |
+| Token endpoint | `POST /oauth/token`, client in the form body | `POST /site/oauth2/access_token`, client with HTTP Basic |
+| Codes | `fake-code-N` (2 h), `fake-code-N-short` (1 s); anything else → `400 invalid_grant` | same |
+| Grants | each exchange is a grant with its own tokens; refresh rotates both tokens; an old refresh token → `invalid_grant` | each exchange is a grant; refresh replaces the access token, the refresh token stays |
+| API | `/api/v4/user`, `/users?username=`, `/projects` (`X-Next-Page`), `/projects/{id or encoded path}`, `…/milestones`, `…/issues`, `…/issues/{iid}`, `…/notes` | `/2.0/user`, `/2.0/repositories` (`next` link), `/2.0/repositories/{ws}/{slug}`, `…/milestones`, `…/issues`, `…/issues/{id}`, `…/comments` |
+| Rejected token | `401 {"message":"401 Unauthorized"}` | `401 {"type":"error","error":{"message":…}}` |
+| Special repositories | `seismo-group/broken` (500), `/limited` (429 once per title, `Retry-After: 1`), `/exhausted` (429, `Retry-After: 3600`), `/sub/nested` | `seismo-ws/broken`, `/limited`, `/exhausted`, `/no-issues` (404 "Repository has no issue tracker.") |
+| Issue author | `author_id` = N | `reporter` = `{0000000N-0000-4000-8000-000000000000}` |
+| Inspection | `GET`/`DELETE /_fake/issues`, `GET /_fake/stats` (`exchanges`, `refreshes`, `rate_limited`, `issues`), `POST /_fake/revoke?user=N` | same |
+
+Everything is in memory and resets when the container restarts.
 
 ---
 
@@ -475,8 +547,8 @@ Guidelines:
 - **Guard fake-only behaviour** with `if require_fake "…"; then … fi`, so
   real mode skips it instead of failing (or opening junk issues on real
   GitHub).
-- **Clean up** what you create, including throwaway owners and extra
-  connections.
+- **Clean up** what you create, including throwaway owners. Deleting an app
+  also deletes its connections.
 - **Keep scripts runnable on their own**: set up preconditions in the
   script, never rely on another script having run.
 
@@ -489,7 +561,8 @@ Guidelines:
 | `FATAL backend not reachable …` | Start the stack: `make dev-up`. Or point `API_URL` at your server. |
 | `FATAL need jq or python3` | Install `jq`, or make `python3` / `python` available on `PATH`. |
 | `$'\r': command not found` | The scripts were checked out with CRLF. The repository's `.gitattributes` forces LF for `*.sh`; run `git add --renormalize .`, or re-clone. |
-| `connect GitHub installation …` fails | The backend is not using the fake (check `SEISMO_GITHUB_*` in `deploy/.env`), or `fakegithub` is down. |
+| `connect GitHub installation … to app …` fails | The backend is not using the fake (check `SEISMO_GITHUB_*` in `deploy/.env`), or `fakegithub` is down. With `reason=…already+connected+by+another+owner`, the installation ID is already held by another owner: use a fresh one (`fake_install_id`). |
+| `no github connection on this app covers …` in your own experiments | The app has no connection on that repository's account. Connect it (`GET /apps/{id}/connect/github`) or attach one (`POST /apps/{id}/connections`); `GET /apps/{id}/targets` shows the result. |
 | Many failures right after `make dev-reset` | Expected once: the saved owner no longer exists, so a new one is registered. Or run `all.sh --fresh`. |
 | `429 too many test issues` in your own experiments | The per-app throttle (default 10/min). Wait for `Retry-After`, or raise `SEISMO_LIMITS_TEST_ISSUES_PER_MINUTE` in `deploy/.env`. |
 | Want to see the traffic | `VERBOSE=1 backend/scripts/api/issues.sh`, and `make dev-logs` for the server side. |

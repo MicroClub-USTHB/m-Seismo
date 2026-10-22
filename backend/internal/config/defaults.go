@@ -34,6 +34,18 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("github.min_write_interval", "1s")
 	v.SetDefault("github.max_rate_limit_wait", "30s")
 
+	v.SetDefault("gitlab.web_url", "https://gitlab.com/")
+	v.SetDefault("gitlab.api_url", "https://gitlab.com/api/v4/")
+	v.SetDefault("gitlab.redirect_url", "")
+	v.SetDefault("gitlab.max_rate_limit_wait", "30s")
+
+	v.SetDefault("bitbucket.web_url", "https://bitbucket.org/")
+	v.SetDefault("bitbucket.api_url", "https://api.bitbucket.org/2.0/")
+	v.SetDefault("bitbucket.redirect_url", "")
+	v.SetDefault("bitbucket.max_rate_limit_wait", "30s")
+
+	v.SetDefault("secrets.encryption_key", "")
+
 	v.SetDefault("limits.test_issues_per_minute", 10)
 
 	v.SetDefault("ingest.app_per_minute", 600)

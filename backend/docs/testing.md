@@ -33,9 +33,15 @@ token handling and real-GitHub mode.
 | `backend` (main) | `TestGraph` | `fx.ValidateApp(Options())`: every dependency is provided, and no constructor runs |
 | `auth` | password and token tests | real bcrypt and JWT; injected clock for expiry |
 | `httpx` | `TestErrorStatus`, `TestAuthMiddleware` | `httptest` against the real router and middleware |
-| `issue` | `OpenForApp` / `OpenInRepository` cases | fake `Querier` and `OpenerSource` |
-| `provider` | connect flow, state replay, cross-owner conflict, `VerifyRepository` | in-memory `StateStore`, fake `Provider` and `Querier` |
-| `provider/github` | install URL, verified install, repositories, opener | `httptest.Server` imitating github.com and api.github.com; real RSA key; checks auth headers |
+| `issue` | `Targets` / `OpenForApp` / `OpenInRepository`: connection chosen per app, `ErrNoConnection`, two apps on one project, rate-limit skip | fake `Querier` (per-app connections) and `OpenerSource` |
+| `provider` | per-app connect flow, state replay and shape, another owner's app, cross-owner conflict (`23P01`), same installation on two apps, attach, app-scoped repository listing, registry `Covers` | in-memory `StateStore`, fake `Provider` and a `Querier` that enforces the one-owner rule |
+| `provider/github` | install URL, verified install, repositories, `Covers`, `ValidateRepository`, opener, rate limits | `httptest.Server` imitating github.com and api.github.com; real RSA key; checks auth headers |
+| `provider` (secrets) | token saved on connect; OAuth connections refuse attach; `NewDBSecretStore` encrypts and binds each ciphertext to its connection | in-memory `SecretStore`; fake `connection_secrets` queries with a real `secrets.Cipher` |
+| `provider/oauth` | authorize URL; code exchange with body and Basic client credentials; refresh before expiry with rotation and save; 20 concurrent requests → one refresh; renew after 401; revoked grant; 429 waited / fast-fail / past deadline / never-wait; GitLab and Bitbucket error bodies; token never sent to another host | `httptest` token and API servers; in-memory store |
+| `provider/gitlab` | install URL; code exchange and user; denied / missing / bad codes; projects across pages; subgroup paths (URL-encoded); `ValidateRepository` and `Covers`; open with labels, milestone and assignees; comment; `IsOpen`; refresh and rotation; revoked grant; two apps of one user; 500; 429 short and long | the in-process `fakegitlab` |
+| `provider/bitbucket` | the same for Bitbucket, plus: HTTP Basic client auth, `next`-link pagination, labels in the body, open/closed state mapping, a repository without an issue tracker | the in-process `fakebitbucket` |
+| `secrets` | seal/open round trip, random nonces, wrong row / key / tampering refused, keyless cipher, development key fallback, config decoding | — |
+| `config` | GitLab and Bitbucket settings, derived redirect URLs, encryption key required outside development | environment variables |
 | `app` | key lifecycle, platform validation | fake `Querier` |
 | `project` | slug derivation and validation | pure functions |
 
@@ -79,9 +85,12 @@ Prerequisites:
 
 1. Postgres, Redis and NATS running, and `make db-up` applied.
 2. `.env` with a working GitHub App (see [github.md](github.md#creating-the-github-app)).
-3. Through the API: an owner, an app linked to a project, a GitHub connection,
-   and a default repository on that project (the curl walkthrough in
-   [api.md](api.md#walkthrough-with-curl) does all of this).
+3. Through the API: an owner, an app with its own GitHub connection, a
+   project with a default repository on that connection's account, and the
+   app linked to the project. Running the [Bruno collection](../bruno)
+   folders in order (Auth, Apps, Projects, Project repositories, App
+   project links, App connections) does all of this, and
+   `GET /apps/{id}/targets` should show a `connection_id` for every target.
 4. `SEISMO_E2E_APP_ID=<app uuid> go test -tags e2e -run TestOpenForAppE2E -v .`
 
 It logs every opened issue, labelled `m-seismo-e2e`. Close them afterwards.

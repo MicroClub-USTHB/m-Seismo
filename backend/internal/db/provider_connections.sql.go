@@ -11,36 +11,38 @@ import (
 	"github.com/google/uuid"
 )
 
-const deleteProviderConnection = `-- name: DeleteProviderConnection :execrows
+const deleteAppConnection = `-- name: DeleteAppConnection :execrows
 DELETE FROM provider_connections
-WHERE id = $1 AND owner_id = $2
+WHERE id = $1 AND app_id = $2 AND owner_id = $3
 `
 
-type DeleteProviderConnectionParams struct {
+type DeleteAppConnectionParams struct {
 	ID      uuid.UUID `json:"id"`
+	AppID   uuid.UUID `json:"app_id"`
 	OwnerID uuid.UUID `json:"owner_id"`
 }
 
-func (q *Queries) DeleteProviderConnection(ctx context.Context, arg DeleteProviderConnectionParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteProviderConnection, arg.ID, arg.OwnerID)
+func (q *Queries) DeleteAppConnection(ctx context.Context, arg DeleteAppConnectionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAppConnection, arg.ID, arg.AppID, arg.OwnerID)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
 }
 
-const getProviderConnection = `-- name: GetProviderConnection :one
-SELECT id, owner_id, tracker, external_id, account_login, account_type, suspended_at, created_at, updated_at FROM provider_connections
-WHERE id = $1 AND owner_id = $2
+const getAppConnection = `-- name: GetAppConnection :one
+SELECT id, owner_id, tracker, external_id, account_login, account_type, suspended_at, created_at, updated_at, app_id FROM provider_connections
+WHERE id = $1 AND app_id = $2 AND owner_id = $3
 `
 
-type GetProviderConnectionParams struct {
+type GetAppConnectionParams struct {
 	ID      uuid.UUID `json:"id"`
+	AppID   uuid.UUID `json:"app_id"`
 	OwnerID uuid.UUID `json:"owner_id"`
 }
 
-func (q *Queries) GetProviderConnection(ctx context.Context, arg GetProviderConnectionParams) (ProviderConnection, error) {
-	row := q.db.QueryRow(ctx, getProviderConnection, arg.ID, arg.OwnerID)
+func (q *Queries) GetAppConnection(ctx context.Context, arg GetAppConnectionParams) (ProviderConnection, error) {
+	row := q.db.QueryRow(ctx, getAppConnection, arg.ID, arg.AppID, arg.OwnerID)
 	var i ProviderConnection
 	err := row.Scan(
 		&i.ID,
@@ -52,18 +54,48 @@ func (q *Queries) GetProviderConnection(ctx context.Context, arg GetProviderConn
 		&i.SuspendedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AppID,
 	)
 	return i, err
 }
 
-const listProviderConnections = `-- name: ListProviderConnections :many
-SELECT id, owner_id, tracker, external_id, account_login, account_type, suspended_at, created_at, updated_at FROM provider_connections
-WHERE owner_id = $1
+const getOwnerConnection = `-- name: GetOwnerConnection :one
+SELECT id, owner_id, tracker, external_id, account_login, account_type, suspended_at, created_at, updated_at, app_id FROM provider_connections
+WHERE id = $1 AND owner_id = $2
+`
+
+type GetOwnerConnectionParams struct {
+	ID      uuid.UUID `json:"id"`
+	OwnerID uuid.UUID `json:"owner_id"`
+}
+
+func (q *Queries) GetOwnerConnection(ctx context.Context, arg GetOwnerConnectionParams) (ProviderConnection, error) {
+	row := q.db.QueryRow(ctx, getOwnerConnection, arg.ID, arg.OwnerID)
+	var i ProviderConnection
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Tracker,
+		&i.ExternalID,
+		&i.AccountLogin,
+		&i.AccountType,
+		&i.SuspendedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AppID,
+	)
+	return i, err
+}
+
+const listActiveConnectionsForApp = `-- name: ListActiveConnectionsForApp :many
+SELECT id, owner_id, tracker, external_id, account_login, account_type, suspended_at, created_at, updated_at, app_id FROM provider_connections
+WHERE app_id = $1 AND suspended_at IS NULL
 ORDER BY created_at
 `
 
-func (q *Queries) ListProviderConnections(ctx context.Context, ownerID uuid.UUID) ([]ProviderConnection, error) {
-	rows, err := q.db.Query(ctx, listProviderConnections, ownerID)
+// The connections the issue service may use for an app.
+func (q *Queries) ListActiveConnectionsForApp(ctx context.Context, appID uuid.UUID) ([]ProviderConnection, error) {
+	rows, err := q.db.Query(ctx, listActiveConnectionsForApp, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -81,6 +113,86 @@ func (q *Queries) ListProviderConnections(ctx context.Context, ownerID uuid.UUID
 			&i.SuspendedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AppID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppConnections = `-- name: ListAppConnections :many
+SELECT id, owner_id, tracker, external_id, account_login, account_type, suspended_at, created_at, updated_at, app_id FROM provider_connections
+WHERE app_id = $1 AND owner_id = $2
+ORDER BY created_at
+`
+
+type ListAppConnectionsParams struct {
+	AppID   uuid.UUID `json:"app_id"`
+	OwnerID uuid.UUID `json:"owner_id"`
+}
+
+func (q *Queries) ListAppConnections(ctx context.Context, arg ListAppConnectionsParams) ([]ProviderConnection, error) {
+	rows, err := q.db.Query(ctx, listAppConnections, arg.AppID, arg.OwnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProviderConnection
+	for rows.Next() {
+		var i ProviderConnection
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Tracker,
+			&i.ExternalID,
+			&i.AccountLogin,
+			&i.AccountType,
+			&i.SuspendedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AppID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOwnerConnections = `-- name: ListOwnerConnections :many
+SELECT id, owner_id, tracker, external_id, account_login, account_type, suspended_at, created_at, updated_at, app_id FROM provider_connections
+WHERE owner_id = $1
+ORDER BY created_at
+`
+
+func (q *Queries) ListOwnerConnections(ctx context.Context, ownerID uuid.UUID) ([]ProviderConnection, error) {
+	rows, err := q.db.Query(ctx, listOwnerConnections, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProviderConnection
+	for rows.Next() {
+		var i ProviderConnection
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Tracker,
+			&i.ExternalID,
+			&i.AccountLogin,
+			&i.AccountType,
+			&i.SuspendedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AppID,
 		); err != nil {
 			return nil, err
 		}
@@ -93,30 +205,32 @@ func (q *Queries) ListProviderConnections(ctx context.Context, ownerID uuid.UUID
 }
 
 const upsertProviderConnection = `-- name: UpsertProviderConnection :one
-INSERT INTO provider_connections (owner_id, tracker, external_id, account_login, account_type)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (tracker, external_id) DO UPDATE
+INSERT INTO provider_connections (owner_id, app_id, tracker, external_id, account_login, account_type)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (app_id, tracker, external_id) DO UPDATE
 SET account_login = excluded.account_login,
     account_type = excluded.account_type,
     suspended_at = NULL,
     updated_at = now()
-WHERE provider_connections.owner_id = excluded.owner_id
-RETURNING id, owner_id, tracker, external_id, account_login, account_type, suspended_at, created_at, updated_at
+RETURNING id, owner_id, tracker, external_id, account_login, account_type, suspended_at, created_at, updated_at, app_id
 `
 
 type UpsertProviderConnectionParams struct {
 	OwnerID      uuid.UUID `json:"owner_id"`
+	AppID        uuid.UUID `json:"app_id"`
 	Tracker      Tracker   `json:"tracker"`
 	ExternalID   string    `json:"external_id"`
 	AccountLogin string    `json:"account_login"`
 	AccountType  string    `json:"account_type"`
 }
 
-// Re-installing refreshes the account details. A connection already owned by
-// another owner is left untouched and no row is returned.
+// Connecting the same tracker account to the same app again refreshes the
+// account details. Connecting an account that another owner holds fails on
+// provider_connections_one_owner_per_account (SQLSTATE 23P01).
 func (q *Queries) UpsertProviderConnection(ctx context.Context, arg UpsertProviderConnectionParams) (ProviderConnection, error) {
 	row := q.db.QueryRow(ctx, upsertProviderConnection,
 		arg.OwnerID,
+		arg.AppID,
 		arg.Tracker,
 		arg.ExternalID,
 		arg.AccountLogin,
@@ -133,6 +247,7 @@ func (q *Queries) UpsertProviderConnection(ctx context.Context, arg UpsertProvid
 		&i.SuspendedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AppID,
 	)
 	return i, err
 }

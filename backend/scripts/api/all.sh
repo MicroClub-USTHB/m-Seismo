@@ -16,7 +16,7 @@ if [[ ${1-} == --fresh ]]; then
   echo "removed $STATE_FILE"
 fi
 
-scripts=(auth owners projects apps providers issues)
+scripts=(auth owners projects apps providers issues gitlab bitbucket)
 failed=()
 
 for name in "${scripts[@]}"; do
