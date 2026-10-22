@@ -15,4 +15,6 @@ toml = "1.1.8"
 tonic.workspace = true
 
 [dev-dependencies]
+seismo-agent = { path = "../agent" }
+tempfile = "3.27.0"
 tokio-stream = "0.1.19"
