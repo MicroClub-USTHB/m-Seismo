@@ -44,8 +44,9 @@ func (f *fakeQuerier) GetOwnerByEmail(_ context.Context, email string) (db.Owner
 func newTestService(t *testing.T) (*Service, *fakeQuerier) {
 	t.Helper()
 	q := newFakeQuerier()
-	issuer := auth.NewIssuer(&config.Config{Auth: config.AuthConfig{JWTSecret: "test-secret", JWTTTL: time.Hour}})
-	svc, err := NewService(q, issuer)
+	cfg := &config.Config{Auth: config.AuthConfig{JWTSecret: "test-secret", JWTTTL: time.Hour}}
+	issuer := auth.NewIssuer(cfg)
+	svc, err := NewService(q, issuer, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

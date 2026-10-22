@@ -52,6 +52,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/auth/register", h.register)
 	r.Post("/auth/login", h.login)
 
+	r.With(h.require).Get("/owners", h.listAll)
 	r.With(h.require).Route("/owners/me", func(r chi.Router) {
 		r.Get("/", h.get)
 		r.Patch("/", h.update)
@@ -95,6 +96,17 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, sessionResponse{Owner: o, Token: tok})
+}
+
+// listAll lists every owner. Only the configured superadmin may call it
+// (see Service.ListAll); anyone else gets the same 401 as a bad login.
+func (h *Handler) listAll(w http.ResponseWriter, r *http.Request) {
+	os, err := h.svc.ListAll(r.Context(), httpx.OwnerID(r.Context()))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, os)
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
