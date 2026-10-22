@@ -13,6 +13,44 @@ Run these commands from the repository root:
 - `make agent-test`: run Rust tests using the committed lockfile.
 - `make agent-check`: run the agent formatting check and linting, build, and tests.
 
+## Layout
+
+- `crates/proto`: generated `seismo.v1` types from `spec/proto`.
+- `crates/agent`: the agent. Reads logs from Loki and answers the coordinator.
+- `crates/coordinator`: not implemented yet.
+
+The build needs `protoc`.
+
+## Running the agent
+
+```sh
+SEISMO_AGENT_TOKEN=... cargo run -p seismo-agent -- agent.toml
+```
+
+```toml
+agent_id = "db"                     # optional, defaults to the hostname
+services = ["postgres"]             # one Loki query each
+
+[coordinator]
+url = "http://coordinator:50051"
+# token_env = "SEISMO_AGENT_TOKEN"  # env var holding the registration token
+
+[loki]
+url = "http://loki:3100"
+# service_label = "service_name"    # label matched against `services`
+# scope_label = "namespace"         # copied into Workload.scope_label
+# tenant = "acme"                   # X-Scope-OrgID
+# trace_field = "trace_id"          # structured metadata, "" = plain line filter
+
+# [loki.auth]
+# type = "bearer"                   # or "basic" (username, password_env)
+# token_env = "LOKI_TOKEN"
+```
+
+Log lines are redacted in the agent before they are sent. Plaintext gRPC
+for now, TLS is not done yet.
+
 ## Status
 
-Skeleton. Rewrite in progress, protocol lives in `spec/proto`.
+Agent done for Loki logs. No Tempo, Mimir or `context_lines` yet.
+Coordinator is a stub.
