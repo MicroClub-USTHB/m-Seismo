@@ -1356,8 +1356,11 @@ dependencies = [
 name = "seismo-coordinator"
 version = "0.1.0"
 dependencies = [
+ "hostname",
  "seismo-proto",
+ "serde",
  "tokio",
+ "toml",
  "tonic",
 ]
 
