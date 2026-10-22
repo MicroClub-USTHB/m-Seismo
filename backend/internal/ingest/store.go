@@ -67,7 +67,7 @@ func (s *PGStore) Save(ctx context.Context, appID uuid.UUID, r *Report, payload 
 	if err != nil {
 		return Saved{}, fmt.Errorf("ingest: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	q := db.New(tx)
 
 	row, err := q.InsertReport(ctx, db.InsertReportParams{

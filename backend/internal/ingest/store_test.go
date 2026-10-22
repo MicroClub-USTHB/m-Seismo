@@ -35,7 +35,11 @@ func TestPGStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { pool.Exec(ctx, "DELETE FROM owners WHERE id = $1", owner.ID) })
+	t.Cleanup(func() {
+		if _, err := pool.Exec(ctx, "DELETE FROM owners WHERE id = $1", owner.ID); err != nil {
+			t.Error(err)
+		}
+	})
 	app, err := q.CreateApp(ctx, db.CreateAppParams{OwnerID: owner.ID, Name: "app", Platform: db.AppPlatformIos, BundleID: "com.example"})
 	if err != nil {
 		t.Fatal(err)
@@ -81,14 +85,20 @@ func TestPGStore(t *testing.T) {
 	}
 
 	var reports, files int
-	pool.QueryRow(ctx, "SELECT count(*) FROM reports WHERE app_id = $1", app.ID).Scan(&reports)
-	pool.QueryRow(ctx, "SELECT count(*) FROM report_attachments WHERE report_id = $1", first.ID).Scan(&files)
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM reports WHERE app_id = $1", app.ID).Scan(&reports); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM report_attachments WHERE report_id = $1", first.ID).Scan(&files); err != nil {
+		t.Fatal(err)
+	}
 	if reports != 1 || files != 1 {
 		t.Errorf("stored %d reports and %d attachments, want 1 and 1", reports, files)
 	}
 
 	var stored map[string]any
-	pool.QueryRow(ctx, "SELECT payload FROM reports WHERE id = $1", first.ID).Scan(&stored)
+	if err := pool.QueryRow(ctx, "SELECT payload FROM reports WHERE id = $1", first.ID).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
 	if stored["installation_id"] != r.InstallationID {
 		t.Errorf("payload not stored as sent: %v", stored["installation_id"])
 	}
