@@ -169,3 +169,28 @@ message QueryResult {
   bool truncated = 7;
   uint64 dropped_line_count = 8;
 }
+
+// What the coordinator asks of an agent, and what the backend asks of the
+// coordinator: counts over a window, no log lines. Added after v1, old
+// peers ignore the oneof variants that carry it.
+message MetricsQuery {
+  string query_id = 1;
+  TimeWindow window = 2;
+  google.protobuf.Timestamp deadline = 3;
+}
+
+message ServiceMetrics {
+  string service = 1;
+  uint64 lines = 2;
+  // Lines that look like errors (level token in the text, best effort).
+  uint64 error_lines = 3;
+  // The source hit its line cap, so both counts are lower bounds.
+  bool truncated = 4;
+  // Set when the service could not be read, counts are then 0.
+  optional SourceError error = 5;
+}
+
+message MetricsResult {
+  string query_id = 1;
+  repeated ServiceMetrics services = 2;
+}

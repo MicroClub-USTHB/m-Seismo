@@ -23,6 +23,8 @@ message CoordinatorEvent {
     Hello hello = 1;
     AggregateResult result = 2;
     AggregateError error = 3;
+    // Added after v1.
+    AggregateMetrics metrics = 4;
   }
 }
 
@@ -30,6 +32,8 @@ message CoordinatorEvent {
 message BackendRequest {
   oneof request {
     QueryLogs query_logs = 1;
+    // Added after v1.
+    MetricsQuery query_metrics = 2;
   }
 }
 
@@ -99,4 +103,21 @@ message AggregateResult {
 message AggregateError {
   string query_id = 1;
   SourceError error = 2;
+}
+
+message AgentMetrics {
+  string agent_id = 1;
+  AgentSource source = 2;
+  // Same meaning as in AgentSection. TRUNCATED when any service was cut.
+  AgentStatus status = 3;
+  repeated ServiceMetrics services = 4;
+  string detail = 5;
+}
+
+// Answer to a MetricsQuery. Coordinator faults still come as AggregateError.
+message AggregateMetrics {
+  uint32 schema_version = 1;
+  string query_id = 2;
+  TimeWindow requested_window = 3;
+  repeated AgentMetrics agents = 4;
 }
