@@ -65,3 +65,84 @@ export interface SessionResponse {
   owner: Owner
   token: Token
 }
+
+export type Tracker = 'github' | 'gitlab' | 'bitbucket'
+export type Platform = 'ios' | 'android' | 'flutter' | 'react_native'
+
+export interface App {
+  id: string
+  name: string
+  platform: Platform
+  bundle_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface Connection {
+  id: string
+  app_id: string
+  tracker: Tracker
+  account_login: string
+  account_type: string
+  suspended_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ConnectionRepository {
+  full_name: string
+  private: boolean
+  url: string
+}
+
+export interface CredentialStatus {
+  tracker: Tracker
+  configured: boolean
+  client_id?: string
+}
+
+export interface Project {
+  id: string
+  name: string
+  slug: string
+  created_at: string
+  updated_at: string
+}
+
+export interface AppProjectLink {
+  id: string
+  name: string
+  slug: string
+}
+
+export interface ProjectRepository {
+  id: string
+  project_id: string
+  tracker: Tracker
+  repository: string
+  is_default: boolean
+  created_at: string
+}
+
+export interface AppKey {
+  id: string
+  prefix: string
+  revoked_at: string | null
+  created_at: string
+}
+
+export interface AppKeyCreated extends AppKey {
+  secret: string
+}
+
+export interface Target {
+  project_id: string
+  project_repository_id: string
+  repository: string
+  tracker: Tracker
+  connection_id: string | null
+  account_login?: string
+  error?: string
+}
+
+export const ALL_TRACKERS: Tracker[] = ['github', 'gitlab', 'bitbucket']

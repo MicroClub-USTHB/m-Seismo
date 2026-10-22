@@ -3,7 +3,8 @@ import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table'
 import { useState } from 'react'
 import { api, ApiError, type Owner } from '../lib/api'
-import { getStoredOwner, useAuth } from '../lib/auth'
+import { getStoredOwner } from '../lib/auth'
+import { Shell } from '../lib/Shell'
 
 export const Route = createFileRoute('/')({
   beforeLoad: () => {
@@ -23,8 +24,6 @@ const columns: ColumnDef<Owner>[] = [
 ]
 
 function Dashboard() {
-  const { owner, logout } = useAuth()
-
   const owners = useQuery({
     queryKey: ['owners'],
     queryFn: () => api.get<Owner[]>('/owners'),
@@ -37,22 +36,11 @@ function Dashboard() {
   })
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="flex items-center justify-between border-b bg-white px-6 py-4">
-        <h1 className="text-lg font-semibold text-gray-900">m-Seismo dashboard</h1>
-        <div className="flex items-center gap-4 text-sm text-gray-600">
-          <span>{owner?.email}</span>
-          <button onClick={logout} className="text-gray-900 underline hover:no-underline">
-            Sign out
-          </button>
-        </div>
-      </header>
+    <Shell>
+      <AddUserForm />
 
-      <main className="mx-auto max-w-4xl space-y-8 p-6">
-        <AddUserForm />
-
-        <section>
-          <h2 className="mb-3 text-sm font-medium text-gray-700">Users</h2>
+      <section>
+        <h2 className="mb-3 text-sm font-medium text-gray-700">Users</h2>
 
           {owners.isLoading && <p className="text-sm text-gray-500">Loading…</p>}
           {owners.isError && (
@@ -89,9 +77,8 @@ function Dashboard() {
               </tbody>
             </table>
           )}
-        </section>
-      </main>
-    </div>
+      </section>
+    </Shell>
   )
 }
 
