@@ -119,5 +119,5 @@ a plain substring match.
 
 ## Status
 
-Agent done for Loki logs. No Tempo, Mimir or `context_lines` yet.
-Coordinator is a stub.
+Agent done, sources: `loki`, `file`, `journal`, `docker`. No Tempo, Mimir or
+`context_lines` yet. Coordinator is a stub.
