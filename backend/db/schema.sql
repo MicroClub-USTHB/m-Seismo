@@ -1,5 +1,10 @@
+--
+-- PostgreSQL database dump
+--
+
+
 -- Dumped from database version 17.11
--- Dumped by pg_dump version 18.6
+-- Dumped by pg_dump version 17.11
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -46,10 +51,9 @@ COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
 --
 
 CREATE TYPE public.app_platform AS ENUM (
+    'web',
     'ios',
-    'android',
-    'flutter',
-    'react_native'
+    'android'
 );
 
 
@@ -83,6 +87,17 @@ CREATE TABLE public.app_keys (
 
 
 --
+-- Name: app_projects; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_projects (
+    app_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: app_tracker_credentials; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -95,17 +110,6 @@ CREATE TABLE public.app_tracker_credentials (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT app_tracker_credentials_tracker_check CHECK ((tracker = ANY (ARRAY['gitlab'::public.tracker, 'bitbucket'::public.tracker])))
-);
-
-
---
--- Name: app_projects; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.app_projects (
-    app_id uuid NOT NULL,
-    project_id uuid NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -287,11 +291,11 @@ ALTER TABLE ONLY public.app_keys
 
 
 --
--- Name: app_tracker_credentials app_tracker_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: app_projects app_projects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.app_tracker_credentials
-    ADD CONSTRAINT app_tracker_credentials_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.app_projects
+    ADD CONSTRAINT app_projects_pkey PRIMARY KEY (app_id, project_id);
 
 
 --
@@ -303,11 +307,11 @@ ALTER TABLE ONLY public.app_tracker_credentials
 
 
 --
--- Name: app_projects app_projects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: app_tracker_credentials app_tracker_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.app_projects
-    ADD CONSTRAINT app_projects_pkey PRIMARY KEY (app_id, project_id);
+ALTER TABLE ONLY public.app_tracker_credentials
+    ADD CONSTRAINT app_tracker_credentials_pkey PRIMARY KEY (id);
 
 
 --
@@ -539,14 +543,6 @@ ALTER TABLE ONLY public.app_keys
 
 
 --
--- Name: app_tracker_credentials app_tracker_credentials_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_tracker_credentials
-    ADD CONSTRAINT app_tracker_credentials_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-
-
---
 -- Name: app_projects app_projects_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -560,6 +556,14 @@ ALTER TABLE ONLY public.app_projects
 
 ALTER TABLE ONLY public.app_projects
     ADD CONSTRAINT app_projects_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_tracker_credentials app_tracker_credentials_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_tracker_credentials
+    ADD CONSTRAINT app_tracker_credentials_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -692,4 +696,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021120000'),
     ('20261021130000'),
     ('20261022120000'),
-    ('20261022210000');
+    ('20261022210000'),
+    ('20261022233233');
