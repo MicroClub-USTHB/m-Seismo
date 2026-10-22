@@ -239,3 +239,44 @@ async fn redacts_every_line_before_it_leaves() {
         "login password=[REDACTED] ok"
     );
 }
+
+#[tokio::test]
+async fn context_lines_from_the_query_reach_the_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    // epoch 100s..104s, inside query()'s window
+    let lines: Vec<String> = (0..5)
+        .map(|i| {
+            let tag = if i == 2 { " trace_id=abc" } else { "" };
+            format!("1970-01-01T00:01:4{i}Z n{i}{tag}")
+        })
+        .collect();
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+    let source = Source::build(&config::Source::File(config::File {
+        files: HashMap::from([("app".to_owned(), path)]),
+        rotated: 0,
+    }))
+    .unwrap();
+
+    let mut q = query();
+    q.trace_id = Some("abc".into());
+    q.limits.as_mut().unwrap().context_lines = 1;
+    let r = Engine::new(vec!["app".into()], source)
+        .answer(&q)
+        .await
+        .unwrap();
+
+    let got: Vec<_> = r.workloads[0]
+        .entries
+        .iter()
+        .map(|e| (e.message.split(' ').nth(1).unwrap(), e.match_kind))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("n1", MatchKind::Context as i32),
+            ("n2", MatchKind::Trace as i32),
+            ("n3", MatchKind::Context as i32),
+        ]
+    );
+}

@@ -133,6 +133,7 @@ impl Engine {
                 to,
                 trace_id: q.trace_id.as_deref(),
                 limit,
+                context: limits.context_lines,
                 timeout,
             })
         }))

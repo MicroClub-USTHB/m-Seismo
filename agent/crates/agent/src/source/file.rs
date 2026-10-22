@@ -1,7 +1,7 @@
-use super::{Fetched, Params, err, ns_to_ts, ts_to_ns};
+use super::{Fetched, Params, Raw, err, finish, ts_to_ns};
 use crate::config;
 use chrono::{DateTime, NaiveDateTime};
-use seismo_proto::{self as pb, LogStream, MatchKind, SourceError, SourceErrorKind};
+use seismo_proto::{LogStream, SourceError, SourceErrorKind};
 use std::{
     collections::HashMap,
     fs,
@@ -48,31 +48,23 @@ impl File {
             }))
             .collect();
         let (from, to) = (ts_to_ns(p.from), ts_to_ns(p.to));
-        let (trace, limit) = (p.trace_id.map(str::to_owned), p.limit as usize);
+        let (trace, limit, context) = (
+            p.trace_id.map(str::to_owned),
+            p.limit as usize,
+            p.context as usize,
+        );
 
         // NOTE: blocking io on purpose, the timeout only abandons the thread,
         // MAX_SCAN_BYTES is what actually bounds it
-        let job =
-            tokio::task::spawn_blocking(move || scan(&paths, from, to, trace.as_deref(), limit));
+        let job = tokio::task::spawn_blocking(move || {
+            scan(&paths, from, to, trace.as_deref(), limit, context)
+        });
         let (rows, hit_limit) = tokio::time::timeout(p.timeout, job)
             .await
             .map_err(|_| err(SourceErrorKind::Timeout, "file scan timed out"))?
             .map_err(|e| err(SourceErrorKind::SourceUnreachable, e.to_string()))??;
 
-        let match_kind = if p.trace_id.is_some() {
-            MatchKind::Trace
-        } else {
-            MatchKind::Window
-        };
-        let entries = rows
-            .into_iter()
-            .map(|(ns, line)| pb::LogEntry {
-                timestamp: Some(ns_to_ts(ns)),
-                stream: LogStream::Unknown as i32,
-                message: line,
-                match_kind: match_kind as i32,
-            })
-            .collect();
+        let entries = finish(rows, p.trace_id.is_some(), context, limit);
         Ok(Fetched {
             entries,
             scope_label: self.host.clone(),
@@ -90,21 +82,25 @@ fn io_err(path: &Path, e: io::Error) -> SourceError {
     err(kind, format!("{}: {e}", path.display()))
 }
 
-/// Newest lines inside [from, to], oldest first, plus whether it stopped at `limit`.
+/// Lines inside [from, to], oldest first, plus whether it stopped at `limit`
+/// matches. With a trace id and `context` it also keeps the unmatched lines
+/// around the matches, `finish` decides which ones survive.
 fn scan(
     paths: &[PathBuf],
     from: i128,
     to: i128,
     trace: Option<&str>,
     limit: usize,
-) -> Result<(Vec<(i128, String)>, bool), SourceError> {
+    context: usize,
+) -> Result<(Vec<Raw>, bool), SourceError> {
+    let want_ctx = trace.is_some() && context > 0;
     // collected newest -> oldest, flipped at the end
-    let mut rows: Vec<(i128, String)> = Vec::new();
+    let mut rows: Vec<Raw> = Vec::new();
     // lines without a timestamp (stack traces...) belong to the header line
     // *above* them, which we only meet later since we read backwards. they
     // can even spill into the next (older) file
     let mut pending: Vec<String> = Vec::new();
-    let (mut scanned, mut hit_limit) = (0u64, false);
+    let (mut scanned, mut matches, mut extra, mut hit_limit) = (0u64, 0, context, false);
 
     'files: for (i, path) in paths.iter().enumerate() {
         let mut lines = match RevLines::open(path) {
@@ -128,16 +124,37 @@ fn scan(
             if ts < from {
                 break 'files; // everything above here is older still
             }
-            if ts <= to {
-                rows.extend(
-                    group
-                        .filter(|l| trace.is_none_or(|t| l.contains(t)))
-                        .map(|l| (ts, l)),
-                );
-                if rows.len() >= limit {
-                    rows.truncate(limit);
-                    hit_limit = true;
-                    break 'files;
+            if ts > to {
+                continue;
+            }
+            for text in group {
+                let matched = trace.is_none_or(|t| text.contains(t));
+                let raw = |matched| Raw {
+                    ts,
+                    stream: LogStream::Unknown,
+                    text,
+                    matched,
+                };
+                if hit_limit {
+                    // all matches found, only the older neighbours are left
+                    if extra == 0 {
+                        break 'files;
+                    }
+                    extra -= 1;
+                    rows.push(raw(false));
+                    continue;
+                }
+                if matched || want_ctx {
+                    rows.push(raw(matched));
+                }
+                if matched {
+                    matches += 1;
+                    if matches >= limit {
+                        hit_limit = true;
+                        if !want_ctx {
+                            break 'files;
+                        }
+                    }
                 }
             }
         }

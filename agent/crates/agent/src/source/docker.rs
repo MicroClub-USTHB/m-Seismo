@@ -1,7 +1,7 @@
-use super::{Fetched, Params, err, ns_to_ts, ts_to_ns};
+use super::{Fetched, Params, Raw, err, finish, ts_to_ns};
 use crate::config;
 use chrono::DateTime;
-use seismo_proto::{self as pb, LogStream, MatchKind, SourceError, SourceErrorKind};
+use seismo_proto::{LogStream, SourceError, SourceErrorKind};
 use std::{
     collections::{HashMap, VecDeque},
     process::Stdio,
@@ -11,12 +11,36 @@ use tokio::{
     process::Command,
 };
 
-type Row = (i128, LogStream, String);
-
 pub struct Docker {
     command: Vec<String>,
     containers: HashMap<String, String>,
     host: String,
+}
+
+/// What a line has to satisfy to be kept.
+#[derive(Clone, Copy)]
+struct Filter<'a> {
+    from: i128,
+    to: i128,
+    trace: Option<&'a str>,
+    limit: usize,
+    context: usize,
+}
+
+impl Filter<'_> {
+    fn want_ctx(&self) -> bool {
+        self.trace.is_some() && self.context > 0
+    }
+
+    /// Lines to remember per pipe. Neighbours of a match can be anywhere
+    /// near it, so with context we keep room for all of them.
+    fn cap(&self) -> usize {
+        if self.want_ctx() {
+            self.limit.saturating_mul(2 * self.context + 1)
+        } else {
+            self.limit
+        }
+    }
 }
 
 impl Docker {
@@ -57,37 +81,21 @@ impl Docker {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
-        let run = collect(
-            cmd,
-            ts_to_ns(p.from),
-            ts_to_ns(p.to),
-            p.trace_id,
-            p.limit as usize,
-        );
-        let (mut rows, hit_limit) = tokio::time::timeout(p.timeout, run)
+        let filter = Filter {
+            from: ts_to_ns(p.from),
+            to: ts_to_ns(p.to),
+            trace: p.trace_id,
+            limit: p.limit as usize,
+            context: p.context as usize,
+        };
+        let (mut rows, hit_limit) = tokio::time::timeout(p.timeout, collect(cmd, filter))
             .await
             .map_err(|_| err(SourceErrorKind::Timeout, "docker logs timed out"))??;
 
         // stdout and stderr came in separately, interleave them by time. stable,
         // so equal timestamps keep stdout before stderr
-        rows.sort_by_key(|r| r.0);
-        if rows.len() > p.limit as usize {
-            rows.drain(..rows.len() - p.limit as usize);
-        }
-        let match_kind = if p.trace_id.is_some() {
-            MatchKind::Trace
-        } else {
-            MatchKind::Window
-        };
-        let entries = rows
-            .into_iter()
-            .map(|(ns, stream, line)| pb::LogEntry {
-                timestamp: Some(ns_to_ts(ns)),
-                stream: stream as i32,
-                message: line,
-                match_kind: match_kind as i32,
-            })
-            .collect();
+        rows.sort_by_key(|r| r.ts);
+        let entries = finish(rows, p.trace_id.is_some(), filter.context, filter.limit);
         Ok(Fetched {
             entries,
             scope_label: self.host.clone(),
@@ -96,13 +104,7 @@ impl Docker {
     }
 }
 
-async fn collect(
-    mut cmd: Command,
-    from: i128,
-    to: i128,
-    trace: Option<&str>,
-    limit: usize,
-) -> Result<(Vec<Row>, bool), SourceError> {
+async fn collect(mut cmd: Command, f: Filter<'_>) -> Result<(Vec<Raw>, bool), SourceError> {
     let mut child = cmd.spawn().map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => err(SourceErrorKind::DriverUnsupported, "docker not found"),
         std::io::ErrorKind::PermissionDenied => err(SourceErrorKind::AccessDenied, e.to_string()),
@@ -112,18 +114,12 @@ async fn collect(
         read_pipe(
             child.stdout.take().expect("stdout is piped"),
             LogStream::Stdout,
-            from,
-            to,
-            trace,
-            limit
+            f
         ),
         read_pipe(
             child.stderr.take().expect("stderr is piped"),
             LogStream::Stderr,
-            from,
-            to,
-            trace,
-            limit
+            f
         ),
     );
     let (out, errs) = (out.map_err(io_err)?, errs.map_err(io_err)?);
@@ -133,8 +129,10 @@ async fn collect(
         // docker's own errors come on stderr without a timestamp
         return Err(failure(&errs.junk));
     }
-    let hit_limit = out.overflowed || errs.overflowed;
-    let rows = out.rows.into_iter().chain(errs.rows).collect();
+    let overflowed = out.overflowed || errs.overflowed;
+    let rows: Vec<Raw> = out.rows.into_iter().chain(errs.rows).collect();
+    // more matches than we may return also means older ones get cut
+    let hit_limit = overflowed || rows.iter().filter(|r| r.matched).count() > f.limit;
     Ok((rows, hit_limit))
 }
 
@@ -166,8 +164,9 @@ fn failure(stderr: &str) -> SourceError {
 
 #[derive(Default)]
 struct Piped {
-    /// Newest `limit` matching lines of this pipe.
-    rows: VecDeque<Row>,
+    /// Newest lines of this pipe, up to `Filter::cap`.
+    rows: VecDeque<Raw>,
+    /// A matching line fell off the front.
     overflowed: bool,
     /// Lines without a docker timestamp, only interesting when docker failed.
     junk: String,
@@ -186,10 +185,7 @@ impl Piped {
 async fn read_pipe(
     r: impl AsyncRead + Unpin,
     stream: LogStream,
-    from: i128,
-    to: i128,
-    trace: Option<&str>,
-    limit: usize,
+    f: Filter<'_>,
 ) -> std::io::Result<Piped> {
     let mut p = Piped::default();
     let mut lines = BufReader::new(r).lines();
@@ -206,14 +202,21 @@ async fn read_pipe(
             p.note_junk(&line);
             continue;
         };
-        if ns < from || ns > to || trace.is_some_and(|t| !msg.contains(t)) {
+        let matched = f.trace.is_none_or(|t| msg.contains(t));
+        if ns < f.from || ns > f.to || !(matched || f.want_ctx()) {
             continue;
         }
-        if p.rows.len() == limit {
-            p.rows.pop_front();
-            p.overflowed = true;
+        if p.rows.len() == f.cap()
+            && let Some(old) = p.rows.pop_front()
+        {
+            p.overflowed |= old.matched;
         }
-        p.rows.push_back((ns, stream, msg.to_owned()));
+        p.rows.push_back(Raw {
+            ts: ns,
+            stream,
+            text: msg.to_owned(),
+            matched,
+        });
     }
     Ok(p)
 }

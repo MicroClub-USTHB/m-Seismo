@@ -16,6 +16,8 @@ pub struct Params<'a> {
     pub to: &'a Timestamp,
     pub trace_id: Option<&'a str>,
     pub limit: u32,
+    /// Lines to keep on each side of a trace match. Ignored without a trace id.
+    pub context: u32,
     pub timeout: Duration,
 }
 
@@ -83,4 +85,59 @@ pub(crate) fn ns_to_ts(ns: i128) -> Timestamp {
         seconds: ns.div_euclid(1_000_000_000) as i64,
         nanos: ns.rem_euclid(1_000_000_000) as i32,
     }
+}
+
+/// A line as a source saw it, before it becomes a `LogEntry`.
+#[derive(Clone)]
+pub(crate) struct Raw {
+    pub ts: i128,
+    pub stream: pb::LogStream,
+    pub text: String,
+    /// Passed the trace filter. Always true for a plain window query.
+    pub matched: bool,
+}
+
+/// `rows` oldest first. Keeps the newest `limit` matched rows and `context`
+/// rows on each side of them, everything else is dropped.
+pub(crate) fn finish(
+    rows: Vec<Raw>,
+    traced: bool,
+    context: usize,
+    limit: usize,
+) -> Vec<pb::LogEntry> {
+    let first_match = |upto: usize| rows[..upto].iter().filter(|r| r.matched).count();
+    // index of the oldest match we keep
+    let skip = first_match(rows.len()).saturating_sub(limit);
+    let mut selected = vec![false; rows.len()];
+    let mut seen = 0;
+    for (i, r) in rows.iter().enumerate() {
+        if r.matched {
+            selected[i] = seen >= skip;
+            seen += 1;
+        }
+    }
+    let mut keep = vec![false; rows.len()];
+    for i in (0..rows.len()).filter(|i| selected[*i]) {
+        let (lo, hi) = (i.saturating_sub(context), (i + context).min(rows.len() - 1));
+        keep[lo..=hi].fill(true);
+    }
+    let kind = if traced {
+        pb::MatchKind::Trace
+    } else {
+        pb::MatchKind::Window
+    };
+    rows.into_iter()
+        .enumerate()
+        .filter(|(i, _)| keep[*i])
+        .map(|(i, r)| pb::LogEntry {
+            timestamp: Some(ns_to_ts(r.ts)),
+            stream: r.stream as i32,
+            message: r.text,
+            match_kind: if selected[i] {
+                kind
+            } else {
+                pb::MatchKind::Context
+            } as i32,
+        })
+        .collect()
 }

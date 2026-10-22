@@ -56,6 +56,7 @@ async fn fetch(
             to: &ts(to),
             trace_id: trace,
             limit,
+            context: 0,
             timeout: Duration::from_secs(5),
         })
         .await
@@ -176,9 +177,96 @@ async fn failures_map_to_source_errors() {
             to: &ts(10),
             trace_id: None,
             limit: 10,
+            context: 0,
             timeout: Duration::from_millis(200),
         })
         .await
         .unwrap_err();
     assert_eq!(e.kind, SourceErrorKind::Timeout as i32);
+}
+
+// -- context_lines --
+
+const TRACE: i32 = MatchKind::Trace as i32;
+const CTX: i32 = MatchKind::Context as i32;
+
+/// Ten entries n0..n9, newest first like `journalctl -r`.
+fn numbered(traced: &[i64]) -> Vec<String> {
+    (0..10)
+        .rev()
+        .map(|i| {
+            let tag = if traced.contains(&i) {
+                " trace_id=abc"
+            } else {
+                ""
+            };
+            entry(i, json!(format!("n{i}{tag}")))
+        })
+        .collect()
+}
+
+async fn fetch_ctx(cfg: &config::Journal, to: i64, limit: u32, context: u32) -> Fetched {
+    Journal::new(cfg)
+        .fetch(Params {
+            service: "app",
+            from: &ts(0),
+            to: &ts(to),
+            trace_id: Some("abc"),
+            limit,
+            context,
+            timeout: Duration::from_secs(5),
+        })
+        .await
+        .unwrap()
+}
+
+fn shape(f: &Fetched) -> Vec<(String, i32)> {
+    f.entries
+        .iter()
+        .map(|e| {
+            (
+                e.message.split(' ').next().unwrap().to_owned(),
+                e.match_kind,
+            )
+        })
+        .collect()
+}
+
+fn expect(items: &[(&str, i32)]) -> Vec<(String, i32)> {
+    items.iter().map(|(n, k)| (n.to_string(), *k)).collect()
+}
+
+#[tokio::test]
+async fn context_surrounds_each_trace_match() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = fake(dir.path(), &numbered(&[4, 8]), 0, "");
+    let got = fetch_ctx(&cfg, 100, 100, 1).await;
+    assert_eq!(
+        shape(&got),
+        expect(&[
+            ("n3", CTX),
+            ("n4", TRACE),
+            ("n5", CTX),
+            ("n7", CTX),
+            ("n8", TRACE),
+            ("n9", CTX)
+        ])
+    );
+    assert!(!got.hit_limit);
+}
+
+#[tokio::test]
+async fn context_follows_the_limit_and_stays_in_the_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = fake(dir.path(), &numbered(&[4, 8]), 0, "");
+
+    let got = fetch_ctx(&cfg, 100, 1, 2).await;
+    assert_eq!(
+        shape(&got),
+        expect(&[("n6", CTX), ("n7", CTX), ("n8", TRACE), ("n9", CTX)])
+    );
+    assert!(got.hit_limit);
+
+    let got = fetch_ctx(&cfg, 8, 100, 2).await;
+    assert_eq!(shape(&got).last(), Some(&("n8".to_owned(), TRACE)));
 }

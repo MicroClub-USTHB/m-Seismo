@@ -56,6 +56,7 @@ async fn fetch(
             to: &ts(to),
             trace_id: trace,
             limit,
+            context: 0,
             timeout: Duration::from_secs(5),
         })
         .await
@@ -193,9 +194,104 @@ async fn docker_failures_map_to_source_errors() {
             to: &ts(10),
             trace_id: None,
             limit: 10,
+            context: 0,
             timeout: Duration::from_millis(200),
         })
         .await
         .unwrap_err();
     assert_eq!(e.kind, SourceErrorKind::Timeout as i32);
+}
+
+// -- context_lines --
+
+const TRACE: i32 = MatchKind::Trace as i32;
+const CTX: i32 = MatchKind::Context as i32;
+
+async fn fetch_ctx(cfg: &config::Docker, to: i64, limit: u32, context: u32) -> Fetched {
+    Docker::new(cfg)
+        .fetch(Params {
+            service: "app",
+            from: &ts(0),
+            to: &ts(to),
+            trace_id: Some("abc"),
+            limit,
+            context,
+            timeout: Duration::from_secs(5),
+        })
+        .await
+        .unwrap()
+}
+
+/// n0..n9, evens on stdout and odds on stderr, `traced` ones carry the id.
+fn split_numbered(traced: &[i64]) -> (Vec<String>, Vec<String>) {
+    let (mut out, mut errs) = (Vec::new(), Vec::new());
+    for i in 0..10 {
+        let tag = if traced.contains(&i) {
+            " trace_id=abc"
+        } else {
+            ""
+        };
+        let l = line(i, &format!("n{i}{tag}"));
+        if i % 2 == 0 {
+            out.push(l)
+        } else {
+            errs.push(l)
+        }
+    }
+    (out, errs)
+}
+
+fn shape(f: &Fetched) -> Vec<(String, i32)> {
+    f.entries
+        .iter()
+        .map(|e| {
+            (
+                e.message.split(' ').next().unwrap().to_owned(),
+                e.match_kind,
+            )
+        })
+        .collect()
+}
+
+fn expect(items: &[(&str, i32)]) -> Vec<(String, i32)> {
+    items.iter().map(|(n, k)| (n.to_string(), *k)).collect()
+}
+
+#[tokio::test]
+async fn context_crosses_stdout_and_stderr() {
+    let dir = tempfile::tempdir().unwrap();
+    let (out, errs) = split_numbered(&[4, 8]);
+    let cfg = fake(dir.path(), &out, &errs, 0, "");
+
+    let got = fetch_ctx(&cfg, 100, 100, 1).await;
+    assert_eq!(
+        shape(&got),
+        expect(&[
+            ("n3", CTX),
+            ("n4", TRACE),
+            ("n5", CTX),
+            ("n7", CTX),
+            ("n8", TRACE),
+            ("n9", CTX)
+        ])
+    );
+    assert_eq!(got.entries[0].stream, LogStream::Stderr as i32, "n3 is odd");
+    assert!(!got.hit_limit);
+}
+
+#[tokio::test]
+async fn context_follows_the_limit_and_stays_in_the_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let (out, errs) = split_numbered(&[4, 8]);
+    let cfg = fake(dir.path(), &out, &errs, 0, "");
+
+    let got = fetch_ctx(&cfg, 100, 1, 2).await;
+    assert_eq!(
+        shape(&got),
+        expect(&[("n6", CTX), ("n7", CTX), ("n8", TRACE), ("n9", CTX)])
+    );
+    assert!(got.hit_limit, "a second match was left out");
+
+    let got = fetch_ctx(&cfg, 9, 100, 2).await; // n9 is at 9.12s
+    assert_eq!(shape(&got).last(), Some(&("n8".to_owned(), TRACE)));
 }

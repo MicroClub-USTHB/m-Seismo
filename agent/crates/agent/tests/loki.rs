@@ -40,6 +40,7 @@ async fn fetch(
         to: &ts(200),
         trace_id,
         limit,
+        context: 0,
         timeout,
     })
     .await
@@ -195,4 +196,114 @@ async fn unreachable_and_slow_sources() {
     .await
     .unwrap_err();
     assert_eq!(e.kind, SourceErrorKind::Timeout as i32);
+}
+
+// -- context_lines --
+
+const TRACE: i32 = seismo_proto::MatchKind::Trace as i32;
+const CTX: i32 = seismo_proto::MatchKind::Context as i32;
+
+/// A fake loki holding n0..n9 at 100s..109s that really applies start, end,
+/// limit, direction and the trace filter, so the extra context queries get
+/// real answers. `traced` lines carry trace_id=abc.
+async fn emulated(traced: &'static [usize]) -> common::Fake {
+    serve(NONE, move |target| {
+        let url = reqwest::Url::parse(&format!("http://x{target}")).unwrap();
+        let q: HashMap<String, String> = url.query_pairs().into_owned().collect();
+        let (start, end): (i128, i128) = (q["start"].parse().unwrap(), q["end"].parse().unwrap());
+        let only_trace = q["query"].contains("trace_id=");
+        let mut rows: Vec<(String, String)> = (0..10usize)
+            .map(|i| {
+                let tag = if traced.contains(&i) {
+                    " trace_id=abc"
+                } else {
+                    ""
+                };
+                (((100 + i as i128) * 1_000_000_000), format!("n{i}{tag}"))
+            })
+            .filter(|(t, l)| *t >= start && *t < end && (!only_trace || l.contains("abc")))
+            .map(|(t, l)| (t.to_string(), l))
+            .collect();
+        if q["direction"] == "backward" {
+            rows.reverse();
+        }
+        rows.truncate(q["limit"].parse().unwrap());
+        let refs: Vec<(&str, &str)> = rows.iter().map(|(t, l)| (t.as_str(), l.as_str())).collect();
+        (
+            200,
+            streams(&[(json!({"service_name": "postgres"}), &refs)]),
+        )
+    })
+    .await
+}
+
+async fn fetch_ctx(loki: &Loki, limit: u32, context: u32) -> seismo_agent::source::Fetched {
+    loki.fetch(Params {
+        service: "postgres",
+        from: &ts(100),
+        to: &ts(200),
+        trace_id: Some("abc"),
+        limit,
+        context,
+        timeout: T,
+    })
+    .await
+    .unwrap()
+}
+
+fn shape(f: &seismo_agent::source::Fetched) -> Vec<(String, i32)> {
+    f.entries
+        .iter()
+        .map(|e| {
+            (
+                e.message.split(' ').next().unwrap().to_owned(),
+                e.match_kind,
+            )
+        })
+        .collect()
+}
+
+fn expect(items: &[(&str, i32)]) -> Vec<(String, i32)> {
+    items.iter().map(|(n, k)| (n.to_string(), *k)).collect()
+}
+
+#[tokio::test]
+async fn context_surrounds_each_trace_match() {
+    let fake = emulated(&[4, 8]).await;
+    let got = fetch_ctx(&Loki::new(cfg(&fake.url)).unwrap(), 100, 1).await;
+
+    assert_eq!(
+        shape(&got),
+        expect(&[
+            ("n3", CTX),
+            ("n4", TRACE),
+            ("n5", CTX),
+            ("n7", CTX),
+            ("n8", TRACE),
+            ("n9", CTX)
+        ])
+    );
+    assert!(!got.hit_limit);
+    // the matches, the lines up to the newest one, and the lines after it
+    assert_eq!(fake.requests.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn context_follows_the_limit() {
+    let fake = emulated(&[4, 8]).await;
+    let got = fetch_ctx(&Loki::new(cfg(&fake.url)).unwrap(), 1, 2).await;
+
+    assert_eq!(
+        shape(&got),
+        expect(&[("n6", CTX), ("n7", CTX), ("n8", TRACE), ("n9", CTX)])
+    );
+    assert!(got.hit_limit);
+}
+
+#[tokio::test]
+async fn no_match_means_no_context_queries() {
+    let fake = emulated(&[]).await;
+    let got = fetch_ctx(&Loki::new(cfg(&fake.url)).unwrap(), 100, 3).await;
+    assert!(got.entries.is_empty());
+    assert_eq!(fake.requests.lock().unwrap().len(), 1);
 }

@@ -55,6 +55,12 @@ for now, TLS is not done yet.
 
 Pick one per agent with `[source] type = ...`.
 
+With a `trace_id` a source also returns `context_lines` lines on each side of
+every match, marked as context. Context only comes from inside the window, and
+`limit` counts matches, not context. `loki` has no "lines around this one", so
+it makes two extra queries per service (everything up to the newest match, and
+a few lines after it), capped at 5000 lines by Loki's own limit.
+
 ### `loki`
 
 See the example above. One `query_range` per service.
@@ -119,5 +125,5 @@ a plain substring match.
 
 ## Status
 
-Agent done, sources: `loki`, `file`, `journal`, `docker`. No Tempo, Mimir or
-`context_lines` yet. Coordinator is a stub.
+Agent done, sources: `loki`, `file`, `journal`, `docker`. No Tempo or Mimir yet.
+Coordinator is a stub.

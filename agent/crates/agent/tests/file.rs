@@ -42,6 +42,7 @@ async fn fetch(
         to: &ts(to),
         trace_id: trace,
         limit,
+        context: 0,
         timeout: Duration::from_secs(5),
     })
     .await
@@ -213,4 +214,135 @@ async fn keeps_lines_raw_and_reports_missing_files() {
         .await
         .unwrap_err();
     assert_eq!(e.kind, SourceErrorKind::WorkloadNotFound as i32);
+}
+
+// -- context_lines --
+
+const TRACE: i32 = MatchKind::Trace as i32;
+const CTX: i32 = MatchKind::Context as i32;
+
+async fn fetch_ctx(f: &File, from: i64, to: i64, limit: u32, context: u32) -> Fetched {
+    f.fetch(Params {
+        service: "app",
+        from: &ts(from),
+        to: &ts(to),
+        trace_id: Some("abc"),
+        limit,
+        context,
+        timeout: Duration::from_secs(5),
+    })
+    .await
+    .unwrap()
+}
+
+fn numbered(path: &Path, traced: &[i64]) {
+    let lines: Vec<String> = (0..10)
+        .map(|i| {
+            let tag = if traced.contains(&i) {
+                " trace_id=abc"
+            } else {
+                ""
+            };
+            format!("{} n{i}{tag}", at(i))
+        })
+        .collect();
+    write(path, &lines);
+}
+
+fn shape(f: &Fetched) -> Vec<(String, i32)> {
+    f.entries
+        .iter()
+        .map(|e| {
+            let n = e.message.split(' ').nth(1).unwrap().to_owned();
+            (n, e.match_kind)
+        })
+        .collect()
+}
+
+fn expect(items: &[(&str, i32)]) -> Vec<(String, i32)> {
+    items.iter().map(|(n, k)| (n.to_string(), *k)).collect()
+}
+
+#[tokio::test]
+async fn context_surrounds_each_trace_match() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("app.log");
+    numbered(&p, &[4, 8]);
+
+    let got = fetch_ctx(&source(&p, 0), 0, 100, 100, 1).await;
+    assert_eq!(
+        shape(&got),
+        expect(&[
+            ("n3", CTX),
+            ("n4", TRACE),
+            ("n5", CTX),
+            ("n7", CTX),
+            ("n8", TRACE),
+            ("n9", CTX)
+        ])
+    );
+    assert!(!got.hit_limit);
+}
+
+#[tokio::test]
+async fn overlapping_context_is_not_duplicated() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("app.log");
+    numbered(&p, &[4, 6]);
+
+    let got = fetch_ctx(&source(&p, 0), 0, 100, 100, 1).await;
+    assert_eq!(
+        shape(&got),
+        expect(&[
+            ("n3", CTX),
+            ("n4", TRACE),
+            ("n5", CTX),
+            ("n6", TRACE),
+            ("n7", CTX)
+        ])
+    );
+}
+
+#[tokio::test]
+async fn context_follows_the_limit_and_stays_in_the_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("app.log");
+    numbered(&p, &[4, 8]);
+
+    // limit 1 keeps only the newest match and its neighbours
+    let got = fetch_ctx(&source(&p, 0), 0, 100, 1, 2).await;
+    assert_eq!(
+        shape(&got),
+        expect(&[("n6", CTX), ("n7", CTX), ("n8", TRACE), ("n9", CTX)])
+    );
+    assert!(got.hit_limit);
+
+    // n9 is outside the window, so it cannot be context either
+    let got = fetch_ctx(&source(&p, 0), 0, 8, 100, 2).await;
+    assert_eq!(shape(&got).last(), Some(&("n8".to_owned(), TRACE)));
+}
+
+#[tokio::test]
+async fn context_is_ignored_without_a_trace_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("app.log");
+    numbered(&p, &[4]);
+    let got = source(&p, 0)
+        .fetch(Params {
+            service: "app",
+            from: &ts(0),
+            to: &ts(100),
+            trace_id: None,
+            limit: 100,
+            context: 3,
+            timeout: Duration::from_secs(5),
+        })
+        .await
+        .unwrap();
+    assert_eq!(got.entries.len(), 10);
+    assert!(
+        got.entries
+            .iter()
+            .all(|e| e.match_kind == MatchKind::Window as i32)
+    );
 }

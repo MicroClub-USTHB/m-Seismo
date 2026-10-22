@@ -1,7 +1,7 @@
-use super::{Fetched, Params, err, ns_to_ts, ts_to_ns};
+use super::{Fetched, Params, Raw, err, finish, ts_to_ns};
 use crate::config;
 use chrono::DateTime;
-use seismo_proto::{self as pb, LogStream, MatchKind, SourceError, SourceErrorKind};
+use seismo_proto::{LogStream, SourceError, SourceErrorKind};
 use std::{collections::HashMap, process::Stdio};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, BufReader},
@@ -48,27 +48,26 @@ impl Journal {
             .kill_on_drop(true);
 
         let (from, to) = (ts_to_ns(p.from), ts_to_ns(p.to));
-        let run = collect(cmd, from, to, p.trace_id, p.limit as usize);
+        let run = collect(
+            cmd,
+            from,
+            to,
+            p.trace_id,
+            p.limit as usize,
+            p.context as usize,
+        );
         let (mut rows, hit_limit, host) = tokio::time::timeout(p.timeout, run)
             .await
             .map_err(|_| err(SourceErrorKind::Timeout, "journalctl timed out"))??;
 
         // journalctl -r gave us newest first
         rows.reverse();
-        let match_kind = if p.trace_id.is_some() {
-            MatchKind::Trace
-        } else {
-            MatchKind::Window
-        };
-        let entries = rows
-            .into_iter()
-            .map(|(ns, line)| pb::LogEntry {
-                timestamp: Some(ns_to_ts(ns)),
-                stream: LogStream::Unknown as i32,
-                message: line,
-                match_kind: match_kind as i32,
-            })
-            .collect();
+        let entries = finish(
+            rows,
+            p.trace_id.is_some(),
+            p.context as usize,
+            p.limit as usize,
+        );
         Ok(Fetched {
             entries,
             scope_label: host,
@@ -77,7 +76,8 @@ impl Journal {
     }
 }
 
-type Rows = (Vec<(i128, String)>, bool, String);
+/// Newest first, like journalctl -r gave them.
+type Rows = (Vec<Raw>, bool, String);
 
 async fn collect(
     mut cmd: Command,
@@ -85,6 +85,7 @@ async fn collect(
     to: i128,
     trace: Option<&str>,
     limit: usize,
+    context: usize,
 ) -> Result<Rows, SourceError> {
     let mut child = cmd.spawn().map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => {
@@ -95,6 +96,8 @@ async fn collect(
     })?;
     let mut lines = BufReader::new(child.stdout.take().expect("stdout is piped")).lines();
     let (mut rows, mut host, mut scanned) = (Vec::new(), String::new(), 0u64);
+    let (mut matches, mut extra, mut hit_limit) = (0usize, context, false);
+    let want_ctx = trace.is_some() && context > 0;
     let io = |e: std::io::Error| err(SourceErrorKind::SourceUnreachable, e.to_string());
 
     while let Some(line) = lines.next_line().await.map_err(io)? {
@@ -130,17 +133,38 @@ async fn collect(
             }
             _ => continue,
         };
-        if trace.is_some_and(|t| !msg.contains(t)) {
-            continue;
-        }
+        let matched = trace.is_none_or(|t| msg.contains(t));
         if host.is_empty()
             && let Some(h) = v["_HOSTNAME"].as_str()
         {
             host = h.to_owned();
         }
-        rows.push((ns, msg));
-        if rows.len() >= limit {
-            return Ok((rows, true, host)); // dropping the child kills journalctl
+        let raw = |matched| Raw {
+            ts: ns,
+            stream: LogStream::Unknown,
+            text: msg,
+            matched,
+        };
+        if hit_limit {
+            // all matches found, only the older neighbours are left
+            if extra == 0 {
+                return Ok((rows, true, host)); // dropping the child kills journalctl
+            }
+            extra -= 1;
+            rows.push(raw(false));
+            continue;
+        }
+        if matched || want_ctx {
+            rows.push(raw(matched));
+        }
+        if matched {
+            matches += 1;
+            if matches >= limit {
+                hit_limit = true;
+                if !want_ctx {
+                    return Ok((rows, true, host));
+                }
+            }
         }
     }
 
@@ -158,5 +182,5 @@ async fn collect(
             ),
         ));
     }
-    Ok((rows, false, host))
+    Ok((rows, hit_limit, host))
 }
