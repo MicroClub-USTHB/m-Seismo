@@ -382,18 +382,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
-name = "m-seismo-agent"
-version = "0.1.0"
-dependencies = [
- "prost",
- "prost-types",
- "tokio",
- "tonic",
- "tonic-prost",
- "tonic-prost-build",
-]
-
-[[package]]
 name = "matchit"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -624,6 +612,30 @@ dependencies = [
  "libc",
  "linux-raw-sys",
  "windows-sys",
+]
+
+[[package]]
+name = "seismo-agent"
+version = "0.1.0"
+
+[[package]]
+name = "seismo-coordinator"
+version = "0.1.0"
+dependencies = [
+ "seismo-proto",
+ "tokio",
+ "tonic",
+]
+
+[[package]]
+name = "seismo-proto"
+version = "0.1.0"
+dependencies = [
+ "prost",
+ "prost-types",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
 ]
 
 [[package]]

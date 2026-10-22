@@ -1,0 +1,9 @@
+[package]
+name = "seismo-coordinator"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+seismo-proto.workspace = true
+tokio.workspace = true
+tonic.workspace = true

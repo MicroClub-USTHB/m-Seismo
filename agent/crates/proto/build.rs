@@ -5,10 +5,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_client(false)
         .compile_protos(
             &[
-                "../spec/proto/seismo/v1/agent.proto",
-                "../spec/proto/seismo/v1/coordinator.proto",
+                "../../../spec/proto/seismo/v1/agent.proto",
+                "../../../spec/proto/seismo/v1/coordinator.proto",
             ],
-            &["../spec/proto"],
+            &["../../../spec/proto"],
         )?;
     Ok(())
 }

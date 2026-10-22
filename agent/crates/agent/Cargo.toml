@@ -1,0 +1,6 @@
+[package]
+name = "seismo-agent"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
