@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"slices"
 
+	"github.com/google/uuid"
 	"go.uber.org/fx"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
@@ -47,13 +48,19 @@ type Repository struct {
 type Provider interface {
 	Tracker() db.Tracker
 
-	// InstallURL is where the owner's browser is sent to grant access. The
-	// tracker sends state back to the callback unchanged.
-	InstallURL(state string) string
+	// InstallURL is where the owner's browser is sent to grant access, for
+	// the given app. GitLab and Bitbucket resolve the app's own OAuth
+	// application (see CredentialStore) and fail with apperr.NotFound when
+	// it has not registered one yet. The tracker sends state back to the
+	// callback unchanged.
+	InstallURL(ctx context.Context, appID uuid.UUID, state string) (string, error)
 	// CompleteInstall verifies the callback query and returns the account
 	// the owner granted access to. It must not trust identifiers in the
-	// query without checking them with the tracker.
-	CompleteInstall(ctx context.Context, query url.Values) (Account, error)
+	// query without checking them with the tracker. appID is the app the
+	// connect flow was started for (recovered from the state before this is
+	// called), so GitLab and Bitbucket can use that app's own OAuth
+	// application to redeem the code.
+	CompleteInstall(ctx context.Context, appID uuid.UUID, query url.Values) (Account, error)
 
 	ListRepositories(ctx context.Context, c issue.Connection) ([]Repository, error)
 	// HasRepository reports whether the connection can reach repository.

@@ -278,22 +278,23 @@ paced the way GitHub's are, because neither tracker asks for it.
 
 | Key (env var `SEISMO_…`) | Default | Notes |
 |---|---|---|
-| `gitlab.client_id` | empty | **empty turns GitLab off** (`GET /providers` won't list it) |
-| `gitlab.client_secret` | empty | required when the client ID is set |
 | `gitlab.web_url` | `https://gitlab.com/` | authorize and token endpoints; set this for a self-managed GitLab |
 | `gitlab.api_url` | `https://gitlab.com/api/v4/` | REST API |
-| `gitlab.redirect_url` | `{server.public_url}/api/v1/providers/gitlab/callback` | must equal the application's redirect URI exactly |
+| `gitlab.redirect_url` | `{server.public_url}/api/v1/providers/gitlab/callback` | must equal every app's GitLab application's redirect URI exactly |
 | `gitlab.max_rate_limit_wait` | `30s` | negative = never wait |
-| `bitbucket.client_id` | empty | the consumer **key**; empty turns Bitbucket off |
-| `bitbucket.client_secret` | empty | the consumer secret |
 | `bitbucket.web_url` | `https://bitbucket.org/` | OAuth endpoints |
 | `bitbucket.api_url` | `https://api.bitbucket.org/2.0/` | REST API |
-| `bitbucket.redirect_url` | `{server.public_url}/api/v1/providers/bitbucket/callback` | must match the consumer's callback URL |
+| `bitbucket.redirect_url` | `{server.public_url}/api/v1/providers/bitbucket/callback` | must match every app's Bitbucket consumer's callback URL |
 | `bitbucket.max_rate_limit_wait` | `30s` | |
 | `secrets.encryption_key` | empty | base64 of 32 bytes; see [Token storage](#token-storage-and-encryption) |
 
-The dev stack (`deploy/compose.dev.yml`) points all of these at the fakes.
-Override them in `deploy/.env` to use real services.
+These are the only deployment-wide settings: there is no client ID or
+secret here. GitLab and Bitbucket are always available (`GET /providers`
+always lists them); each **app** registers its own OAuth application
+through `PUT /apps/{appID}/providers/{tracker}/credentials` (see
+[../bruno/07 App connections](../bruno/07%20App%20connections)) before it
+can connect. This is unlike GitHub, which uses one App installed for the
+whole deployment.
 
 ---
 
@@ -304,51 +305,36 @@ Override them in `deploy/.env` to use real services.
    Applications**. Add a new application.
 2. **Redirect URI**: `{SEISMO_SERVER_PUBLIC_URL}/api/v1/providers/gitlab/callback`
    (e.g. `http://localhost:8080/api/v1/providers/gitlab/callback` locally).
+   This is the same URL for every app on this deployment.
 3. **Confidential**: yes. **Scopes**: `api`. `api` is the narrowest scope
    that can create issues; `read_api` cannot.
-4. Save it, then copy the **Application ID** into `SEISMO_GITLAB_CLIENT_ID`
-   and the **Secret** into `SEISMO_GITLAB_CLIENT_SECRET`.
+4. Save it, then register the **Application ID** and **Secret** on the app
+   that will use it: `PUT /apps/{appID}/providers/gitlab/credentials` with
+   `{"client_id": "…", "client_secret": "…"}`.
 5. For self-managed GitLab, also set `SEISMO_GITLAB_WEB_URL` and
-   `SEISMO_GITLAB_API_URL`.
-6. Set `SEISMO_SECRETS_ENCRYPTION_KEY` (outside development), then restart.
-   `GET /api/v1/providers` now lists `gitlab`.
+   `SEISMO_GITLAB_API_URL` (deployment-wide: every app's GitLab application
+   must be on the same instance).
+6. Set `SEISMO_SECRETS_ENCRYPTION_KEY` (outside development), then
+   `GET /apps/{appID}/connect/gitlab` starts the flow for that app.
 
 ## Setting up a real Bitbucket consumer
 
 1. On Bitbucket, open your **workspace settings → OAuth consumers → Add
    consumer**.
-2. **Callback URL**: `{SEISMO_SERVER_PUBLIC_URL}/api/v1/providers/bitbucket/callback`.
+2. **Callback URL**: `{SEISMO_SERVER_PUBLIC_URL}/api/v1/providers/bitbucket/callback`
+   (the same URL for every app on this deployment).
 3. **This is a private consumer**: ticked, because a confidential client is
    needed for refresh tokens.
 4. **Permissions**: Account → *Read*, Repositories → *Read*, Issues →
    *Write*.
-5. Save it, then copy the **Key** into `SEISMO_BITBUCKET_CLIENT_ID` and the
-   **Secret** into `SEISMO_BITBUCKET_CLIENT_SECRET`.
-6. Set `SEISMO_SECRETS_ENCRYPTION_KEY` (outside development), then restart.
+5. Save it, then register the **Key** and **Secret** on the app that will
+   use it: `PUT /apps/{appID}/providers/bitbucket/credentials` with
+   `{"client_id": "…", "client_secret": "…"}`.
+6. Set `SEISMO_SECRETS_ENCRYPTION_KEY` (outside development), then
+   `GET /apps/{appID}/connect/bitbucket` starts the flow for that app.
 
 Each repository that should receive issues needs its **issue tracker turned
 on** (Repository settings → Issue tracker).
-
----
-
-## The fakes
-
-The dev stack runs two fakes besides the fake GitHub. They are the same code
-the unit tests run in-process (`fakegitlab.New(...).Handler()`).
-
-| | Fake GitLab (`cmd/fakegitlab`) | Fake Bitbucket (`cmd/fakebitbucket`) |
-|---|---|---|
-| Port | `9091` (`FAKEGITLAB_PORT`) | `9092` (`FAKEBITBUCKET_PORT`) |
-| Client | `fake-client` / `fake-secret`, in the form body | `fake-client` / `fake-secret`, HTTP Basic |
-| Codes | `fake-code-N` → user N (token valid 2 h); `fake-code-N-short` → token valid 1 s, which forces a refresh on first use | same |
-| User N | id `N`, username `gl-user-N` | uuid `{0000000N-0000-4000-8000-000000000000}`, username `bb-user-N` |
-| Grants | every code exchange is a separate grant with its own tokens; refresh tokens rotate and work once | every exchange is a separate grant; the refresh token stays the same |
-| Repositories | `seismo-group/seismo-test`, `seismo-group/another`, `seismo-group/sub/nested`, `seismo-group/broken` (500), `seismo-group/limited` (429 once per title, `Retry-After: 1`), `seismo-group/exhausted` (429, `Retry-After: 3600`) | `seismo-ws/seismo-test`, `seismo-ws/another`, `seismo-ws/no-issues` (tracker off: 404), `seismo-ws/broken`, `seismo-ws/limited`, `seismo-ws/exhausted` |
-| Milestone | `v1.0` (id 1) | `v1.0` |
-| Inspection | `GET`/`DELETE /_fake/issues`, `GET /_fake/stats` (`exchanges`, `refreshes`, `rate_limited`, `issues`), `POST /_fake/revoke?user=N` | same |
-
-The fakes do not check redirect URIs against a registered value, and they keep
-everything in memory.
 
 ---
 

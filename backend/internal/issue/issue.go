@@ -30,7 +30,12 @@ import (
 // the whole value so trackers that store per-connection secrets (GitLab,
 // Bitbucket OAuth tokens) can look them up by ID.
 type Connection struct {
-	ID      uuid.UUID
+	ID uuid.UUID
+	// AppID is the app the connection belongs to. GitLab and Bitbucket use
+	// it to look up that app's own OAuth application (client ID and
+	// secret), since each app brings its own instead of sharing one
+	// configured for the whole deployment.
+	AppID   uuid.UUID
 	Tracker db.Tracker
 	// ExternalID is the tracker's identifier for the connection (GitHub: the
 	// installation ID).
@@ -41,7 +46,7 @@ type Connection struct {
 
 // ConnectionFromRow converts a provider_connections row.
 func ConnectionFromRow(c db.ProviderConnection) Connection {
-	return Connection{ID: c.ID, Tracker: c.Tracker, ExternalID: c.ExternalID, AccountLogin: c.AccountLogin}
+	return Connection{ID: c.ID, AppID: c.AppID, Tracker: c.Tracker, ExternalID: c.ExternalID, AccountLogin: c.AccountLogin}
 }
 
 // RateLimitError is returned by an Opener when the tracker refused the

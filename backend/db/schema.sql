@@ -83,6 +83,22 @@ CREATE TABLE public.app_keys (
 
 
 --
+-- Name: app_tracker_credentials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_tracker_credentials (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    tracker public.tracker NOT NULL,
+    client_id text NOT NULL,
+    client_secret_ciphertext bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_tracker_credentials_tracker_check CHECK ((tracker = ANY (ARRAY['gitlab'::public.tracker, 'bitbucket'::public.tracker])))
+);
+
+
+--
 -- Name: app_projects; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -268,6 +284,22 @@ ALTER TABLE ONLY public.app_keys
 
 ALTER TABLE ONLY public.app_keys
     ADD CONSTRAINT app_keys_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_tracker_credentials app_tracker_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_tracker_credentials
+    ADD CONSTRAINT app_tracker_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_tracker_credentials app_tracker_credentials_app_id_tracker_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_tracker_credentials
+    ADD CONSTRAINT app_tracker_credentials_app_id_tracker_key UNIQUE (app_id, tracker);
 
 
 --
@@ -507,6 +539,14 @@ ALTER TABLE ONLY public.app_keys
 
 
 --
+-- Name: app_tracker_credentials app_tracker_credentials_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_tracker_credentials
+    ADD CONSTRAINT app_tracker_credentials_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_projects app_projects_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -651,4 +691,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261018120000'),
     ('20261021120000'),
     ('20261021130000'),
-    ('20261022120000');
+    ('20261022120000'),
+    ('20261022210000');

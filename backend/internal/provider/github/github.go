@@ -25,6 +25,7 @@ import (
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	gh "github.com/google/go-github/v93/github"
+	"github.com/google/uuid"
 	"go.uber.org/fx"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
@@ -155,15 +156,20 @@ func (p *Provider) Tracker() db.Tracker { return db.TrackerGithub }
 // InstallURL sends the owner to the App's install page. GitHub returns to
 // the App's configured Setup URL with installation_id, setup_action, state
 // and (with "Request user authorization during installation") code.
-func (p *Provider) InstallURL(state string) string {
-	return p.opts.WebURL + "apps/" + url.PathEscape(p.opts.AppSlug) + "/installations/new?state=" + url.QueryEscape(state)
+//
+// appID is unused: GitHub, unlike GitLab and Bitbucket, still uses the one
+// App configured for the whole deployment.
+func (p *Provider) InstallURL(_ context.Context, _ uuid.UUID, state string) (string, error) {
+	return p.opts.WebURL + "apps/" + url.PathEscape(p.opts.AppSlug) + "/installations/new?state=" + url.QueryEscape(state), nil
 }
 
 // CompleteInstall trusts installation_id only after checking, with the
 // installing user's own token, that the user can access that installation.
 // Without this check anyone could attach someone else's installation by
 // editing the callback URL.
-func (p *Provider) CompleteInstall(ctx context.Context, q url.Values) (provider.Account, error) {
+//
+// appID is unused; see InstallURL.
+func (p *Provider) CompleteInstall(ctx context.Context, _ uuid.UUID, q url.Values) (provider.Account, error) {
 	if q.Get("setup_action") == "request" {
 		return provider.Account{}, apperr.Invalid("installation requested; an organization owner must approve it first")
 	}

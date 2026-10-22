@@ -94,10 +94,65 @@ type Service struct {
 	reg     *Registry
 	states  StateStore
 	secrets SecretStore
+	creds   CredentialStore
 }
 
-func NewService(q db.Querier, reg *Registry, states StateStore, secrets SecretStore) *Service {
-	return &Service{q: q, reg: reg, states: states, secrets: secrets}
+func NewService(q db.Querier, reg *Registry, states StateStore, secrets SecretStore, creds CredentialStore) *Service {
+	return &Service{q: q, reg: reg, states: states, secrets: secrets, creds: creds}
+}
+
+// perAppCredentialTrackers are the trackers each app registers its own
+// OAuth application for, instead of sharing one configured for the whole
+// deployment. GitHub is not here: it still uses the one App installed for
+// the deployment.
+var perAppCredentialTrackers = map[db.Tracker]bool{
+	db.TrackerGitlab:    true,
+	db.TrackerBitbucket: true,
+}
+
+// SetCredentials registers the app's own OAuth application (client ID and
+// secret) for tracker, so the app can run its own connect flow against it.
+// Saving again (e.g. after rotating the secret on the tracker) replaces it;
+// existing connections keep working, since Tokens resolves the application
+// fresh on every refresh.
+func (s *Service) SetCredentials(ctx context.Context, ownerID, appID uuid.UUID, tracker db.Tracker, clientID, clientSecret string) error {
+	if !perAppCredentialTrackers[tracker] {
+		return apperr.Invalid(string(tracker) + " does not use a per-app OAuth application")
+	}
+	if clientID == "" || clientSecret == "" {
+		return apperr.Invalid("client_id and client_secret are required")
+	}
+	if err := s.requireApp(ctx, ownerID, appID); err != nil {
+		return err
+	}
+	return s.creds.Save(ctx, appID, tracker, Credentials{ClientID: clientID, ClientSecret: clientSecret})
+}
+
+// CredentialStatus reports whether the app has registered an OAuth
+// application for tracker, without exposing the client secret.
+type CredentialStatus struct {
+	Tracker     db.Tracker `json:"tracker"`
+	Configured  bool       `json:"configured"`
+	ClientID    string     `json:"client_id,omitempty"`
+}
+
+// GetCredentialStatus reports the app's OAuth application status for
+// tracker.
+func (s *Service) GetCredentialStatus(ctx context.Context, ownerID, appID uuid.UUID, tracker db.Tracker) (CredentialStatus, error) {
+	if !perAppCredentialTrackers[tracker] {
+		return CredentialStatus{}, apperr.Invalid(string(tracker) + " does not use a per-app OAuth application")
+	}
+	if err := s.requireApp(ctx, ownerID, appID); err != nil {
+		return CredentialStatus{}, err
+	}
+	cred, err := s.creds.Get(ctx, appID, tracker)
+	if errors.Is(err, ErrNoCredentials) {
+		return CredentialStatus{Tracker: tracker, Configured: false}, nil
+	}
+	if err != nil {
+		return CredentialStatus{}, err
+	}
+	return CredentialStatus{Tracker: tracker, Configured: true, ClientID: cred.ClientID}, nil
 }
 
 // connectState is what a state token stands for: who started the flow, for
@@ -146,7 +201,7 @@ func (s *Service) StartConnect(ctx context.Context, ownerID, appID uuid.UUID, tr
 	if err := s.states.Put(ctx, stateKeyPrefix+state, value, stateTTL); err != nil {
 		return "", fmt.Errorf("provider: store state: %w", err)
 	}
-	return p.InstallURL(state), nil
+	return p.InstallURL(ctx, appID, state)
 }
 
 // FinishConnect handles the tracker's callback: it consumes the state, lets
@@ -175,7 +230,7 @@ func (s *Service) FinishConnect(ctx context.Context, tracker db.Tracker, query u
 		return uuid.Nil, Connection{}, apperr.Invalid("state does not match this provider")
 	}
 
-	acct, err := p.CompleteInstall(ctx, query)
+	acct, err := p.CompleteInstall(ctx, st.appID, query)
 	if err != nil {
 		return st.appID, Connection{}, err
 	}

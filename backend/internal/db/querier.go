@@ -20,11 +20,13 @@ type Querier interface {
 	CreateReportDelivery(ctx context.Context, arg CreateReportDeliveryParams) error
 	DeleteApp(ctx context.Context, arg DeleteAppParams) (int64, error)
 	DeleteAppConnection(ctx context.Context, arg DeleteAppConnectionParams) (int64, error)
+	DeleteAppTrackerCredentials(ctx context.Context, arg DeleteAppTrackerCredentialsParams) (int64, error)
 	DeleteOwner(ctx context.Context, id uuid.UUID) (int64, error)
 	DeleteProject(ctx context.Context, arg DeleteProjectParams) (int64, error)
 	GetActiveAppKeyByHash(ctx context.Context, keyHash []byte) (AppKey, error)
 	GetApp(ctx context.Context, arg GetAppParams) (App, error)
 	GetAppConnection(ctx context.Context, arg GetAppConnectionParams) (ProviderConnection, error)
+	GetAppTrackerCredentials(ctx context.Context, arg GetAppTrackerCredentialsParams) (AppTrackerCredential, error)
 	GetConnectionSecret(ctx context.Context, providerConnectionID uuid.UUID) ([]byte, error)
 	// One project repository, provided the app is linked to its project. The
 	// credentials come from the app's connections, resolved by the caller.
@@ -65,6 +67,9 @@ type Querier interface {
 	UpdateApp(ctx context.Context, arg UpdateAppParams) (App, error)
 	UpdateOwner(ctx context.Context, arg UpdateOwnerParams) (Owner, error)
 	UpdateProject(ctx context.Context, arg UpdateProjectParams) (Project, error)
+	// Stores the app's OAuth application for the tracker (client_id and the
+	// encrypted client_secret), replacing an earlier one.
+	UpsertAppTrackerCredentials(ctx context.Context, arg UpsertAppTrackerCredentialsParams) (AppTrackerCredential, error)
 	// Stores a connection's encrypted credentials, replacing earlier ones (a
 	// re-connect, or a refreshed OAuth token).
 	UpsertConnectionSecret(ctx context.Context, arg UpsertConnectionSecretParams) error

@@ -55,12 +55,11 @@ type GitHubConfig struct {
 	MaxRateLimitWait time.Duration
 }
 
-// OAuthTrackerConfig holds the OAuth application of a tracker that is
-// reached with per-connection OAuth tokens (GitLab, Bitbucket). The tracker
-// is enabled when ClientID is set.
+// OAuthTrackerConfig holds the deployment-wide settings of a tracker that
+// is reached with per-connection OAuth tokens (GitLab, Bitbucket). Each
+// app's own OAuth application (client ID and secret) is registered
+// separately, through provider.CredentialStore, and is not here.
 type OAuthTrackerConfig struct {
-	ClientID     string
-	ClientSecret string
 	// WebURL is the base of the authorize and token endpoints, e.g.
 	// https://gitlab.com/ (or a self-managed GitLab).
 	WebURL string

@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -26,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/fx"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
@@ -36,27 +36,25 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider/oauth"
 )
 
-// Module registers the Bitbucket provider when bitbucket.client_id is set.
+// Module registers the Bitbucket provider. It is always available: each
+// app registers its own OAuth consumer (key and secret) before it can
+// connect, through provider.CredentialStore, instead of the deployment
+// sharing one configured in bitbucket.client_id/client_secret.
 var Module = fx.Module("bitbucket",
 	fx.Provide(provider.AsProvider(FromConfig)),
 )
 
-// FromConfig builds the provider, or none (with a warning) when
-// bitbucket.client_id is unset, so the server runs without Bitbucket.
-func FromConfig(cfg *config.Config, store provider.SecretStore) ([]provider.Provider, error) {
+// FromConfig builds the provider from the deployment-wide Bitbucket
+// settings (API/web URLs, rate limits). Per-app consumer key and secret
+// come from creds at connect time.
+func FromConfig(cfg *config.Config, store provider.SecretStore, creds provider.CredentialStore) ([]provider.Provider, error) {
 	c := cfg.Bitbucket
-	if c.ClientID == "" {
-		slog.Warn("bitbucket provider disabled: bitbucket.client_id is not set")
-		return nil, nil
-	}
 	p, err := New(Options{
-		ClientID:         c.ClientID,
-		ClientSecret:     c.ClientSecret,
 		WebURL:           c.WebURL,
 		APIURL:           c.APIURL,
 		RedirectURL:      c.RedirectURL,
 		MaxRateLimitWait: c.MaxRateLimitWait,
-	}, store)
+	}, store, creds)
 	if err != nil {
 		return nil, err
 	}
@@ -64,14 +62,11 @@ func FromConfig(cfg *config.Config, store provider.SecretStore) ([]provider.Prov
 }
 
 type Options struct {
-	// ClientID and ClientSecret are the OAuth consumer's key and secret.
-	ClientID     string
-	ClientSecret string
 	// WebURL hosts the OAuth endpoints: https://bitbucket.org/.
 	WebURL string
 	// APIURL is the REST API 2.0 base: https://api.bitbucket.org/2.0/.
 	APIURL string
-	// RedirectURL is the consumer's callback URL:
+	// RedirectURL is the consumer's callback URL, shared by every app:
 	// {public_url}/api/v1/providers/bitbucket/callback.
 	RedirectURL string
 	// MaxRateLimitWait: see oauth.Client.
@@ -83,16 +78,13 @@ type Options struct {
 
 // Provider implements provider.Provider for Bitbucket Cloud.
 type Provider struct {
-	opts     Options
-	endpoint oauth.Endpoint
-	tokens   *oauth.Tokens
-	api      *oauth.Client
+	opts   Options
+	creds  provider.CredentialStore
+	tokens *oauth.Tokens
+	api    *oauth.Client
 }
 
-func New(o Options, store provider.SecretStore) (*Provider, error) {
-	if o.ClientID == "" || o.ClientSecret == "" {
-		return nil, errors.New("bitbucket: client_id and client_secret are required")
-	}
+func New(o Options, store provider.SecretStore, creds provider.CredentialStore) (*Provider, error) {
 	if o.WebURL == "" {
 		o.WebURL = "https://bitbucket.org/"
 	}
@@ -105,42 +97,60 @@ func New(o Options, store provider.SecretStore) (*Provider, error) {
 		o.PageSize = 100
 	}
 
-	endpoint := oauth.Endpoint{
-		Tracker:      "bitbucket",
-		AuthURL:      o.WebURL + "site/oauth2/authorize",
-		TokenURL:     o.WebURL + "site/oauth2/access_token",
-		ClientID:     o.ClientID,
-		ClientSecret: o.ClientSecret,
-		RedirectURL:  o.RedirectURL,
-		// Bitbucket takes the scopes from the consumer's permissions and
-		// expects the client credentials with HTTP Basic.
-		BasicAuth: true,
-		HTTP:      &http.Client{Timeout: 15 * time.Second},
-	}
-	return &Provider{
-		opts:     o,
-		endpoint: endpoint,
-		tokens:   oauth.NewTokens(store, endpoint),
+	p := &Provider{
+		opts:  o,
+		creds: creds,
 		api: &oauth.Client{
 			Tracker:          "bitbucket",
 			BaseURL:          o.APIURL,
 			HTTP:             &http.Client{Timeout: 30 * time.Second},
 			MaxRateLimitWait: o.MaxRateLimitWait,
 		},
-	}, nil
+	}
+	p.tokens = oauth.NewTokens(store, p.endpointFor)
+	return p, nil
 }
 
 func (p *Provider) Tracker() db.Tracker { return db.TrackerBitbucket }
 
-// InstallURL is Bitbucket's OAuth authorize page.
-func (p *Provider) InstallURL(state string) string {
-	return p.endpoint.AuthCodeURL(state)
+// endpointFor builds the OAuth application of the app's own Bitbucket
+// consumer, resolved from provider.CredentialStore.
+func (p *Provider) endpointFor(ctx context.Context, appID uuid.UUID) (oauth.Endpoint, error) {
+	cred, err := p.creds.Get(ctx, appID, db.TrackerBitbucket)
+	if errors.Is(err, provider.ErrNoCredentials) {
+		return oauth.Endpoint{}, apperr.NotFound("this app has no Bitbucket OAuth consumer yet; register one with PUT /apps/{appID}/providers/bitbucket/credentials")
+	}
+	if err != nil {
+		return oauth.Endpoint{}, err
+	}
+	return oauth.Endpoint{
+		Tracker:      "bitbucket",
+		AuthURL:      p.opts.WebURL + "site/oauth2/authorize",
+		TokenURL:     p.opts.WebURL + "site/oauth2/access_token",
+		ClientID:     cred.ClientID,
+		ClientSecret: cred.ClientSecret,
+		RedirectURL:  p.opts.RedirectURL,
+		// Bitbucket takes the scopes from the consumer's permissions and
+		// expects the client credentials with HTTP Basic.
+		BasicAuth: true,
+		HTTP:      &http.Client{Timeout: 15 * time.Second},
+	}, nil
 }
 
-// CompleteInstall exchanges the code (redeemable only with the consumer
-// secret, so it proves the grant) and reads the authorising user. The
-// token becomes the connection's secret.
-func (p *Provider) CompleteInstall(ctx context.Context, q url.Values) (provider.Account, error) {
+// InstallURL is Bitbucket's OAuth authorize page, for the app's own
+// Bitbucket consumer.
+func (p *Provider) InstallURL(ctx context.Context, appID uuid.UUID, state string) (string, error) {
+	endpoint, err := p.endpointFor(ctx, appID)
+	if err != nil {
+		return "", err
+	}
+	return endpoint.AuthCodeURL(state), nil
+}
+
+// CompleteInstall exchanges the code (redeemable only with the app's own
+// consumer secret, so it proves the grant) and reads the authorising user.
+// The token becomes the connection's secret.
+func (p *Provider) CompleteInstall(ctx context.Context, appID uuid.UUID, q url.Values) (provider.Account, error) {
 	if e := q.Get("error"); e != "" {
 		msg := e
 		if d := q.Get("error_description"); d != "" {
@@ -152,7 +162,11 @@ func (p *Provider) CompleteInstall(ctx context.Context, q url.Values) (provider.
 	if code == "" {
 		return provider.Account{}, apperr.Invalid("missing authorization code")
 	}
-	tok, err := p.endpoint.Exchange(ctx, code)
+	endpoint, err := p.endpointFor(ctx, appID)
+	if err != nil {
+		return provider.Account{}, err
+	}
+	tok, err := endpoint.Exchange(ctx, code)
 	if err != nil {
 		return provider.Account{}, err
 	}
@@ -178,7 +192,7 @@ func (p *Provider) CompleteInstall(ctx context.Context, q url.Values) (provider.
 // ListRepositories lists the repositories the user is a member of,
 // following Bitbucket's "next" links.
 func (p *Provider) ListRepositories(ctx context.Context, c issue.Connection) ([]provider.Repository, error) {
-	auth := p.tokens.For(c.ID)
+	auth := p.tokens.For(c.ID, c.AppID)
 	out := []provider.Repository{}
 	next := "repositories?" + url.Values{"role": {"member"}, "pagelen": {strconv.Itoa(p.opts.PageSize)}}.Encode()
 	for next != "" {
@@ -211,7 +225,7 @@ func (p *Provider) HasRepository(ctx context.Context, c issue.Connection, reposi
 	if err != nil {
 		return false, err
 	}
-	_, err = p.api.Do(ctx, p.tokens.For(c.ID), http.MethodGet, path, nil, nil)
+	_, err = p.api.Do(ctx, p.tokens.For(c.ID, c.AppID), http.MethodGet, path, nil, nil)
 	if oauth.IsStatus(err, http.StatusNotFound) {
 		return false, nil
 	}
@@ -239,7 +253,7 @@ func (p *Provider) Covers(_ issue.Connection, repository string) bool {
 }
 
 func (p *Provider) Opener(_ context.Context, c issue.Connection) (issue.Opener, error) {
-	return &opener{p: p, auth: p.tokens.For(c.ID)}, nil
+	return &opener{p: p, auth: p.tokens.For(c.ID, c.AppID)}, nil
 }
 
 // repoPath is the API path of workspace/repo_slug.

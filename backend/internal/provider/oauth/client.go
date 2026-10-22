@@ -35,18 +35,19 @@ type Auth interface {
 }
 
 // For authenticates as one connection, through its stored token.
-func (t *Tokens) For(connectionID uuid.UUID) Auth {
-	return connAuth{t: t, id: connectionID}
+func (t *Tokens) For(connectionID, appID uuid.UUID) Auth {
+	return connAuth{t: t, id: connectionID, appID: appID}
 }
 
 type connAuth struct {
-	t  *Tokens
-	id uuid.UUID
+	t     *Tokens
+	id    uuid.UUID
+	appID uuid.UUID
 }
 
-func (a connAuth) token(ctx context.Context) (string, error) { return a.t.Access(ctx, a.id) }
+func (a connAuth) token(ctx context.Context) (string, error) { return a.t.Access(ctx, a.id, a.appID) }
 func (a connAuth) renew(ctx context.Context, rejected string) (string, error) {
-	return a.t.Renew(ctx, a.id, rejected)
+	return a.t.Renew(ctx, a.id, a.appID, rejected)
 }
 
 // StaticToken authenticates with a token that is not stored yet, such as

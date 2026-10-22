@@ -211,55 +211,63 @@ type Store interface {
 // DefaultLeeway is how long before expiry a token is refreshed.
 const DefaultLeeway = time.Minute
 
+// lockStripes bounds the memory Tokens spends on serialising refreshes: a
+// fixed number of mutexes shared by every connection, instead of one per
+// connection ID kept forever. A collision between two connections only
+// serialises their refreshes against each other, which is harmless; it
+// never mixes up which connection's token is being refreshed.
+const lockStripes = 256
+
+// EndpointResolver returns the OAuth application (client ID and secret) to
+// use for a connection's app. GitLab and Bitbucket resolve it from each
+// app's own registered application; Tokens calls it on every refresh so a
+// credential rotation takes effect without restarting.
+type EndpointResolver func(ctx context.Context, appID uuid.UUID) (Endpoint, error)
+
 // Tokens hands out access tokens per connection, refreshing them when they
 // are about to expire. Refreshes of one connection are serialised, which
 // matters for GitLab: a refresh token is single-use, so two concurrent
 // refreshes would make one of them fail. (This holds within one backend
 // process; see the docs for running several.)
 type Tokens struct {
-	store    Store
-	endpoint Endpoint
-	leeway   time.Duration
-
-	mu    sync.Mutex
-	locks map[uuid.UUID]*sync.Mutex
+	store   Store
+	resolve EndpointResolver
+	leeway  time.Duration
+	locks   [lockStripes]sync.Mutex
 }
 
-func NewTokens(store Store, endpoint Endpoint) *Tokens {
-	return &Tokens{store: store, endpoint: endpoint, leeway: DefaultLeeway, locks: map[uuid.UUID]*sync.Mutex{}}
+func NewTokens(store Store, resolve EndpointResolver) *Tokens {
+	return &Tokens{store: store, resolve: resolve, leeway: DefaultLeeway}
 }
 
 func (t *Tokens) lock(id uuid.UUID) *sync.Mutex {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	l, ok := t.locks[id]
-	if !ok {
-		l = &sync.Mutex{}
-		t.locks[id] = l
+	var h uint32
+	for _, b := range id {
+		h = h*31 + uint32(b)
 	}
-	return l
+	return &t.locks[h%lockStripes]
 }
 
 // Access returns a usable access token for the connection, refreshing it
 // first when it expires within the leeway.
-func (t *Tokens) Access(ctx context.Context, connectionID uuid.UUID) (string, error) {
-	return t.get(ctx, connectionID, "")
+func (t *Tokens) Access(ctx context.Context, connectionID, appID uuid.UUID) (string, error) {
+	return t.get(ctx, connectionID, appID, "")
 }
 
 // Renew is called after the tracker rejected rejected (HTTP 401). It
 // refreshes the token unless another caller already replaced it.
-func (t *Tokens) Renew(ctx context.Context, connectionID uuid.UUID, rejected string) (string, error) {
-	return t.get(ctx, connectionID, rejected)
+func (t *Tokens) Renew(ctx context.Context, connectionID, appID uuid.UUID, rejected string) (string, error) {
+	return t.get(ctx, connectionID, appID, rejected)
 }
 
-func (t *Tokens) get(ctx context.Context, id uuid.UUID, rejected string) (string, error) {
+func (t *Tokens) get(ctx context.Context, id, appID uuid.UUID, rejected string) (string, error) {
 	l := t.lock(id)
 	l.Lock()
 	defer l.Unlock()
 
 	raw, err := t.store.Load(ctx, id)
 	if err != nil {
-		return "", fmt.Errorf("%s: load token of connection %s: %w", t.endpoint.Tracker, id, err)
+		return "", fmt.Errorf("oauth: load token of connection %s: %w", id, err)
 	}
 	tok, err := DecodeToken(raw)
 	if err != nil {
@@ -275,12 +283,16 @@ func (t *Tokens) get(ctx context.Context, id uuid.UUID, rejected string) (string
 	}
 	if tok.RefreshToken == "" {
 		if force {
-			return "", fmt.Errorf("%s: %w (no refresh token); connect the app again", t.endpoint.Tracker, ErrRevoked)
+			return "", fmt.Errorf("oauth: %w (no refresh token); connect the app again", ErrRevoked)
 		}
 		return tok.AccessToken, nil
 	}
 
-	fresh, err := t.endpoint.Refresh(ctx, tok.RefreshToken)
+	endpoint, err := t.resolve(ctx, appID)
+	if err != nil {
+		return "", err
+	}
+	fresh, err := endpoint.Refresh(ctx, tok.RefreshToken)
 	if err != nil {
 		return "", err
 	}
@@ -289,7 +301,7 @@ func (t *Tokens) get(ctx context.Context, id uuid.UUID, rejected string) (string
 		// write can break the connection at the next refresh. The access
 		// token is still good for now.
 		slog.ErrorContext(ctx, "oauth token refreshed but not saved",
-			"tracker", t.endpoint.Tracker, "connection", id, "err", err)
+			"tracker", endpoint.Tracker, "connection", id, "err", err)
 	}
 	return fresh.AccessToken, nil
 }

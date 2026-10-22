@@ -60,6 +60,46 @@ func (s *Service) Targets(ctx context.Context, ownerID, appID uuid.UUID) ([]Targ
 	return out, nil
 }
 
+// trackerCredentialsInput is the app's own OAuth application for GitLab or
+// Bitbucket: each app brings its own, instead of sharing one configured
+// for the whole deployment.
+type trackerCredentialsInput struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+}
+
+func (h *Handler) getTrackerCredentials(w http.ResponseWriter, r *http.Request) {
+	id, ok := uuidParam(w, r, "appID")
+	if !ok {
+		return
+	}
+	tracker := db.Tracker(chi.URLParam(r, "tracker"))
+	status, err := h.conns.GetCredentialStatus(r.Context(), httpx.OwnerID(r.Context()), id, tracker)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, status)
+}
+
+func (h *Handler) setTrackerCredentials(w http.ResponseWriter, r *http.Request) {
+	id, ok := uuidParam(w, r, "appID")
+	if !ok {
+		return
+	}
+	tracker := db.Tracker(chi.URLParam(r, "tracker"))
+	var in trackerCredentialsInput
+	if err := httpx.Decode(w, r, &in); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	if err := h.conns.SetCredentials(r.Context(), httpx.OwnerID(r.Context()), id, tracker, in.ClientID, in.ClientSecret); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.NoContent(w)
+}
+
 // The per-app connection routes. The connect flow's callback stays at
 // /providers/{tracker}/callback (trackers allow one callback URL per
 // m-Seismo deployment); the app is carried in the one-time state.

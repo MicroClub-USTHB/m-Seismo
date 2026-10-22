@@ -105,8 +105,6 @@ func Load(configPath string) (*Config, error) {
 
 func oauthTracker(v *viper.Viper, name string) OAuthTrackerConfig {
 	return OAuthTrackerConfig{
-		ClientID:         v.GetString(name + ".client_id"),
-		ClientSecret:     v.GetString(name + ".client_secret"),
 		WebURL:           v.GetString(name + ".web_url"),
 		APIURL:           v.GetString(name + ".api_url"),
 		RedirectURL:      v.GetString(name + ".redirect_url"),
@@ -128,12 +126,14 @@ func (c *Config) validate() error {
 	if c.Auth.JWTTTL <= 0 {
 		return fmt.Errorf("auth.jwt_ttl must be positive")
 	}
-	// OAuth trackers store tokens, which must be encrypted. Development
-	// falls back to a fixed key (see the secrets package); elsewhere the
-	// key is required as soon as one of them is configured.
-	if c.Secrets.EncryptionKey == "" && c.Env != "development" &&
-		(c.GitLab.ClientID != "" || c.Bitbucket.ClientID != "") {
-		return fmt.Errorf("secrets.encryption_key is required when gitlab or bitbucket is configured and env is %q", c.Env)
+	// GitLab and Bitbucket store OAuth tokens, and every app's own OAuth
+	// application secret, encrypted. Both trackers are always available
+	// (each app registers its own application when it connects), so the
+	// key is required outside development rather than only once a tracker
+	// is configured. Development falls back to a fixed key (see the
+	// secrets package).
+	if c.Secrets.EncryptionKey == "" && c.Env != "development" {
+		return fmt.Errorf("secrets.encryption_key is required when env is %q", c.Env)
 	}
 	if _, err := c.SlogLevel(); err != nil {
 		return err

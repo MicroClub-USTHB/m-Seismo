@@ -94,13 +94,19 @@ owner's apps.
 
 ## GitLab and Bitbucket setup
 
-Create a GitLab application (scope `api`) and/or a Bitbucket OAuth consumer
-(Account Read, Repositories Read, Issues Write). Their callback URLs are
-`{SEISMO_SERVER_PUBLIC_URL}/api/v1/providers/gitlab/callback` and
-`…/bitbucket/callback`. Then set `SEISMO_GITLAB_CLIENT_ID` / `_SECRET`,
-`SEISMO_BITBUCKET_CLIENT_ID` / `_SECRET`, and `SEISMO_SECRETS_ENCRYPTION_KEY`
-(`openssl rand -base64 32`; required outside development). Unset client IDs
-turn the tracker off. Step by step in
+GitLab and Bitbucket are always available; there is no deployment-wide
+client ID/secret to configure. Each app registers its own GitLab
+application (scope `api`) or Bitbucket OAuth consumer (Account Read,
+Repositories Read, Issues Write) through
+`PUT /apps/{appID}/providers/{tracker}/credentials` before it can connect,
+so owners never have to trust the deployment's operator with a single
+OAuth application that reaches every connected account. Set
+`SEISMO_SECRETS_ENCRYPTION_KEY` (`openssl rand -base64 32`; required
+outside development) so those client secrets and connections' OAuth tokens
+are encrypted at rest. The callback URL every app's application/consumer
+must register is `{SEISMO_SERVER_PUBLIC_URL}/api/v1/providers/gitlab/callback`
+or `…/bitbucket/callback` (one URL per deployment; the app is carried in
+the connect flow's one-time state). Step by step in
 [docs/gitlab-bitbucket.md](docs/gitlab-bitbucket.md#setting-up-a-real-gitlab-application).
 
 ## API (`/api/v1`)

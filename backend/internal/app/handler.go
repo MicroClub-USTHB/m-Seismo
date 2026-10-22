@@ -48,6 +48,9 @@ func (h *Handler) Mount(r chi.Router) {
 			r.Put("/projects/{projectID}", h.linkProject)
 			r.Delete("/projects/{projectID}", h.unlinkProject)
 
+			r.Get("/providers/{tracker}/credentials", h.getTrackerCredentials)
+			r.Put("/providers/{tracker}/credentials", h.setTrackerCredentials)
+
 			r.Get("/connect/{tracker}", h.connect)
 			r.Get("/connections", h.listConnections)
 			r.Post("/connections", h.attachConnection)

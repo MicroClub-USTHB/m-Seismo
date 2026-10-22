@@ -32,12 +32,11 @@ func TestLoadDevelopmentFallsBackToDevSecret(t *testing.T) {
 func TestLoadOAuthTrackers(t *testing.T) {
 	t.Setenv("SEISMO_AUTH_JWT_SECRET", "test-secret")
 	t.Setenv("SEISMO_SERVER_PUBLIC_URL", "https://seismo.example.com/")
-	t.Setenv("SEISMO_GITLAB_CLIENT_ID", "gl-id")
 	t.Setenv("SEISMO_BITBUCKET_REDIRECT_URL", "https://cb.example.com/bb")
 
 	t.Setenv("SEISMO_ENV", "production")
 	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "secrets.encryption_key is required") {
-		t.Fatalf("gitlab without an encryption key outside development: err = %v", err)
+		t.Fatalf("production without an encryption key: err = %v", err)
 	}
 
 	t.Setenv("SEISMO_SECRETS_ENCRYPTION_KEY", "a2V5")
@@ -45,7 +44,7 @@ func TestLoadOAuthTrackers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.GitLab.ClientID != "gl-id" || cfg.GitLab.APIURL != "https://gitlab.com/api/v4/" {
+	if cfg.GitLab.APIURL != "https://gitlab.com/api/v4/" {
 		t.Errorf("gitlab = %+v", cfg.GitLab)
 	}
 	if cfg.GitLab.RedirectURL != "https://seismo.example.com/api/v1/providers/gitlab/callback" {

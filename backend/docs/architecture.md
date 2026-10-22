@@ -206,8 +206,8 @@ fx.Options(
     secrets.Module,  // *secrets.Cipher (secrets.encryption_key)
     provider.Module, // *provider.Registry, issue.OpenerSource, provider.StateStore, provider.SecretStore, *provider.Service, provider.Handler → group "routes"
     github.Module,   // []provider.Provider → group "providers" (empty when GitHub is not configured)
-    gitlab.Module,   // same, empty when gitlab.client_id is unset
-    bitbucket.Module, // same, empty when bitbucket.client_id is unset
+    gitlab.Module,   // same, always registered: each app brings its own OAuth application
+    bitbucket.Module, // same, always registered: each app brings its own OAuth consumer
     issue.Module,    // *issue.Service
 )
 ```
@@ -222,10 +222,13 @@ list:
 
 The `providers` group is *flattened*: each tracker's `FromConfig` returns a
 `[]provider.Provider`, and that slice is empty when the tracker is not
-configured (`github.app_id`, `gitlab.client_id` or `bitbucket.client_id`
-unset). The server then runs without that tracker: `GET /providers` doesn't
-list it, and `GET /apps/{id}/connect/<tracker>` and linking a repository on
-it return 404 "provider <tracker> is not available".
+configured (GitHub: `github.app_id` unset). GitLab and Bitbucket are always
+registered — each app registers its own OAuth application through
+`provider.CredentialStore` (`PUT /apps/{id}/providers/{tracker}/credentials`)
+before it can connect; `GET /apps/{id}/connect/<tracker>` returns 404 "this
+app has no GitLab/Bitbucket OAuth application yet" until it does. A tracker
+that is not configured at all (GitHub unset) is absent from `GET /providers`
+and 404s the same way as before.
 
 Lifecycle hooks:
 
