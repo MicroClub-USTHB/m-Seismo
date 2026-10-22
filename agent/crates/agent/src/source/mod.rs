@@ -1,0 +1,143 @@
+//! Where log lines come from. Every source answers the same question: the
+//! lines of one service inside a time window, newest kept when it has to cut.
+pub mod docker;
+pub mod file;
+pub mod journal;
+pub mod loki;
+
+use crate::config;
+use prost_types::Timestamp;
+use seismo_proto::{self as pb, AgentSource, SourceError, SourceErrorKind};
+use std::time::Duration;
+
+pub struct Params<'a> {
+    pub service: &'a str,
+    pub from: &'a Timestamp,
+    pub to: &'a Timestamp,
+    pub trace_id: Option<&'a str>,
+    pub limit: u32,
+    /// Lines to keep on each side of a trace match. Ignored without a trace id.
+    pub context: u32,
+    pub timeout: Duration,
+}
+
+#[derive(Debug)]
+pub struct Fetched {
+    /// Raw, oldest first. The engine redacts them before they leave.
+    pub entries: Vec<pb::LogEntry>,
+    pub scope_label: String,
+    /// The source stopped at `limit` lines, so older ones were probably cut.
+    pub hit_limit: bool,
+}
+
+// NOTE: enum dispatch instead of a trait object, a closed set of sources
+// doesn't need async-trait or boxing
+pub enum Source {
+    Loki(loki::Loki),
+    Docker(docker::Docker),
+    File(file::File),
+    Journal(journal::Journal),
+}
+
+impl Source {
+    pub fn build(cfg: &config::Source) -> Result<Self, String> {
+        match cfg {
+            config::Source::Loki(c) => Ok(Self::Loki(loki::Loki::new(c.clone())?)),
+            config::Source::Docker(c) => Ok(Self::Docker(docker::Docker::new(c))),
+            config::Source::File(c) => Ok(Self::File(file::File::new(c))),
+            config::Source::Journal(c) => Ok(Self::Journal(journal::Journal::new(c))),
+        }
+    }
+
+    /// What we tell the coordinator in `Register.source`.
+    pub fn kind(&self) -> AgentSource {
+        match self {
+            Self::Loki(_) => AgentSource::Loki,
+            Self::Docker(_) => AgentSource::Docker,
+            Self::File(_) => AgentSource::File,
+            Self::Journal(_) => AgentSource::Journal,
+        }
+    }
+
+    pub async fn fetch(&self, p: Params<'_>) -> Result<Fetched, SourceError> {
+        match self {
+            Self::Loki(s) => s.fetch(p).await,
+            Self::Docker(s) => s.fetch(p).await,
+            Self::File(s) => s.fetch(p).await,
+            Self::Journal(s) => s.fetch(p).await,
+        }
+    }
+}
+
+pub(crate) fn err(kind: SourceErrorKind, detail: impl Into<String>) -> SourceError {
+    SourceError {
+        kind: kind as i32,
+        detail: detail.into(),
+    }
+}
+
+pub(crate) fn ts_to_ns(t: &Timestamp) -> i128 {
+    t.seconds as i128 * 1_000_000_000 + t.nanos as i128
+}
+
+pub(crate) fn ns_to_ts(ns: i128) -> Timestamp {
+    Timestamp {
+        seconds: ns.div_euclid(1_000_000_000) as i64,
+        nanos: ns.rem_euclid(1_000_000_000) as i32,
+    }
+}
+
+/// A line as a source saw it, before it becomes a `LogEntry`.
+#[derive(Clone)]
+pub(crate) struct Raw {
+    pub ts: i128,
+    pub stream: pb::LogStream,
+    pub text: String,
+    /// Passed the trace filter. Always true for a plain window query.
+    pub matched: bool,
+}
+
+/// `rows` oldest first. Keeps the newest `limit` matched rows and `context`
+/// rows on each side of them, everything else is dropped.
+pub(crate) fn finish(
+    rows: Vec<Raw>,
+    traced: bool,
+    context: usize,
+    limit: usize,
+) -> Vec<pb::LogEntry> {
+    let first_match = |upto: usize| rows[..upto].iter().filter(|r| r.matched).count();
+    // index of the oldest match we keep
+    let skip = first_match(rows.len()).saturating_sub(limit);
+    let mut selected = vec![false; rows.len()];
+    let mut seen = 0;
+    for (i, r) in rows.iter().enumerate() {
+        if r.matched {
+            selected[i] = seen >= skip;
+            seen += 1;
+        }
+    }
+    let mut keep = vec![false; rows.len()];
+    for i in (0..rows.len()).filter(|i| selected[*i]) {
+        let (lo, hi) = (i.saturating_sub(context), (i + context).min(rows.len() - 1));
+        keep[lo..=hi].fill(true);
+    }
+    let kind = if traced {
+        pb::MatchKind::Trace
+    } else {
+        pb::MatchKind::Window
+    };
+    rows.into_iter()
+        .enumerate()
+        .filter(|(i, _)| keep[*i])
+        .map(|(i, r)| pb::LogEntry {
+            timestamp: Some(ns_to_ts(r.ts)),
+            stream: r.stream as i32,
+            message: r.text,
+            match_kind: if selected[i] {
+                kind
+            } else {
+                pb::MatchKind::Context
+            } as i32,
+        })
+        .collect()
+}

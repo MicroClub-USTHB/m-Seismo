@@ -1,7 +1,7 @@
 // Types shared by the agent hop and the backend hop.
 //
-// These mirror agent/src/model.rs on purpose, so the agent can turn its
-// own types into these without any reshaping.
+// Source-neutral on purpose: every agent source (loki, file, journal...)
+// fills these without reshaping.
 syntax = "proto3";
 
 package seismo.v1;
@@ -13,6 +13,8 @@ enum AgentSource {
   AGENT_SOURCE_DOCKER = 1;
   AGENT_SOURCE_KUBERNETES = 2;
   AGENT_SOURCE_LOKI = 3;
+  AGENT_SOURCE_FILE = 4;
+  AGENT_SOURCE_JOURNAL = 5;
 }
 
 message TimeWindow {

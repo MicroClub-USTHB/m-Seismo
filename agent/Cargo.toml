@@ -1,13 +1,12 @@
-[package]
-name = "m-seismo-agent"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde", "std"] }
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = { version = "1.0.151", features = ["arbitrary_precision", "preserve_order"] }
-regex = "1.13.1"
-tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread", "time"] }
-futures-util = "0.3.31"
-bollard = { version = "=0.21.1", default-features = false, features = ["pipe"] }
+[workspace.dependencies]
+seismo-proto = { path = "crates/proto" }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread"] }
+tonic = "0.14.6"
