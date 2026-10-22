@@ -9,4 +9,4 @@ edition = "2024"
 [workspace.dependencies]
 seismo-proto = { path = "crates/proto" }
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread"] }
-tonic = "0.14.6"
+tonic = { version = "0.14.6", features = ["tls-aws-lc", "tls-webpki-roots"] }

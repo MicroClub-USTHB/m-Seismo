@@ -18,11 +18,16 @@ pub struct Config {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Coordinator {
+    /// `https://` turns TLS on, public CAs are trusted out of the box.
     pub url: String,
+    /// Extra CA (PEM) to trust, for a coordinator with a private cert.
+    pub ca_file: Option<PathBuf>,
     #[serde(default = "default_token_env")]
     pub token_env: String,
     #[serde(skip)]
     pub token: String,
+    #[serde(skip)]
+    pub ca_pem: Option<Vec<u8>>,
 }
 
 /// Where this agent reads its logs from. Pick one with `type`.
@@ -154,6 +159,10 @@ impl Config {
                 .ok_or("agent_id is unset and the hostname is unreadable")?;
         }
         cfg.coordinator.token = secret(&cfg.coordinator.token_env)?;
+        if let Some(p) = &cfg.coordinator.ca_file {
+            let pem = std::fs::read(p).map_err(|e| format!("read {}: {e}", p.display()))?;
+            cfg.coordinator.ca_pem = Some(pem);
+        }
         match &mut cfg.source {
             Source::Loki(l) => match &mut l.auth {
                 Auth::None => {}
@@ -215,6 +224,15 @@ mod tests {
         assert_eq!(l.service_label, "service_name");
         assert_eq!(l.trace_field, "trace_id");
         assert!(matches!(l.auth, Auth::None));
+    }
+
+    #[test]
+    fn missing_ca_file_is_an_error() {
+        let text = MIN.replace(
+            "url = \"http://c:50051\"",
+            "url = \"https://c:50051\"\nca_file = \"/nope/ca.pem\"",
+        );
+        assert!(Config::parse(&text, env).is_err());
     }
 
     #[test]
