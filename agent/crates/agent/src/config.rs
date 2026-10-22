@@ -31,6 +31,7 @@ pub struct Coordinator {
 pub enum Source {
     Loki(Loki),
     File(File),
+    Journal(Journal),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -64,6 +65,18 @@ pub struct File {
     pub rotated: u32,
 }
 
+/// Reads the systemd journal by running `journalctl`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Journal {
+    /// Service name -> systemd unit. Defaults to `<service>.service`.
+    #[serde(default)]
+    pub units: HashMap<String, String>,
+    /// Program and leading args, e.g. `["sudo", "journalctl"]`.
+    #[serde(default = "default_journalctl")]
+    pub command: Vec<String>,
+}
+
 /// Secrets never live in the file, only the env var names do.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -85,6 +98,10 @@ pub enum Auth {
 
 fn default_token_env() -> String {
     DEFAULT_TOKEN_ENV.into()
+}
+
+fn default_journalctl() -> Vec<String> {
+    vec!["journalctl".into()]
 }
 
 fn default_rotated() -> u32 {
@@ -133,6 +150,11 @@ impl Config {
             Source::File(f) => {
                 if let Some(s) = cfg.services.iter().find(|s| !f.files.contains_key(*s)) {
                     return Err(format!("source.files has no entry for service {s}"));
+                }
+            }
+            Source::Journal(j) => {
+                if j.command.first().is_none_or(|c| c.is_empty()) {
+                    return Err("source.command must not be empty".into());
                 }
             }
         }

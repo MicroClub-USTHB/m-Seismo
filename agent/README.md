@@ -80,6 +80,24 @@ A line needs a timestamp the agent can read: RFC3339, `YYYY-MM-DD HH:MM:SS[,fff]
 above. The `trace_id` filter is a plain substring match. A fetch reads at most
 64 MiB, past that it reports the result as truncated.
 
+### `journal`
+
+The systemd journal, through `journalctl -o json`. Each service maps to a unit
+(default `<service>.service`). It stops reading as soon as it has enough
+lines, so a big journal is fine.
+
+```toml
+[source]
+type = "journal"
+# command = ["sudo", "journalctl"]  # default ["journalctl"]
+
+[source.units]
+postgres = "postgresql@16-main.service"
+```
+
+The agent's user needs to be in `systemd-journal` (or use `command`) to see
+other units' logs. The `trace_id` filter is a plain substring match.
+
 ## Status
 
 Agent done for Loki logs. No Tempo, Mimir or `context_lines` yet.
