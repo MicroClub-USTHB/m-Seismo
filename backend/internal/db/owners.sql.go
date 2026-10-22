@@ -99,7 +99,7 @@ func (q *Queries) ListOwners(ctx context.Context) ([]Owner, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Owner{}
+	var items []Owner
 	for rows.Next() {
 		var i Owner
 		if err := rows.Scan(

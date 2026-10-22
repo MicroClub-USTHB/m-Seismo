@@ -106,6 +106,28 @@ func (s *Service) Create(ctx context.Context, ownerID uuid.UUID, in CreateInput)
 	return toApp(a), nil
 }
 
+// CreateForProject creates an app and links it to projectID — the "add a
+// sub-app" flow from a project page (e.g. a web, iOS or Android build that
+// should report into the project's repositories). Not transactional: if
+// linking fails after the app is created, the app exists unlinked and can
+// still be linked with PUT /apps/{id}/projects/{projectID}.
+func (s *Service) CreateForProject(ctx context.Context, ownerID, projectID uuid.UUID, in CreateInput) (App, error) {
+	if _, err := s.q.GetProject(ctx, db.GetProjectParams{ID: projectID, OwnerID: ownerID}); err != nil {
+		if kind, _ := apperr.Classify(err); kind == apperr.KindNotFound {
+			return App{}, apperr.NotFound("project not found")
+		}
+		return App{}, err
+	}
+	a, err := s.Create(ctx, ownerID, in)
+	if err != nil {
+		return App{}, err
+	}
+	if err := s.q.LinkAppProject(ctx, db.LinkAppProjectParams{AppID: a.ID, ProjectID: projectID}); err != nil {
+		return App{}, err
+	}
+	return a, nil
+}
+
 func (s *Service) List(ctx context.Context, ownerID uuid.UUID) ([]App, error) {
 	rows, err := s.q.ListApps(ctx, ownerID)
 	if err != nil {

@@ -79,6 +79,41 @@ func (q *Queries) GetProject(ctx context.Context, arg GetProjectParams) (Project
 	return i, err
 }
 
+const listProjectApps = `-- name: ListProjectApps :many
+SELECT a.id, a.owner_id, a.name, a.platform, a.bundle_id, a.created_at, a.updated_at FROM apps a
+JOIN app_projects ap ON ap.app_id = a.id
+WHERE ap.project_id = $1
+ORDER BY ap.created_at
+`
+
+func (q *Queries) ListProjectApps(ctx context.Context, projectID uuid.UUID) ([]App, error) {
+	rows, err := q.db.Query(ctx, listProjectApps, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []App
+	for rows.Next() {
+		var i App
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Platform,
+			&i.BundleID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjects = `-- name: ListProjects :many
 SELECT id, name, slug, created_at, updated_at, owner_id FROM projects
 WHERE owner_id = $1
