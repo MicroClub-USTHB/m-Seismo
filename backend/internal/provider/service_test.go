@@ -53,10 +53,10 @@ type fakeProvider struct {
 }
 
 func (*fakeProvider) Tracker() db.Tracker { return db.TrackerGithub }
-func (*fakeProvider) InstallURL(state string) string {
-	return "https://tracker.test/install?state=" + state
+func (*fakeProvider) InstallURL(_ context.Context, _ uuid.UUID, state string) (string, error) {
+	return "https://tracker.test/install?state=" + state, nil
 }
-func (f *fakeProvider) CompleteInstall(context.Context, url.Values) (Account, error) {
+func (f *fakeProvider) CompleteInstall(context.Context, uuid.UUID, url.Values) (Account, error) {
 	return f.account, nil
 }
 func (f *fakeProvider) ListRepositories(_ context.Context, c issue.Connection) ([]Repository, error) {
@@ -139,11 +139,23 @@ func (f *fakeQuerier) GetAppConnection(_ context.Context, arg db.GetAppConnectio
 	return db.ProviderConnection{}, pgx.ErrNoRows
 }
 
+// fakeCredentials is an in-memory CredentialStore; no test here registers
+// per-app OAuth applications, so Get always reports none configured.
+type fakeCredentials map[string]Credentials
+
+func (fakeCredentials) Get(context.Context, uuid.UUID, db.Tracker) (Credentials, error) {
+	return Credentials{}, ErrNoCredentials
+}
+func (c fakeCredentials) Save(_ context.Context, appID uuid.UUID, tracker db.Tracker, creds Credentials) error {
+	c[appID.String()+string(tracker)] = creds
+	return nil
+}
+
 func newTestService(q *fakeQuerier) (*Service, memStates, *fakeProvider) {
 	states := memStates{}
 	p := &fakeProvider{account: Account{ExternalID: "42", Login: "octo", Type: "User"}}
 	reg := NewRegistry(registryParams{Providers: []Provider{p}})
-	return NewService(q, reg, states, q.secrets), states, p
+	return NewService(q, reg, states, q.secrets, fakeCredentials{}), states, p
 }
 
 func stateFrom(t *testing.T, installURL string) string {

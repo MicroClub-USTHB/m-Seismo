@@ -60,6 +60,7 @@ func TestLoadOAuthTrackers(t *testing.T) {
 
 func TestLoadLogLevel(t *testing.T) {
 	t.Setenv("SEISMO_AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("SEISMO_SECRETS_ENCRYPTION_KEY", "a2V5")
 
 	t.Setenv("SEISMO_LOG_LEVEL", "debug")
 	cfg, err := Load("")

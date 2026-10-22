@@ -127,6 +127,11 @@ func (ts *tokenServer) endpoint() Endpoint {
 	}
 }
 
+// resolver ignores the app ID: every test here has one OAuth application.
+func (ts *tokenServer) resolver() EndpointResolver {
+	return func(context.Context, uuid.UUID) (Endpoint, error) { return ts.endpoint(), nil }
+}
+
 func TestAuthCodeURL(t *testing.T) {
 	e := Endpoint{AuthURL: "https://gl.test/oauth/authorize", ClientID: "cid", RedirectURL: "https://s/cb", Scopes: []string{"api", "read_user"}}
 	u := e.AuthCodeURL("st ate")
@@ -168,11 +173,12 @@ func TestTokensRefreshBeforeExpiry(t *testing.T) {
 	ts := newTokenServer(t, false)
 	store := newMemStore()
 	id := uuid.New()
+	appID := uuid.New()
 	ctx := context.Background()
 	mustSave(t, store, id, Token{AccessToken: "a0", RefreshToken: "r0", Expiry: time.Now().Add(time.Hour)})
-	tokens := NewTokens(store, ts.endpoint())
+	tokens := NewTokens(store, ts.resolver())
 
-	if got, err := tokens.Access(ctx, id); err != nil || got != "a0" {
+	if got, err := tokens.Access(ctx, id, appID); err != nil || got != "a0" {
 		t.Fatalf("fresh token: %q, %v", got, err)
 	}
 	if ts.refreshes.Load() != 0 {
@@ -180,14 +186,14 @@ func TestTokensRefreshBeforeExpiry(t *testing.T) {
 	}
 
 	mustSave(t, store, id, Token{AccessToken: "a0", RefreshToken: "r0", Expiry: time.Now().Add(10 * time.Second)})
-	got, err := tokens.Access(ctx, id)
+	got, err := tokens.Access(ctx, id, appID)
 	if err != nil || got != "a1" {
 		t.Fatalf("expiring token: %q, %v", got, err)
 	}
 	if saved := store.token(id); saved.AccessToken != "a1" || saved.RefreshToken != "r1" {
 		t.Errorf("the rotated token must be saved, got %+v", saved)
 	}
-	if got, _ := tokens.Access(ctx, id); got != "a1" || ts.refreshes.Load() != 1 {
+	if got, _ := tokens.Access(ctx, id, appID); got != "a1" || ts.refreshes.Load() != 1 {
 		t.Errorf("after the refresh: %q, %d refreshes", got, ts.refreshes.Load())
 	}
 }
@@ -198,15 +204,16 @@ func TestTokensConcurrentRefreshOnce(t *testing.T) {
 	ts := newTokenServer(t, false)
 	store := newMemStore()
 	id := uuid.New()
+	appID := uuid.New()
 	ctx := context.Background()
 	mustSave(t, store, id, Token{AccessToken: "a0", RefreshToken: "r0", Expiry: time.Now()})
-	tokens := NewTokens(store, ts.endpoint())
+	tokens := NewTokens(store, ts.resolver())
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 20)
 	for range 20 {
 		wg.Go(func() {
-			if got, err := tokens.Access(ctx, id); err != nil || got != "a1" {
+			if got, err := tokens.Access(ctx, id, appID); err != nil || got != "a1" {
 				errs <- fmt.Errorf("got %q, %v", got, err)
 			}
 		})
@@ -225,32 +232,33 @@ func TestTokensRenewAndRevoked(t *testing.T) {
 	ts := newTokenServer(t, true)
 	store := newMemStore()
 	id := uuid.New()
+	appID := uuid.New()
 	ctx := context.Background()
 	mustSave(t, store, id, Token{AccessToken: "a0", RefreshToken: "r0"}) // no expiry known
-	tokens := NewTokens(store, ts.endpoint())
+	tokens := NewTokens(store, ts.resolver())
 
-	if got, _ := tokens.Access(ctx, id); got != "a0" {
+	if got, _ := tokens.Access(ctx, id, appID); got != "a0" {
 		t.Fatalf("token without expiry is used as is, got %q", got)
 	}
-	if got, err := tokens.Renew(ctx, id, "a0"); err != nil || got != "a1" {
+	if got, err := tokens.Renew(ctx, id, appID, "a0"); err != nil || got != "a1" {
 		t.Fatalf("renew after 401: %q, %v", got, err)
 	}
-	if got, _ := tokens.Renew(ctx, id, "a0"); got != "a1" || ts.refreshes.Load() != 1 {
+	if got, _ := tokens.Renew(ctx, id, appID, "a0"); got != "a1" || ts.refreshes.Load() != 1 {
 		t.Errorf("renewing an already replaced token must not refresh again: %q, %d", got, ts.refreshes.Load())
 	}
 
 	ts.mu.Lock()
 	ts.valid = map[string]bool{} // the user revoked the application
 	ts.mu.Unlock()
-	if _, err := tokens.Renew(ctx, id, "a1"); !errors.Is(err, ErrRevoked) || !strings.Contains(err.Error(), "connect the app again") {
+	if _, err := tokens.Renew(ctx, id, appID, "a1"); !errors.Is(err, ErrRevoked) || !strings.Contains(err.Error(), "connect the app again") {
 		t.Errorf("revoked: err = %v, want ErrRevoked telling to reconnect", err)
 	}
 	mustSave(t, store, id, Token{AccessToken: "a1", RefreshToken: "r1", Expiry: time.Now()})
-	if _, err := tokens.Access(ctx, id); !errors.Is(err, ErrRevoked) || !strings.Contains(err.Error(), "connect the app again") {
+	if _, err := tokens.Access(ctx, id, appID); !errors.Is(err, ErrRevoked) || !strings.Contains(err.Error(), "connect the app again") {
 		t.Errorf("revoked, found at expiry: err = %v, want ErrRevoked telling to reconnect", err)
 	}
 
-	if _, err := tokens.Access(ctx, uuid.New()); err == nil {
+	if _, err := tokens.Access(ctx, uuid.New(), appID); err == nil {
 		t.Error("a connection without a stored token must fail")
 	}
 }
@@ -307,11 +315,12 @@ func TestClientRenewsOn401(t *testing.T) {
 	api := newAPIServer(t)
 	store := newMemStore()
 	id := uuid.New()
+	appID := uuid.New()
 	ctx := context.Background()
 	mustSave(t, store, id, Token{AccessToken: "stale", RefreshToken: "r0"})
 
 	var out struct{ Path, Raw string }
-	_, err := api.client(0).Do(ctx, NewTokens(store, ts.endpoint()).For(id), "GET", "projects/group%2Fapp", nil, &out)
+	_, err := api.client(0).Do(ctx, NewTokens(store, ts.resolver()).For(id, appID), "GET", "projects/group%2Fapp", nil, &out)
 	if err != nil {
 		t.Fatal(err)
 	}

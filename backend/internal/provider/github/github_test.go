@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 )
@@ -169,7 +171,10 @@ func newTestProvider(t *testing.T, opts ...func(*Options)) (*Provider, *fakeGitH
 
 func TestInstallURL(t *testing.T) {
 	p, _ := newTestProvider(t)
-	got := p.InstallURL("a b")
+	got, err := p.InstallURL(context.Background(), uuid.New(), "a b")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.HasSuffix(got, "/apps/m-seismo/installations/new?state=a+b") {
 		t.Errorf("InstallURL = %s", got)
 	}
@@ -178,8 +183,9 @@ func TestInstallURL(t *testing.T) {
 func TestCompleteInstall(t *testing.T) {
 	p, _ := newTestProvider(t)
 	ctx := context.Background()
+	appID := uuid.New()
 
-	acct, err := p.CompleteInstall(ctx, url.Values{"installation_id": {"42"}, "code": {"good-code"}, "setup_action": {"install"}})
+	acct, err := p.CompleteInstall(ctx, appID, url.Values{"installation_id": {"42"}, "code": {"good-code"}, "setup_action": {"install"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +202,7 @@ func TestCompleteInstall(t *testing.T) {
 	}
 	for name, q := range rejects {
 		t.Run(name, func(t *testing.T) {
-			_, err := p.CompleteInstall(ctx, q)
+			_, err := p.CompleteInstall(ctx, appID, q)
 			if kind, _ := apperr.Classify(err); kind != apperr.KindInvalid {
 				t.Errorf("err = %v, want an invalid-input error", err)
 			}
