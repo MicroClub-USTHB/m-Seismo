@@ -630,6 +630,7 @@ name = "seismo-agent"
 version = "0.1.0"
 dependencies = [
  "hostname",
+ "regex",
  "serde",
  "toml",
 ]
