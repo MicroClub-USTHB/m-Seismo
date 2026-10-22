@@ -40,6 +40,9 @@ SEISMO_AGENT_TOKEN=... SEISMO_COORDINATOR_KEY=mco_... \
 
 [agents]
 # token_env = "SEISMO_AGENT_TOKEN"  # env var with the registration token
+# [agents.tls]                     # serve TLS, plaintext when absent
+# cert_file = "/etc/seismo/tls.crt"  # PEM, full chain
+# key_file = "/etc/seismo/tls.key"
 
 [backend]
 url = "http://backend:9090"
@@ -69,6 +72,7 @@ services = ["postgres"]             # fetched one by one from the source
 [coordinator]
 url = "http://coordinator:50051"
 # token_env = "SEISMO_AGENT_TOKEN"  # env var holding the registration token
+# ca_file = "/etc/seismo/ca.pem"    # extra CA to trust, for a private cert (use an https:// url)
 
 [source]
 type = "loki"
@@ -84,7 +88,7 @@ url = "http://loki:3100"
 ```
 
 Sources return raw lines, the engine redacts every line once before it leaves the agent. Plaintext gRPC
-for now, TLS is not done yet.
+on the agent hop, TLS is opt-in (see `[agents.tls]`).
 
 ## Log sources
 
@@ -161,5 +165,5 @@ a plain substring match.
 ## Status
 
 Agent: sources `loki`, `file`, `journal`, `docker`. Coordinator: registry,
-fan-out and backend attach. Plaintext gRPC on both hops, TLS is not done yet.
+fan-out and backend attach. TLS on the agent hop is opt-in, the backend hop is plaintext.
 No Tempo or Mimir.

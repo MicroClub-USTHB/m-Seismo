@@ -32,7 +32,12 @@ async fn stack() -> Stack {
     ));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let agents_url = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(agents::serve(listener, registry.clone(), TOKEN.into()));
+    tokio::spawn(agents::serve(
+        listener,
+        registry.clone(),
+        TOKEN.into(),
+        None,
+    ));
 
     let cfg = config::Backend {
         url: backend.url.clone(),
@@ -63,6 +68,8 @@ impl Stack {
                 url: self.agents_url.clone(),
                 token_env: String::new(),
                 token: TOKEN.into(),
+                ca_file: None,
+                ca_pem: None,
             },
             source,
         };

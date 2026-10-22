@@ -152,6 +152,8 @@ async fn start(loki_delay: Duration) -> Harness {
             url,
             token_env: String::new(),
             token: "tok".into(),
+            ca_file: None,
+            ca_pem: None,
         },
         source: config::Source::Loki(loki_cfg(&loki.url)),
     };
@@ -276,6 +278,8 @@ async fn unreachable_coordinator_is_an_error() {
             url: dead,
             token_env: String::new(),
             token: "t".into(),
+            ca_file: None,
+            ca_pem: None,
         },
         source: config::Source::Loki(loki_cfg("http://127.0.0.1:1")),
     };

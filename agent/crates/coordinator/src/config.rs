@@ -32,6 +32,16 @@ pub struct Agents {
     pub token_env: String,
     #[serde(skip)]
     pub token: String,
+    /// Serve TLS when set, plaintext otherwise.
+    pub tls: Option<Tls>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tls {
+    /// PEM, full chain.
+    pub cert_file: String,
+    pub key_file: String,
 }
 
 #[derive(Debug, Deserialize)]

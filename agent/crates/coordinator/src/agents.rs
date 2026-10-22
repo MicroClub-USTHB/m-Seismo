@@ -8,7 +8,11 @@ use seismo_proto::{
 use std::{sync::Arc, time::Duration};
 use tokio::{net::TcpListener, sync::mpsc};
 use tokio_stream::wrappers::{ReceiverStream, TcpListenerStream};
-use tonic::{Request, Response, Status, Streaming, metadata::MetadataMap, transport::Server};
+use tonic::{
+    Request, Response, Status, Streaming,
+    metadata::MetadataMap,
+    transport::{Server, ServerTlsConfig},
+};
 
 /// Both hops cap messages at 10 MiB (8 MiB of logs plus overhead).
 pub const MAX_MESSAGE: usize = 10 << 20;
@@ -85,11 +89,16 @@ pub async fn serve(
     listener: TcpListener,
     registry: Arc<Registry>,
     token: String,
+    tls: Option<ServerTlsConfig>,
 ) -> Result<(), tonic::transport::Error> {
     let service = AgentServer::new(AgentService::new(registry, token))
         .max_decoding_message_size(MAX_MESSAGE)
         .max_encoding_message_size(MAX_MESSAGE);
-    Server::builder()
+    let mut server = Server::builder();
+    if let Some(tls) = tls {
+        server = server.tls_config(tls)?;
+    }
+    server
         // a dead agent must drop out of the registry, the closed stream does that
         .http2_keepalive_interval(Some(Duration::from_secs(20)))
         .http2_keepalive_timeout(Some(Duration::from_secs(10)))

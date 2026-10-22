@@ -18,3 +18,4 @@ tonic.workspace = true
 seismo-agent = { path = "../agent" }
 tempfile = "3.27.0"
 tokio-stream = "0.1.19"
+rcgen = "0.14.5"

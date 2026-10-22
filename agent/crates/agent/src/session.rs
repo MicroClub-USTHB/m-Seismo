@@ -9,7 +9,11 @@ use std::{
 };
 use tokio::{sync::mpsc, task::JoinSet};
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::{Status, metadata::MetadataValue, transport::Endpoint};
+use tonic::{
+    Status,
+    metadata::MetadataValue,
+    transport::{Certificate, ClientTlsConfig, Endpoint},
+};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
@@ -43,8 +47,18 @@ pub async fn session(cfg: &Config, engine: Arc<Engine>) -> Result<(), Status> {
     let bearer: MetadataValue<_> = format!("Bearer {}", cfg.coordinator.token)
         .parse()
         .map_err(|_| Status::invalid_argument("token is not a valid header value"))?;
-    let channel = Endpoint::from_shared(cfg.coordinator.url.clone())
-        .map_err(|e| Status::invalid_argument(e.to_string()))?
+    let mut endpoint = Endpoint::from_shared(cfg.coordinator.url.clone())
+        .map_err(|e| Status::invalid_argument(e.to_string()))?;
+    if cfg.coordinator.url.starts_with("https://") {
+        let mut tls = ClientTlsConfig::new().with_enabled_roots();
+        if let Some(pem) = &cfg.coordinator.ca_pem {
+            tls = tls.ca_certificate(Certificate::from_pem(pem));
+        }
+        endpoint = endpoint
+            .tls_config(tls)
+            .map_err(|e| Status::invalid_argument(e.to_string()))?;
+    }
+    let channel = endpoint
         .connect_timeout(Duration::from_secs(10))
         // the coordinator drops us when keepalive fails, so we need to
         // notice a dead link too
