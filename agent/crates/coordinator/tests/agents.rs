@@ -19,7 +19,12 @@ async fn start() -> (String, Arc<Registry>) {
     let registry = Arc::new(Registry::new("coord".into(), config::Query::default()));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(agents::serve(listener, registry.clone(), TOKEN.into()));
+    tokio::spawn(agents::serve(
+        listener,
+        registry.clone(),
+        TOKEN.into(),
+        None,
+    ));
     (url, registry)
 }
 
