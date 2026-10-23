@@ -11,6 +11,7 @@ use std::{
 use tokio::{sync::mpsc, task::JoinSet};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Status, metadata::MetadataValue, transport::Endpoint};
+use tracing::{info, warn};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
@@ -25,8 +26,8 @@ pub async fn run(cfg: &config::Backend, coordinator_id: &str, registry: Arc<Regi
     loop {
         let started = Instant::now();
         match attach(cfg, coordinator_id, registry.clone()).await {
-            Ok(()) => eprintln!("backend closed the stream"),
-            Err(status) => eprintln!("backend attach ended: {status}"),
+            Ok(()) => info!("backend closed the stream"),
+            Err(status) => warn!("backend attach ended: {status}"),
         }
         if started.elapsed() >= BACKOFF_RESET_AFTER {
             backoff = BACKOFF_MIN;
@@ -77,15 +78,28 @@ pub async fn attach(
     // queries run side by side, and die with the attachment
     let mut tasks = JoinSet::new();
     while let Some(msg) = inbound.message().await? {
-        if let Some(BackendRequest::QueryLogs(q)) = msg.request {
-            let (tx, registry) = (tx.clone(), registry.clone());
-            tasks.spawn(async move {
-                let event = match registry.query_logs(q).await {
-                    Ok(result) => Event::Result(result),
-                    Err(error) => Event::Error(error),
-                };
-                let _ = tx.send(wire(event)).await;
-            });
+        match msg.request {
+            Some(BackendRequest::QueryLogs(q)) => {
+                let (tx, registry) = (tx.clone(), registry.clone());
+                tasks.spawn(async move {
+                    let event = match registry.query_logs(q).await {
+                        Ok(result) => Event::Result(result),
+                        Err(error) => Event::Error(error),
+                    };
+                    let _ = tx.send(wire(event)).await;
+                });
+            }
+            Some(BackendRequest::QueryMetrics(q)) => {
+                let (tx, registry) = (tx.clone(), registry.clone());
+                tasks.spawn(async move {
+                    let event = match registry.query_metrics(q).await {
+                        Ok(result) => Event::Metrics(result),
+                        Err(error) => Event::Error(error),
+                    };
+                    let _ = tx.send(wire(event)).await;
+                });
+            }
+            None => {}
         }
     }
     Ok(())

@@ -22,6 +22,8 @@ pub struct Config {
     pub backend: Backend,
     #[serde(default)]
     pub query: Query,
+    /// Prometheus endpoint, off when the section is absent.
+    pub metrics: Option<Metrics>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,6 +81,27 @@ impl Default for Query {
     }
 }
 
+/// Where Prometheus scrapes us. Every scrape asks the agents for counts over
+/// the last `window_secs`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Metrics {
+    pub listen: String,
+    #[serde(default = "default_window_secs")]
+    pub window_secs: u64,
+    /// How long a scrape waits for slow agents.
+    #[serde(default = "default_scrape_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+fn default_window_secs() -> u64 {
+    60
+}
+
+fn default_scrape_timeout_ms() -> u64 {
+    5000
+}
+
 fn default_listen() -> String {
     "[::]:50051".into()
 }
@@ -122,6 +145,14 @@ impl Config {
             return Err("backend key must be an mco_ key".into());
         }
 
+        if let Some(m) = &cfg.metrics {
+            m.listen
+                .parse::<std::net::SocketAddr>()
+                .map_err(|e| format!("metrics.listen: {e}"))?;
+            if m.window_secs == 0 {
+                return Err("metrics.window_secs must be > 0".into());
+            }
+        }
         let q = &cfg.query;
         let ok = (1..=MAX_LINES).contains(&q.max_lines_per_workload)
             && q.context_lines <= MAX_CONTEXT

@@ -4,7 +4,10 @@ mod common;
 use common::{Backend, logs_within};
 use seismo_agent::{config as agent_cfg, engine::Engine, session, source::Source};
 use seismo_coordinator::{agents, backend, config, registry::Registry};
-use seismo_proto::{AgentSource, AgentStatus, coordinator_event::Event};
+use seismo_proto::{
+    AgentSource, AgentStatus, BackendRequest, MetricsQuery, backend_request::Request as Req,
+    coordinator_event::Event,
+};
 use std::{
     collections::HashMap,
     path::Path,
@@ -197,4 +200,43 @@ async fn an_agent_killed_mid_query_shows_up_as_disconnected() {
     assert_eq!(status("web"), AgentStatus::Ok as i32);
     assert_eq!(status("doomed"), AgentStatus::Disconnected as i32);
     s.wait_for_agents(1).await;
+}
+
+#[tokio::test]
+async fn the_backend_gets_error_counts_per_service() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("web.log");
+    std::fs::write(
+        &path,
+        "1970-01-01T00:01:41Z ok\n1970-01-01T00:01:42Z ERROR db down\n1970-01-01T00:01:43Z ok\n",
+    )
+    .unwrap();
+    let source = agent_cfg::Source::File(agent_cfg::File {
+        files: HashMap::from([("web".to_owned(), path)]),
+        rotated: 0,
+    });
+    let mut s = stack().await;
+    s.spawn_agent("web", &["web"], source);
+    s.wait_for_agents(1).await;
+
+    let q = logs_within("m1", 10);
+    s.backend
+        .send(BackendRequest {
+            request: Some(Req::QueryMetrics(MetricsQuery {
+                query_id: q.query_id,
+                window: q.window,
+                deadline: q.deadline,
+            })),
+        })
+        .await;
+    let Event::Metrics(m) = s.backend.next().await else {
+        panic!("expected aggregate metrics");
+    };
+    let a = &m.agents[0];
+    assert_eq!(a.status, AgentStatus::Ok as i32, "{}", a.detail);
+    let svc = &a.services[0];
+    assert_eq!(
+        (svc.service.as_str(), svc.lines, svc.error_lines),
+        ("web", 3, 1)
+    );
 }

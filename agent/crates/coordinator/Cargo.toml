@@ -4,12 +4,15 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 futures-util = "0.3.34"
 hostname = "0.4.2"
 prost-types = "0.14.4"
 seismo-proto.workspace = true
 serde = { version = "1.0.229", features = ["derive"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync", "net"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync", "net", "io-util"] }
 tokio-stream = { version = "0.1.19", features = ["net"] }
 toml = "1.1.8"
 tonic.workspace = true
