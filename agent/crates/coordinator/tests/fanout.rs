@@ -96,6 +96,7 @@ fn logs(deadline: Duration) -> QueryLogs {
         }),
         trace_id: None,
         deadline: Some(now_plus(deadline)),
+        limits: None,
     }
 }
 

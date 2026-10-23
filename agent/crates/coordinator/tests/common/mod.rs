@@ -122,6 +122,7 @@ pub fn logs_within(id: &str, secs: u64) -> QueryLogs {
             seconds: t.as_secs() as i64,
             nanos: 0,
         }),
+        limits: None,
     }
 }
 
