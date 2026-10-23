@@ -274,6 +274,29 @@ CREATE TABLE public.reports (
 
 
 --
+-- Name: routing_rules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.routing_rules (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    project_id uuid NOT NULL,
+    "position" integer DEFAULT 0 NOT NULL,
+    app_id uuid,
+    severity text,
+    category text,
+    project_repository_id uuid NOT NULL,
+    labels text[] DEFAULT '{}'::text[] NOT NULL,
+    assignees text[] DEFAULT '{}'::text[] NOT NULL,
+    milestone text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT routing_rules_category_check CHECK ((category = ANY (ARRAY['bug'::text, 'crash'::text, 'ui'::text, 'other'::text]))),
+    CONSTRAINT routing_rules_position_check CHECK (("position" >= 0)),
+    CONSTRAINT routing_rules_severity_check CHECK ((severity = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))
+);
+
+
+--
 -- Name: schema_migrations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -451,6 +474,14 @@ ALTER TABLE ONLY public.reports
 
 
 --
+-- Name: routing_rules routing_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.routing_rules
+    ADD CONSTRAINT routing_rules_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -540,6 +571,27 @@ CREATE INDEX reports_app_id_installation_id_idx ON public.reports USING btree (a
 --
 
 CREATE INDEX reports_not_queued_idx ON public.reports USING btree (received_at) WHERE (queued_at IS NULL);
+
+
+--
+-- Name: routing_rules_app_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX routing_rules_app_id_idx ON public.routing_rules USING btree (app_id);
+
+
+--
+-- Name: routing_rules_project_id_position_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX routing_rules_project_id_position_idx ON public.routing_rules USING btree (project_id, "position");
+
+
+--
+-- Name: routing_rules_project_repository_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX routing_rules_project_repository_id_idx ON public.routing_rules USING btree (project_repository_id);
 
 
 --
@@ -687,6 +739,30 @@ ALTER TABLE ONLY public.reports
 
 
 --
+-- Name: routing_rules routing_rules_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.routing_rules
+    ADD CONSTRAINT routing_rules_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: routing_rules routing_rules_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.routing_rules
+    ADD CONSTRAINT routing_rules_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: routing_rules routing_rules_project_repository_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.routing_rules
+    ADD CONSTRAINT routing_rules_project_repository_id_fkey FOREIGN KEY (project_repository_id) REFERENCES public.project_repositories(id);
+
+
+--
 -- PostgreSQL database dump complete
 --
 
@@ -705,4 +781,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021130000'),
     ('20261021150000'),
     ('20261022120000'),
-    ('20261022210000');
+    ('20261022210000'),
+    ('20261023090000');

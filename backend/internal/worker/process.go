@@ -17,6 +17,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
 )
 
 // Issues opens issues in project repositories. Implemented by
@@ -29,10 +30,15 @@ type Issues interface {
 type Queries interface {
 	GetReport(ctx context.Context, id uuid.UUID) (db.Report, error)
 	ListReportAttachmentNames(ctx context.Context, reportID uuid.UUID) ([]string, error)
-	ListIssueTargetsForApp(ctx context.Context, appID uuid.UUID) ([]db.ListIssueTargetsForAppRow, error)
-	ListReportDeliveries(ctx context.Context, reportID uuid.UUID) ([]db.ReportDelivery, error)
+	ListReportDeliveryProjects(ctx context.Context, reportID uuid.UUID) ([]uuid.UUID, error)
 	CreateReportDelivery(ctx context.Context, arg db.CreateReportDeliveryParams) error
 	MarkReportProcessed(ctx context.Context, id uuid.UUID) error
+}
+
+// Router picks where a report's issues go. Implemented by
+// *routing.Router.
+type Router interface {
+	Routes(ctx context.Context, f routing.Facts) ([]routing.Route, error)
 }
 
 // ServerLogs asks an app's log coordinator for server logs. Implemented by
@@ -53,22 +59,24 @@ func permanent(err error) error { return &permanentError{err: err} }
 type Processor struct {
 	q      Queries
 	issues Issues
+	router Router
 	// logs is optional; window is how far around the report it looks.
 	logs   ServerLogs
 	window time.Duration
 }
 
-func NewProcessor(q Queries, issues Issues, logs ServerLogs, window time.Duration) *Processor {
-	return &Processor{q: q, issues: issues, logs: logs, window: window}
+func NewProcessor(q Queries, issues Issues, router Router, logs ServerLogs, window time.Duration) *Processor {
+	return &Processor{q: q, issues: issues, router: router, logs: logs, window: window}
 }
 
-// Process opens the report's issue in the default repository of every
-// project its app is linked to.
+// Process opens the report's issue in every project its app is linked to,
+// in the repository and with the labels, assignees and milestone the
+// project's routing rules pick.
 //
 // The queue delivers a report at least once, so Process can run several
-// times for the same report: each repository that already got its issue is
+// times for the same report: each project that already got its issue is
 // recorded in report_deliveries and skipped, and a processed report is left
-// alone. When some repositories fail, the others are recorded and the next
+// alone. When some projects fail, the others are recorded and the next
 // attempt only retries the failed ones.
 //
 // A returned error is permanent (trying again won't help), an
@@ -91,27 +99,24 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 		return permanent(fmt.Errorf("decode report %s: %w", id, err))
 	}
 
-	targets, err := p.q.ListIssueTargetsForApp(ctx, row.AppID)
+	routes, err := p.router.Routes(ctx, routing.FactsOf(row.AppID, &r))
 	if err != nil {
-		return fmt.Errorf("list targets of app %s: %w", row.AppID, err)
+		return err
 	}
-	if len(targets) == 0 {
+	if len(routes) == 0 {
 		return permanent(fmt.Errorf("report %s: %w", id, issue.ErrNoTargets))
 	}
 
-	deliveries, err := p.q.ListReportDeliveries(ctx, id)
+	// One issue per project: a project that got it is skipped, even if
+	// its rules changed since and would now pick another repository.
+	projects, err := p.q.ListReportDeliveryProjects(ctx, id)
 	if err != nil {
 		return fmt.Errorf("list deliveries of report %s: %w", id, err)
 	}
-	delivered := make(map[uuid.UUID]bool, len(deliveries))
-	for _, d := range deliveries {
-		delivered[d.ProjectRepositoryID] = true
-	}
-
-	var todo []db.ListIssueTargetsForAppRow
-	for _, t := range targets {
-		if !delivered[t.ProjectRepositoryID] {
-			todo = append(todo, t)
+	var todo []routing.Route
+	for _, route := range routes {
+		if !slices.Contains(projects, route.ProjectID) {
+			todo = append(todo, route)
 		}
 	}
 	if len(todo) == 0 {
@@ -122,7 +127,7 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return fmt.Errorf("list attachments of report %s: %w", id, err)
 	}
-	draft := render(&r, reportInfo{
+	base := render(&r, reportInfo{
 		ID:             row.ReportID,
 		InstallationID: row.InstallationID,
 		Screenshot:     slices.Contains(names, ingest.ScreenshotName),
@@ -131,6 +136,8 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 
 	var errs []error
 	for _, t := range todo {
+		draft := base
+		draft.Labels, draft.Assignees, draft.Milestone = t.Labels, t.Assignees, t.Milestone
 		res, err := p.issues.OpenInRepository(ctx, row.AppID, t.ProjectRepositoryID, draft)
 		if err != nil {
 			var rl *issue.RateLimitError

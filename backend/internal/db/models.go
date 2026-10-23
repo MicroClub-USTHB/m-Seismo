@@ -268,6 +268,21 @@ type ReportDelivery struct {
 	CreatedAt           time.Time  `json:"created_at"`
 }
 
+type RoutingRule struct {
+	ID                  uuid.UUID  `json:"id"`
+	ProjectID           uuid.UUID  `json:"project_id"`
+	Position            int32      `json:"position"`
+	AppID               *uuid.UUID `json:"app_id"`
+	Severity            *string    `json:"severity"`
+	Category            *string    `json:"category"`
+	ProjectRepositoryID uuid.UUID  `json:"project_repository_id"`
+	Labels              []string   `json:"labels"`
+	Assignees           []string   `json:"assignees"`
+	Milestone           *string    `json:"milestone"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+}
+
 type SchemaMigration struct {
 	Version string `json:"version"`
 }

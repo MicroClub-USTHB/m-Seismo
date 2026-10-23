@@ -8,6 +8,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/coordinator"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
 )
 
 // Module runs the worker in this process, unless worker.enabled is false.
@@ -15,8 +16,8 @@ var Module = fx.Module("worker",
 	fx.Provide(
 		func(q db.Querier) Queries { return q },
 		func(s *issue.Service) Issues { return s },
-		func(q Queries, is Issues, c *coordinator.Client, cfg *config.Config) *Processor {
-			return NewProcessor(q, is, c, cfg.Coordinator.Window)
+		func(q Queries, is Issues, r *routing.Router, c *coordinator.Client, cfg *config.Config) *Processor {
+			return NewProcessor(q, is, r, c, cfg.Coordinator.Window)
 		},
 	),
 	fx.Invoke(register),

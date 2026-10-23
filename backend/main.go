@@ -18,6 +18,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider/github"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider/gitlab"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ratelimit"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/secrets"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/worker"
 )
@@ -44,6 +45,7 @@ func Options() fx.Option {
 		issue.Module,
 		ratelimit.Module,
 		ingest.Module,
+		routing.Module,
 		coordinator.Module,
 		worker.Module,
 	)
