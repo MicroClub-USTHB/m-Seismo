@@ -28,6 +28,18 @@ class MyApp : Application() {
 
 `release` defaults to the app's `versionName` and `versionCode`.
 
+Reports also start without any code from you (FR-05, FR-07):
+
+- **Shake**: a firm shake, back and forth twice. Light shakes and small flicks are
+  ignored on purpose. On by default; `Configuration(shakeEnabled = false)` turns it off.
+- **Screenshot**: taking a screenshot, on Android 14+ only. Off by default;
+  turn it on with `Configuration(screenshotEnabled = true)`.
+
+Both only listen while a screen of your app is showing, and never send on
+their own: they first ask "Report a problem?" with Send and Cancel. The SDK
+declares the `DETECT_SCREEN_CAPTURE` permission for the screenshot trigger;
+it is granted at install, with no prompt.
+
 Each report also carries context, already redacted on the device:
 
 - **Device**: OS, model, language, battery, free memory, network type and

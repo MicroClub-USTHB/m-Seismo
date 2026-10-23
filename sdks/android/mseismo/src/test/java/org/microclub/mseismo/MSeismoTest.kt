@@ -1,24 +1,33 @@
 package org.microclub.mseismo
 
+import android.app.Activity
 import android.app.Application
+import android.content.ComponentCallbacks2
+import android.content.DialogInterface
+import android.hardware.Sensor
+import android.hardware.SensorManager
+import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import java.io.File
+import java.time.Duration
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.json.JSONObject
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
-import android.os.Looper
-import java.time.Duration
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.SensorBuilder
+import org.robolectric.shadows.SensorEventBuilder
+import org.robolectric.shadows.ShadowAlertDialog
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -214,8 +223,8 @@ class MSeismoTest {
     @Test
     fun screensAndBackgroundingAreRecorded() {
         MSeismo.configure(app, valid)
-        org.robolectric.Robolectric.buildActivity(android.app.Activity::class.java).setup()
-        app.onTrimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN)
+        Robolectric.buildActivity(Activity::class.java).setup()
+        app.onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN)
 
         val sent = CountDownLatch(1)
         var crumbs = ""
@@ -224,6 +233,97 @@ class MSeismoTest {
         assertTrue(sent.await(5, TimeUnit.SECONDS))
         assertTrue(crumbs, """"kind":"navigation","message":"Activity"""" in crumbs)
         assertTrue(crumbs, """"message":"background"""" in crumbs)
+    }
+
+    // 4 hard jolts over 0.8 s. Robolectric's clock only moves when told to.
+    private fun shakePhone() {
+        val sensors = app.getSystemService(SensorManager::class.java)
+        val accelerometer = sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)!!
+        repeat(4) {
+            for (values in listOf(floatArrayOf(30f, 0f, 9.8f), floatArrayOf(0f, 0f, 9.8f))) {
+                shadowOf(sensors).sendSensorEventToListeners(SensorEventBuilder.newBuilder(accelerometer, values).build())
+            }
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(200))
+        }
+    }
+
+    private fun withAccelerometer() {
+        val sensors = app.getSystemService(SensorManager::class.java)
+        shadowOf(sensors).addSensor(SensorBuilder.newBuilder().setType(Sensor.TYPE_ACCELEROMETER).build())
+    }
+
+    @Test
+    fun shakingAsksFirstThenSendsAShakeReport() {
+        withAccelerometer()
+        val sent = CountDownLatch(1)
+        var trigger = ""
+        MSeismo.send = { _, _, reportJson -> trigger = JSONObject(reportJson).getString("trigger"); sent.countDown(); SendResult.Accepted }
+        MSeismo.configure(app, valid)
+        Robolectric.buildActivity(Activity::class.java).setup()
+
+        shakePhone()
+
+        val dialog = ShadowAlertDialog.getLatestAlertDialog()
+        assertTrue("a shake must ask first", dialog != null && dialog.isShowing)
+        assertTrue("nothing is sent before Send", sent.count == 1L)
+        dialog.getButton(DialogInterface.BUTTON_POSITIVE).performClick()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(sent.await(5, TimeUnit.SECONDS))
+        assertEquals("shake", trigger)
+    }
+
+    @Test
+    fun cancelSendsNothing() {
+        withAccelerometer()
+        var sends = 0
+        MSeismo.send = { _, _, _ -> sends++; SendResult.Accepted }
+        MSeismo.configure(app, valid)
+        Robolectric.buildActivity(Activity::class.java).setup()
+
+        shakePhone()
+        ShadowAlertDialog.getLatestAlertDialog().getButton(DialogInterface.BUTTON_NEGATIVE).performClick()
+        shadowOf(Looper.getMainLooper()).idle()
+        Thread.sleep(300)
+        assertEquals(0, sends)
+    }
+
+    @Test
+    fun aPromptLeftOpenOnADestroyedScreenDoesNotBlockTheNextShake() {
+        withAccelerometer()
+        MSeismo.configure(app, valid)
+        val rotated = Robolectric.buildActivity(Activity::class.java).setup()
+        shakePhone()
+        val first = ShadowAlertDialog.getLatestAlertDialog()
+        rotated.pause().stop().destroy() // like a rotation: the dialog is never dismissed
+
+        Robolectric.buildActivity(Activity::class.java).setup()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(3)) // past the shake cooldown
+        shakePhone()
+
+        val second = ShadowAlertDialog.getLatestAlertDialog()
+        assertTrue("the next shake must ask again", second !== first && second.isShowing)
+    }
+
+    @Test
+    fun shakeDoesNothingWhenTurnedOff() {
+        withAccelerometer()
+        MSeismo.configure(app, valid.copy(shakeEnabled = false))
+        Robolectric.buildActivity(Activity::class.java).setup()
+
+        shakePhone()
+
+        assertNull(ShadowAlertDialog.getLatestAlertDialog())
+    }
+
+    @Test
+    fun shakeIsIgnoredOnceTheScreenIsHidden() {
+        withAccelerometer()
+        MSeismo.configure(app, valid)
+        Robolectric.buildActivity(Activity::class.java).setup().pause()
+
+        shakePhone()
+
+        assertNull(ShadowAlertDialog.getLatestAlertDialog())
     }
 
     private val valid = Configuration(endpoint = "https://seismo.example.com", appKey = "msk_test")

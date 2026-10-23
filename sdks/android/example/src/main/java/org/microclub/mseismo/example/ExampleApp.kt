@@ -13,6 +13,7 @@ class ExampleApp : Application() {
                 endpoint = BuildConfig.MSEISMO_ENDPOINT,
                 appKey = BuildConfig.MSEISMO_APP_KEY,
                 environment = "development",
+                screenshotEnabled = true,
             ),
         )
         MSeismo.log("Example app started")

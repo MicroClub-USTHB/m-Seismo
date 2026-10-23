@@ -1,11 +1,14 @@
 package org.microclub.mseismo
 
+import android.app.Activity
+import android.app.AlertDialog
 import android.app.Application
 import android.content.pm.ApplicationInfo
 import android.net.ConnectivityManager
 import android.net.Network
 import android.util.Log
 import java.io.File
+import java.lang.ref.WeakReference
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
@@ -114,6 +117,9 @@ public object MSeismo {
     private var watchingNetwork = false
     private var watchedLifecycleOf: Application? = null
 
+    // Main thread only
+    private var promptDialog: WeakReference<AlertDialog>? = null
+
     // Sends a report in the background. Returns its ID, or null when the SDK is off. Never throws.
     @JvmStatic
     @JvmOverloads
@@ -122,7 +128,9 @@ public object MSeismo {
         description: String? = null,
         category: Category? = null,
         severity: Severity? = null,
-    ): String? = try {
+    ): String? = submit(Trigger.MANUAL, UserInput(title, description, category, severity))
+
+    private fun submit(trigger: Trigger, userInput: UserInput): String? = try {
         val config = configuration
         val app = app
         if (config == null || app == null) {
@@ -130,7 +138,7 @@ public object MSeismo {
             null
         } else {
             val id = UUID.randomUUID().toString()
-            val input = UserInput(title, description, category, severity).takeIf { it != UserInput() }
+            val input = userInput.takeIf { it != UserInput() }
             val occurredAt = System.currentTimeMillis()
             val recentLogs = logs.snapshot()
             val recentBreadcrumbs = breadcrumbs.snapshot()
@@ -147,7 +155,7 @@ public object MSeismo {
                             occurredAtMillis = occurredAt,
                             environment = config.environment,
                             release = release,
-                            trigger = Trigger.MANUAL,
+                            trigger = trigger,
                             autoSubmitted = false,
                             userInput = input,
                             device = device,
@@ -219,7 +227,30 @@ public object MSeismo {
     private fun watchLifecycle(app: Application) {
         if (watchedLifecycleOf === app) return
         recordLifecycle(app, ::breadcrumb)
+        app.registerActivityLifecycleCallbacks(
+            Triggers(
+                shakeEnabled = { configuration?.shakeEnabled == true },
+                screenshotEnabled = { configuration?.screenshotEnabled == true },
+                onTrigger = ::prompt,
+            ),
+        )
         watchedLifecycleOf = app
+    }
+
+    // the user confirms first.
+    // shortcut: a plain Send/Cancel dialog; the report sheet (step 5) replaces it.
+    private fun prompt(activity: Activity, trigger: Trigger) {
+        val open = promptDialog?.get()?.let { it.isShowing && it.ownerActivity === activity } == true
+        if (open || configuration == null || activity.isFinishing) return
+        safely {
+            val dialog = AlertDialog.Builder(activity)
+                .setTitle("Report a problem?")
+                .setMessage("Send a bug report about what you were doing?")
+                .setPositiveButton("Send") { _, _ -> submit(trigger, UserInput()) }
+                .setNegativeButton("Cancel", null)
+                .show()
+            promptDialog = WeakReference(dialog)
+        }
     }
 
     // Logs background failures instead of crashing the app.
