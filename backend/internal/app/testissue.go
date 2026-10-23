@@ -26,10 +26,13 @@ type TestIssueResult struct {
 	ProjectRepositoryID uuid.UUID  `json:"project_repository_id"`
 	Repository          string     `json:"repository"`
 	Tracker             db.Tracker `json:"tracker"`
-	IssueID             *uuid.UUID `json:"issue_id,omitempty"`
-	Ref                 string     `json:"ref,omitempty"`
-	URL                 string     `json:"url,omitempty"`
-	Error               string     `json:"error,omitempty"`
+	// ConnectionID is the app connection the issue was opened through;
+	// absent when the app has no connection for the repository.
+	ConnectionID *uuid.UUID `json:"connection_id,omitempty"`
+	IssueID      *uuid.UUID `json:"issue_id,omitempty"`
+	Ref          string     `json:"ref,omitempty"`
+	URL          string     `json:"url,omitempty"`
+	Error        string     `json:"error,omitempty"`
 	// RetryAfterSeconds is set when the tracker rate-limited this target.
 	RetryAfterSeconds int `json:"retry_after_seconds,omitempty"`
 }
@@ -46,7 +49,7 @@ type TestIssueOutcome struct {
 
 // SendTestIssue opens a test issue through issue.Service exactly as a real
 // report would: in the default repository of every project linked to the
-// app. Owners use it to check that an app is wired up end to end.
+// app, each through the app's own connection. Owners use it to check that an app is wired up end to end.
 //
 // It is throttled per app (limits.test_issues_per_minute) so it cannot be
 // used to burn the tracker's rate limit. An app with no reachable target
@@ -97,6 +100,10 @@ func (s *Service) SendTestIssue(ctx context.Context, ownerID, appID uuid.UUID, i
 			ProjectRepositoryID: r.ProjectRepositoryID,
 			Repository:          r.Repository,
 			Tracker:             r.Tracker,
+		}
+		if r.ConnectionID != uuid.Nil {
+			id := r.ConnectionID
+			res.ConnectionID = &id
 		}
 		if r.Err != nil {
 			res.Error = r.Err.Error()

@@ -62,7 +62,7 @@ type fakeIssues struct {
 	drafts []issue.Draft
 }
 
-func (f *fakeIssues) OpenInRepository(_ context.Context, repo uuid.UUID, _ *uuid.UUID, d issue.Draft) (issue.Result, error) {
+func (f *fakeIssues) OpenInRepository(_ context.Context, _, repo uuid.UUID, d issue.Draft) (issue.Result, error) {
 	if err := f.fail[repo]; err != nil {
 		return issue.Result{Err: err}, err
 	}

@@ -1,0 +1,15 @@
+meta {
+  name: Get Me
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/owners/me
+  body: none
+  auth: inherit
+}
+
+docs {
+  200 with the owner object.
+}

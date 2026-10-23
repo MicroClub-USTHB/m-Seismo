@@ -27,6 +27,7 @@ func TestErrorStatus(t *testing.T) {
 		{apperr.Unauthorized("x"), http.StatusUnauthorized},
 		{fmt.Errorf("wrapped: %w", pgx.ErrNoRows), http.StatusNotFound},
 		{&pgconn.PgError{Code: "23505"}, http.StatusConflict},
+		{&pgconn.PgError{Code: "23P01"}, http.StatusConflict},
 		{errors.New("boom"), http.StatusInternalServerError},
 	}
 	for _, tt := range tests {

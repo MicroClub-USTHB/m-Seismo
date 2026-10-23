@@ -73,6 +73,11 @@ func Load(configPath string) (*Config, error) {
 			MinWriteInterval: v.GetDuration("github.min_write_interval"),
 			MaxRateLimitWait: v.GetDuration("github.max_rate_limit_wait"),
 		},
+		GitLab:    oauthTracker(v, "gitlab"),
+		Bitbucket: oauthTracker(v, "bitbucket"),
+		Secrets: SecretsConfig{
+			EncryptionKey: v.GetString("secrets.encryption_key"),
+		},
 		Limits: LimitsConfig{
 			TestIssuesPerMinute: v.GetInt("limits.test_issues_per_minute"),
 		},
@@ -102,12 +107,26 @@ func Load(configPath string) (*Config, error) {
 
 	cfg.Server.PublicURL = v.GetString("server.public_url")
 	cfg.Server.FrontendURL = v.GetString("server.frontend_url")
+	for name, t := range map[string]*OAuthTrackerConfig{"gitlab": &cfg.GitLab, "bitbucket": &cfg.Bitbucket} {
+		if t.RedirectURL == "" {
+			t.RedirectURL = strings.TrimRight(cfg.Server.PublicURL, "/") + "/api/v1/providers/" + name + "/callback"
+		}
+	}
 
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 
 	return cfg, nil
+}
+
+func oauthTracker(v *viper.Viper, name string) OAuthTrackerConfig {
+	return OAuthTrackerConfig{
+		WebURL:           v.GetString(name + ".web_url"),
+		APIURL:           v.GetString(name + ".api_url"),
+		RedirectURL:      v.GetString(name + ".redirect_url"),
+		MaxRateLimitWait: v.GetDuration(name + ".max_rate_limit_wait"),
+	}
 }
 
 // devJWTSecret is used only when env is "development" and no secret is set,
@@ -123,6 +142,15 @@ func (c *Config) validate() error {
 	}
 	if c.Auth.JWTTTL <= 0 {
 		return fmt.Errorf("auth.jwt_ttl must be positive")
+	}
+	// GitLab and Bitbucket store OAuth tokens, and every app's own OAuth
+	// application secret, encrypted. Both trackers are always available
+	// (each app registers its own application when it connects), so the
+	// key is required outside development rather than only once a tracker
+	// is configured. Development falls back to a fixed key (see the
+	// secrets package).
+	if c.Secrets.EncryptionKey == "" && c.Env != "development" {
+		return fmt.Errorf("secrets.encryption_key is required when env is %q", c.Env)
 	}
 	if _, err := c.SlogLevel(); err != nil {
 		return err

@@ -55,6 +55,30 @@ type GitHubConfig struct {
 	MaxRateLimitWait time.Duration
 }
 
+// OAuthTrackerConfig holds the deployment-wide settings of a tracker that
+// is reached with per-connection OAuth tokens (GitLab, Bitbucket). Each
+// app's own OAuth application (client ID and secret) is registered
+// separately, through provider.CredentialStore, and is not here.
+type OAuthTrackerConfig struct {
+	// WebURL is the base of the authorize and token endpoints, e.g.
+	// https://gitlab.com/ (or a self-managed GitLab).
+	WebURL string
+	// APIURL is the REST API base, e.g. https://gitlab.com/api/v4/.
+	APIURL string
+	// RedirectURL is the OAuth callback registered with the tracker. Empty
+	// means {server.public_url}/api/v1/providers/<tracker>/callback.
+	RedirectURL string
+	// MaxRateLimitWait is the longest one call waits out a 429 before
+	// failing with a retryable rate-limit error.
+	MaxRateLimitWait time.Duration
+}
+
+// SecretsConfig holds the key that encrypts stored OAuth tokens.
+type SecretsConfig struct {
+	// EncryptionKey is 32 random bytes, base64-encoded.
+	EncryptionKey string
+}
+
 // LimitsConfig holds m-Seismo's own request limits.
 type LimitsConfig struct {
 	// TestIssuesPerMinute caps POST /apps/{id}/test-issue per app, so the
@@ -120,6 +144,9 @@ type Config struct {
 	NATS        NATSConfig
 	Auth        AuthConfig
 	GitHub      GitHubConfig
+	GitLab      OAuthTrackerConfig
+	Bitbucket   OAuthTrackerConfig
+	Secrets     SecretsConfig
 	Limits      LimitsConfig
 	Ingest      IngestConfig
 	Worker      WorkerConfig

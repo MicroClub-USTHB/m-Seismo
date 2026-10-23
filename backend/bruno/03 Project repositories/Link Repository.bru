@@ -1,0 +1,32 @@
+meta {
+  name: Link Repository
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/projects/{{projectId}}/repositories
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "tracker": "github",
+    "repository": "octo-org/shop-ios",
+    "is_default": false
+  }
+}
+
+vars:post-response {
+  repositoryId: res.body.id
+}
+
+docs {
+  201 repository. `tracker` must be one of `github`, `gitlab`, `bitbucket`
+  and available (GET /providers). `repository` format is checked for that
+  tracker (owner/name, group/.../project, or workspace/repo_slug) but the
+  tracker itself is not called — see Targets to check reachability.
+  The first repository linked to a project always becomes the default,
+  whatever `is_default` says. 409 if already linked. Sets `repositoryId`.
+}

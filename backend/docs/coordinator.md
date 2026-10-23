@@ -16,7 +16,7 @@ worker on instance B ──NATS request seismo.coordinator.query.<app>──┘
 
 1. Create a coordinator key for the app:
    `POST /api/v1/apps/{appID}/coordinator-keys` → `{"secret": "mco_…"}`
-   (shown once, see [api.md](api.md#coordinator-keys)).
+   (shown once; see the Bruno collection, `05 App keys`).
 2. Give it to the coordinator, which dials the backend's gRPC address with
    `authorization: Bearer mco_…` and sends `Hello{protocol_version: 1}`.
 

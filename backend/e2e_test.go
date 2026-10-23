@@ -18,7 +18,8 @@ import (
 // TestOpenForAppE2E opens a real issue through the full graph: Postgres,
 // Redis, NATS and a configured GitHub App must be reachable, and
 // SEISMO_E2E_APP_ID must name an app linked to a project whose default
-// repository is on a connected installation.
+// repository the app reaches through one of its own connections (check with
+// GET /api/v1/apps/{id}/targets).
 //
 //	SEISMO_E2E_APP_ID=<uuid> go test -tags e2e -run TestOpenForAppE2E .
 func TestOpenForAppE2E(t *testing.T) {
@@ -49,6 +50,6 @@ func TestOpenForAppE2E(t *testing.T) {
 			t.Errorf("%s %s: %v", r.Tracker, r.Repository, r.Err)
 			continue
 		}
-		t.Logf("opened %s (%s), recorded as %s", r.Ref.ID, r.Ref.URL, r.IssueID)
+		t.Logf("opened %s (%s) through connection %s, recorded as %s", r.Ref.ID, r.Ref.URL, r.ConnectionID, r.IssueID)
 	}
 }

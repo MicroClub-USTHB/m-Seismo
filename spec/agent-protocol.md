@@ -52,7 +52,7 @@ The agent's first message is `Register`:
 |---|---|
 | `protocol_version` | Integer, currently `1` |
 | `agent_id` | Stable across restarts and reconnects. From config, falls back to the hostname |
-| `source` | `docker`, `kubernetes` or `loki` |
+| `source` | `docker`, `kubernetes`, `loki`, `file` or `journal` |
 | `services` | Service names the agent can see. A routing hint, v1 queries every agent |
 
 There is no ack. Rejections are a gRPC status on the stream:

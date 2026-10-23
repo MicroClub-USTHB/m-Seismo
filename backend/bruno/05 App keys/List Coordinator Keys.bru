@@ -1,0 +1,16 @@
+meta {
+  name: List Coordinator Keys
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/apps/{{appId}}/coordinator-keys
+  body: none
+  auth: inherit
+}
+
+docs {
+  200 `[key]`, newest first, revoked ones included. SDK keys are not
+  listed here.
+}

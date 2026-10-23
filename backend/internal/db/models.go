@@ -167,17 +167,35 @@ type AppProject struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type AppTrackerCredential struct {
+	ID                     uuid.UUID `json:"id"`
+	AppID                  uuid.UUID `json:"app_id"`
+	Tracker                Tracker   `json:"tracker"`
+	ClientID               string    `json:"client_id"`
+	ClientSecretCiphertext []byte    `json:"client_secret_ciphertext"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
+}
+
+type ConnectionSecret struct {
+	ProviderConnectionID uuid.UUID `json:"provider_connection_id"`
+	Ciphertext           []byte    `json:"ciphertext"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
 type Issue struct {
-	ID                  uuid.UUID  `json:"id"`
-	ProjectRepositoryID uuid.UUID  `json:"project_repository_id"`
-	AppID               *uuid.UUID `json:"app_id"`
-	ExternalID          string     `json:"external_id"`
-	Url                 string     `json:"url"`
-	Title               string     `json:"title"`
-	State               string     `json:"state"`
-	Fingerprint         *string    `json:"fingerprint"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
+	ID                   uuid.UUID  `json:"id"`
+	ProjectRepositoryID  uuid.UUID  `json:"project_repository_id"`
+	AppID                *uuid.UUID `json:"app_id"`
+	ExternalID           string     `json:"external_id"`
+	Url                  string     `json:"url"`
+	Title                string     `json:"title"`
+	State                string     `json:"state"`
+	Fingerprint          *string    `json:"fingerprint"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+	ProviderConnectionID *uuid.UUID `json:"provider_connection_id"`
 }
 
 type Owner struct {
@@ -199,12 +217,12 @@ type Project struct {
 }
 
 type ProjectRepository struct {
-	ID                   uuid.UUID `json:"id"`
-	ProjectID            uuid.UUID `json:"project_id"`
-	Repository           string    `json:"repository"`
-	IsDefault            bool      `json:"is_default"`
-	CreatedAt            time.Time `json:"created_at"`
-	ProviderConnectionID uuid.UUID `json:"provider_connection_id"`
+	ID         uuid.UUID `json:"id"`
+	ProjectID  uuid.UUID `json:"project_id"`
+	Repository string    `json:"repository"`
+	IsDefault  bool      `json:"is_default"`
+	CreatedAt  time.Time `json:"created_at"`
+	Tracker    Tracker   `json:"tracker"`
 }
 
 type ProviderConnection struct {
@@ -217,6 +235,7 @@ type ProviderConnection struct {
 	SuspendedAt  *time.Time `json:"suspended_at"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
+	AppID        uuid.UUID  `json:"app_id"`
 }
 
 type Report struct {

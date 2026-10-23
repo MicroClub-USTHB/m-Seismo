@@ -1,6 +1,7 @@
 // Package app manages apps: the mobile apps that report bugs. An app holds
-// the SDK keys and is linked to the projects whose repositories receive its
-// issues.
+// the SDK keys, its own tracker connections (the credentials its issues are
+// opened with), and is linked to the projects whose repositories receive
+// its issues.
 package app
 
 import (

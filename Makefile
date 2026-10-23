@@ -1,7 +1,7 @@
 .PHONY: check backend-check agent-check fmt lint \
         backend-build backend-test backend-fmt backend-fmt-check \
         agent-build agent-test agent-fmt agent-fmt-check backend-lint agent-lint \
-        agent-integration db-up db-down db-status sqlc-generate \
+        db-up db-down db-status sqlc-generate \
         dev-up dev-down dev-reset dev-logs api-test api-test-fresh
 
 COMPOSE_DEV := docker compose -f deploy/compose.dev.yml
@@ -28,7 +28,7 @@ dev-reset:
 	$(COMPOSE_DEV) down -v
 
 dev-logs:
-	$(COMPOSE_DEV) logs -f backend fakegithub
+	$(COMPOSE_DEV) logs -f backend
 
 # End-to-end API tests against the running stack (see backend/scripts/api).
 api-test:
@@ -67,9 +67,6 @@ agent-build:
 
 agent-test:
 	cd agent && cargo test --locked
-
-agent-integration:
-	cd agent && cargo test --locked --test docker_integration -- --ignored --nocapture
 
 agent-fmt:
 	cd agent && cargo fmt

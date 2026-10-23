@@ -3,8 +3,8 @@
 |                   |                                                        |
 | ----------------- | ------------------------------------------------------ |
 | **Status**        | Draft, under product review                            |
-| **Version**       | 1.1                                                    |
-| **Last updated**  | 2026-10-16                                             |
+| **Version**       | 1.2                                                    |
+| **Last updated**  | 2026-10-22                                             |
 | **Product owner** | @wail                                                  |
 | **Organisation**  | MicroClub USTHB                                        |
 | **Source**        | m-Seismo cahier des charges (2026-10-14)               |
@@ -16,6 +16,7 @@
 | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1.0     | First full product scope, derived from the cahier des charges. Technical architecture removed; only the features and the behaviour they must have are kept. |
 | 1.1     | Amendments from building the iOS SDK's first release (FR-03, FR-08, FR-11, FR-20, FR-21, NFR-09): see the implementation notes under each affected requirement, added per the change-control process in section 22. |
+| 1.2     | GitLab and Bitbucket issue destinations moved from v2 into v1 scope (3.1, 3.2, 3.3, FR-70), and the per-app OAuth connection model is documented under section 12. Each app brings its own GitLab application or Bitbucket OAuth consumer instead of one shared per deployment; GitHub still uses one App installed for the whole deployment, with a self-service manifest flow planned next. Added NFR-11 (backend code layering). Decided by the product owner per section 22. |
 
 ### How to read this document
 
@@ -104,10 +105,16 @@ Shake-to-report and the other triggers · the in-app report sheet · automatic
 capture of device, app and user-action context · screenshot with masking tools ·
 automatic crash and error reporting alongside Crashlytics · reliable delivery,
 including offline · server-side logs and diagnostics collected for each report ·
-crash correlation with Crashlytics · automatic GitHub issue creation with full
-context · deduplication and grouping · per-project routing · privacy controls,
-redaction and deletion · abuse protection · iOS, Android, Flutter and React
-Native apps with identical behaviour.
+crash correlation with Crashlytics · automatic issue creation in GitHub,
+GitLab or Bitbucket with full context · deduplication and grouping ·
+per-project routing · privacy controls, redaction and deletion · abuse
+protection · iOS, Android, Flutter and React Native apps with identical
+behaviour.
+
+> **Implementation note (2026-10-22):** GitLab and Bitbucket issue
+> destinations moved from "planned v2" into v1 scope. Each app brings its
+> own OAuth application per tracker (see section 12); GitHub still uses one
+> App installed for the whole deployment.
 
 ### 3.2 Planned later
 
@@ -117,8 +124,9 @@ Native apps with identical behaviour.
   observability tools, release correlation, more server log sources.
 - **v2** — reporter notification when a bug is fixed, lightweight session
   replay, short screen recording, web and command-line reporting, trackers
-  other than GitHub (Jira, Linear, GitLab), reporting dashboard, performance
-  snapshots, reports opened automatically by the server side.
+  other than GitHub, GitLab or Bitbucket (Jira, Linear), reporting
+  dashboard, performance snapshots, reports opened automatically by the
+  server side.
 
 ### 3.3 Out of scope
 
@@ -127,7 +135,8 @@ Explicitly excluded from v1:
 - reporting from web apps (planned v2);
 - full video session replay;
 - replacing Crashlytics as the crash reporter;
-- issue trackers other than GitHub (planned v2);
+- issue trackers other than GitHub, GitLab or Bitbucket (Jira, Linear;
+  planned v2);
 - a public, hosted SaaS offering;
 - customer-facing support chat or any reporter–developer messaging;
 - reporter accounts, names, emails or any personal identity;
@@ -469,6 +478,33 @@ them. `[INT-03]` — v1.x
 **FR-53** — **Release correlation.** The issue links to the GitHub release and
 the range of commits that shipped the affected build. `[INT-04]` — v1.x
 
+**FR-53a — Issue destination is configured, not hardcoded.** *(added
+2026-10-22)* Where an app's issues go is chosen by the app owner, through
+two separate, explicit steps — never fixed by the deployment's operator:
+
+1. **Which tracker and repository.** Per project, the owner links one or
+   more repositories (`tracker` + `repository`), and picks a default. An
+   app's issues go to the default repository of every project it is linked
+   to (section 14 covers labels/assignees/milestone routing on top of this).
+2. **Which account reaches that repository.** Per app, the owner connects
+   a tracker account through that tracker's own OAuth (or App-install)
+   flow. An app can hold several connections, even several on the same
+   tracker; issue delivery picks the connection that covers the target
+   repository.
+
+**FR-53b — Each app brings its own OAuth application.** *(added
+2026-10-22)* For GitLab and Bitbucket, the OAuth application an app
+authorizes against (client ID and secret) is registered by that app's
+owner, not shared across every app on the deployment. This means the
+operator who self-hosts m-Seismo never holds a single OAuth application
+that reaches every connected account on every tracker — only the app
+owner who registered it does. GitHub is the current exception: it still
+uses one GitHub App installed for the whole deployment, because minting
+installation tokens needs a private key, which is heavier to self-serve
+than an OAuth client secret; a GitHub-side "manifest flow" (GitHub
+generates the App and hands back its private key through a redirect, no
+manual key paste) is planned so GitHub reaches the same per-app model.
+
 ---
 
 ## 13. Deduplication and grouping
@@ -556,8 +592,11 @@ seconds of the screen, attached to the report. `[SDK-14]`
 **FR-69** — **Web and command line.** Reports can be filed from web apps, from
 CI pipelines and from scripts. `[FE-13]`
 
-**FR-70** — **Other trackers.** Issues can be filed in Jira, Linear or GitLab
-instead of GitHub. `[FE-14]`
+**FR-70** — **Other trackers.** Issues can be filed in Jira or Linear
+instead of GitHub, GitLab or Bitbucket. `[FE-14]`
+
+> **Implementation note (2026-10-22):** GitLab and Bitbucket shipped in v1
+> (section 12); this item now covers only Jira and Linear.
 
 **FR-71** — **Dashboard.** Reports per app and version, time from report to
 issue, most frequent bugs and reporter activity. `[FE-15]`
@@ -612,6 +651,15 @@ open question in section 19 is answered.
 **NFR-10 — m-Seismo watches itself.** m-Seismo reports its own health and
 failures to the operator, and never tries to report its own failures through
 itself.
+
+**NFR-11 — Layered backend code.** New backend code must not define its
+request/response (DTO) structs or domain types inline inside handler or
+service files. Each package separates: a `dto` layer (wire-format request and
+response structs, decoded/encoded at the HTTP boundary) from a `domain` layer
+(the package's own types and errors), with an explicit translation step
+between a domain error/type and the DTO the handler returns. This applies
+going forward to new and touched code; the existing codebase does not yet
+follow it and is not being retrofitted as part of this requirement.
 
 ---
 

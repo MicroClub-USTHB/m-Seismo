@@ -4,11 +4,9 @@
 #   curl http://localhost:8080/healthz
 #
 # Services: Postgres, Redis, NATS (JetStream), a one-shot dbmate migration,
-# a fake GitHub (so the GitHub connect flow and issue opening work without
-# real credentials) and the backend.
-#
-# To use a real GitHub App instead of the fake, set the SEISMO_GITHUB_*
-# variables in deploy/.env (see deploy/.env.example).
+# and the backend. Configure a real GitHub App, GitLab application and/or
+# Bitbucket consumer via the SEISMO_GITHUB_*, SEISMO_GITLAB_* and
+# SEISMO_BITBUCKET_* variables in deploy/.env (see deploy/.env.example).
 
 name: m-seismo-dev
 
@@ -60,19 +58,6 @@ services:
         condition: service_healthy
     restart: "no"
 
-  fakegithub:
-    build:
-      context: ../backend
-      target: fakegithub
-    environment:
-      FAKEGITHUB_ADDR: ":9090"
-      FAKEGITHUB_KEY_PATH: /shared/github-app.pem
-      FAKEGITHUB_PUBLIC_URL: http://localhost:${FAKEGITHUB_PORT:-9090}
-    ports:
-      - "${FAKEGITHUB_PORT:-9090}:9090"
-    volumes:
-      - github-app-key:/shared
-
   backend:
     build:
       context: ../backend
@@ -93,24 +78,35 @@ services:
       SEISMO_NATS_URL: nats://nats:4222
       SEISMO_AUTH_JWT_SECRET: ${SEISMO_AUTH_JWT_SECRET:-}
       SEISMO_AUTH_JWT_TTL: ${SEISMO_AUTH_JWT_TTL:-24h}
-      # GitHub: defaults point at the fake; override all of them in deploy/.env for a real App.
-      SEISMO_GITHUB_APP_ID: ${SEISMO_GITHUB_APP_ID:-1}
-      SEISMO_GITHUB_APP_SLUG: ${SEISMO_GITHUB_APP_SLUG:-m-seismo-dev}
-      SEISMO_GITHUB_CLIENT_ID: ${SEISMO_GITHUB_CLIENT_ID:-fake-client}
-      SEISMO_GITHUB_CLIENT_SECRET: ${SEISMO_GITHUB_CLIENT_SECRET:-fake-secret}
+      # GitHub App: set these in deploy/.env (see deploy/.env.example).
+      SEISMO_GITHUB_APP_ID: ${SEISMO_GITHUB_APP_ID:-}
+      SEISMO_GITHUB_APP_SLUG: ${SEISMO_GITHUB_APP_SLUG:-}
+      SEISMO_GITHUB_CLIENT_ID: ${SEISMO_GITHUB_CLIENT_ID:-}
+      SEISMO_GITHUB_CLIENT_SECRET: ${SEISMO_GITHUB_CLIENT_SECRET:-}
       SEISMO_GITHUB_PRIVATE_KEY: ${SEISMO_GITHUB_PRIVATE_KEY:-}
-      SEISMO_GITHUB_PRIVATE_KEY_PATH: /shared/github-app.pem
-      SEISMO_GITHUB_API_URL: ${SEISMO_GITHUB_API_URL:-http://fakegithub:9090/}
-      SEISMO_GITHUB_WEB_URL: ${SEISMO_GITHUB_WEB_URL:-http://fakegithub:9090/}
+      SEISMO_GITHUB_PRIVATE_KEY_PATH: ${SEISMO_GITHUB_PRIVATE_KEY_PATH:-}
+      SEISMO_GITHUB_API_URL: ${SEISMO_GITHUB_API_URL:-}
+      SEISMO_GITHUB_WEB_URL: ${SEISMO_GITHUB_WEB_URL:-}
       # GitHub rate-limit handling (see backend/docs/github.md#rate-limits)
       SEISMO_GITHUB_MIN_WRITE_INTERVAL: ${SEISMO_GITHUB_MIN_WRITE_INTERVAL:-1s}
       SEISMO_GITHUB_MAX_RATE_LIMIT_WAIT: ${SEISMO_GITHUB_MAX_RATE_LIMIT_WAIT:-30s}
+      # GitLab and Bitbucket: deployment-wide instance settings only. Each
+      # app registers its own OAuth application (client ID and secret)
+      # through PUT /apps/{appID}/providers/{tracker}/credentials instead
+      # of one shared here. Tokens and app client secrets are stored
+      # encrypted with this key (empty in development = a fixed
+      # development key).
+      SEISMO_SECRETS_ENCRYPTION_KEY: ${SEISMO_SECRETS_ENCRYPTION_KEY:-}
+      SEISMO_GITLAB_WEB_URL: ${SEISMO_GITLAB_WEB_URL:-}
+      SEISMO_GITLAB_API_URL: ${SEISMO_GITLAB_API_URL:-}
+      SEISMO_GITLAB_MAX_RATE_LIMIT_WAIT: ${SEISMO_GITLAB_MAX_RATE_LIMIT_WAIT:-30s}
+      SEISMO_BITBUCKET_WEB_URL: ${SEISMO_BITBUCKET_WEB_URL:-}
+      SEISMO_BITBUCKET_API_URL: ${SEISMO_BITBUCKET_API_URL:-}
+      SEISMO_BITBUCKET_MAX_RATE_LIMIT_WAIT: ${SEISMO_BITBUCKET_MAX_RATE_LIMIT_WAIT:-30s}
       SEISMO_LIMITS_TEST_ISSUES_PER_MINUTE: ${SEISMO_LIMITS_TEST_ISSUES_PER_MINUTE:-10}
       # Log coordinator (see backend/docs/coordinator.md)
       SEISMO_COORDINATOR_ENABLED: "true"
       SEISMO_COORDINATOR_ADDR: ":9443"
-    volumes:
-      - github-app-key:/shared:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -118,10 +114,7 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
-      fakegithub:
-        condition: service_healthy
 
 volumes:
   postgres-data:
   nats-data:
-  github-app-key:
