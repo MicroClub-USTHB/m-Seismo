@@ -560,6 +560,13 @@ CREATE INDEX provider_connections_owner_id_idx ON public.provider_connections US
 
 
 --
+-- Name: report_deliveries_issue_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX report_deliveries_issue_id_idx ON public.report_deliveries USING btree (issue_id);
+
+
+--
 -- Name: reports_app_id_installation_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -782,4 +789,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021150000'),
     ('20261022120000'),
     ('20261022210000'),
-    ('20261023090000');
+    ('20261023090000'),
+    ('20261024090000');

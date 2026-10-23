@@ -31,6 +31,9 @@ type Querier interface {
 	GetAppConnection(ctx context.Context, arg GetAppConnectionParams) (ProviderConnection, error)
 	GetAppTrackerCredentials(ctx context.Context, arg GetAppTrackerCredentialsParams) (AppTrackerCredential, error)
 	GetConnectionSecret(ctx context.Context, providerConnectionID uuid.UUID) ([]byte, error)
+	// How often an issue's bug was seen: the reports delivered to it plus
+	// report_id, the one being delivered now.
+	GetIssueOccurrences(ctx context.Context, arg GetIssueOccurrencesParams) (GetIssueOccurrencesRow, error)
 	// One project repository, provided the app is linked to its project. The
 	// credentials come from the app's connections, resolved by the caller.
 	GetIssueTarget(ctx context.Context, arg GetIssueTargetParams) (GetIssueTargetRow, error)

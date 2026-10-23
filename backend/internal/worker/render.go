@@ -57,13 +57,7 @@ func render(r *ingest.Report, info reportInfo) issue.Draft {
 		}
 	}
 
-	if steps := last(r.Breadcrumbs, maxSteps); len(steps) > 0 {
-		b.WriteString("### Steps to reproduce\n\n")
-		for i, s := range steps {
-			fmt.Fprintf(&b, "%d. %s _(%s)_\n", i+1, text(s.Message), s.Kind)
-		}
-		b.WriteString("\n")
-	}
+	writeSteps(&b, r)
 
 	if c := r.Crash; c != nil {
 		b.WriteString("### Crash\n\n")
@@ -80,38 +74,7 @@ func render(r *ingest.Report, info reportInfo) issue.Draft {
 		b.WriteString("\n")
 	}
 
-	b.WriteString("### Environment\n\n")
-	b.WriteString("| | |\n|---|---|\n")
-	row := func(k, v string) {
-		if v != "" {
-			fmt.Fprintf(&b, "| %s | %s |\n", k, cell(v))
-		}
-	}
-	if d := r.Device; d != nil {
-		row("Device", d.Model)
-		row("OS", strings.TrimSpace(d.OSName+" "+d.OSVersion))
-		row("Locale", d.Locale)
-		row("Network", d.NetworkType)
-		row("Orientation", d.Orientation)
-	}
-	if rel := r.Release; rel != nil {
-		row("Release", fmt.Sprintf("%s (%s)", rel.Version, rel.Build))
-	}
-	row("Platform", r.Platform)
-	row("Environment", r.Environment)
-	row("Mode", r.Mode)
-	if s := r.SDK; s != nil {
-		row("SDK", s.Name+" "+s.Version)
-	}
-	row("Trigger", r.Trigger)
-	row("Occurred at", r.OccurredAt)
-	for _, k := range sortedKeys(r.FeatureFlags) {
-		row("Flag "+k, fmt.Sprint(r.FeatureFlags[k]))
-	}
-	for _, k := range sortedKeys(r.Experiments) {
-		row("Experiment "+k, r.Experiments[k])
-	}
-	b.WriteString("\n")
+	writeEnvironment(&b, r)
 
 	if logs := last(r.Logs, maxLogLines); len(logs) > 0 {
 		fmt.Fprintf(&b, "### Logs (last %d)\n\n", len(logs))
@@ -155,6 +118,53 @@ func render(r *ingest.Report, info reportInfo) issue.Draft {
 		Title: truncate(title(r), maxTitle, "…"),
 		Body:  truncate(b.String(), maxBody, "\n\n_(truncated)_"),
 	}
+}
+
+func writeSteps(b *strings.Builder, r *ingest.Report) {
+	steps := last(r.Breadcrumbs, maxSteps)
+	if len(steps) == 0 {
+		return
+	}
+	b.WriteString("### Steps to reproduce\n\n")
+	for i, s := range steps {
+		fmt.Fprintf(b, "%d. %s _(%s)_\n", i+1, text(s.Message), s.Kind)
+	}
+	b.WriteString("\n")
+}
+
+func writeEnvironment(b *strings.Builder, r *ingest.Report) {
+	b.WriteString("### Environment\n\n")
+	b.WriteString("| | |\n|---|---|\n")
+	row := func(k, v string) {
+		if v != "" {
+			fmt.Fprintf(b, "| %s | %s |\n", k, cell(v))
+		}
+	}
+	if d := r.Device; d != nil {
+		row("Device", d.Model)
+		row("OS", strings.TrimSpace(d.OSName+" "+d.OSVersion))
+		row("Locale", d.Locale)
+		row("Network", d.NetworkType)
+		row("Orientation", d.Orientation)
+	}
+	if rel := r.Release; rel != nil {
+		row("Release", fmt.Sprintf("%s (%s)", rel.Version, rel.Build))
+	}
+	row("Platform", r.Platform)
+	row("Environment", r.Environment)
+	row("Mode", r.Mode)
+	if s := r.SDK; s != nil {
+		row("SDK", s.Name+" "+s.Version)
+	}
+	row("Trigger", r.Trigger)
+	row("Occurred at", r.OccurredAt)
+	for _, k := range sortedKeys(r.FeatureFlags) {
+		row("Flag "+k, fmt.Sprint(r.FeatureFlags[k]))
+	}
+	for _, k := range sortedKeys(r.Experiments) {
+		row("Experiment "+k, r.Experiments[k])
+	}
+	b.WriteString("\n")
 }
 
 // title is the reporter's title, or one made from the report.

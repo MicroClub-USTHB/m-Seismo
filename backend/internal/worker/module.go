@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go/jetstream"
 	"go.uber.org/fx"
 
@@ -16,8 +17,9 @@ var Module = fx.Module("worker",
 	fx.Provide(
 		func(q db.Querier) Queries { return q },
 		func(s *issue.Service) Issues { return s },
-		func(q Queries, is Issues, r *routing.Router, c *coordinator.Client, cfg *config.Config) *Processor {
-			return NewProcessor(q, is, r, c, cfg.Coordinator.Window)
+		func(pool *pgxpool.Pool) Locks { return pgLocks{pool: pool} },
+		func(q Queries, is Issues, r *routing.Router, l Locks, c *coordinator.Client, cfg *config.Config) *Processor {
+			return NewProcessor(q, is, r, l, c, cfg.Coordinator.Window)
 		},
 	),
 	fx.Invoke(register),

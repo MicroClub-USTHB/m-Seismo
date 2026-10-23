@@ -193,22 +193,10 @@ func (s *Service) OpenInRepository(ctx context.Context, appID, projectRepository
 	if err := d.validate(); err != nil {
 		return Result{}, err
 	}
-
-	row, err := s.q.GetIssueTarget(ctx, db.GetIssueTargetParams{ID: projectRepositoryID, AppID: appID})
+	t, err := s.target(ctx, appID, projectRepositoryID)
 	if err != nil {
-		return Result{}, fmt.Errorf("issue: resolve repository %s for app %s: %w", projectRepositoryID, appID, err)
+		return Result{}, err
 	}
-	conns, err := s.q.ListActiveConnectionsForApp(ctx, appID)
-	if err != nil {
-		return Result{}, fmt.Errorf("issue: list connections for app %s: %w", appID, err)
-	}
-
-	t := s.resolve(Target{
-		ProjectID:           row.ProjectID,
-		ProjectRepositoryID: row.ProjectRepositoryID,
-		Repository:          row.Repository,
-		Tracker:             row.Tracker,
-	}, conns)
 	if t.Err != nil {
 		res := t.result()
 		res.Err = t.Err
@@ -216,6 +204,59 @@ func (s *Service) OpenInRepository(ctx context.Context, appID, projectRepository
 	}
 	res := s.open(ctx, t, appID, d)
 	return res, res.Err
+}
+
+// CommentOn adds body as a comment on an issue m-Seismo opened, through the
+// app's connection for the issue's repository. When the issue was closed on
+// the tracker it is recorded as closed and nothing is posted: CommentOn
+// returns false and the caller opens a new issue instead.
+func (s *Service) CommentOn(ctx context.Context, appID uuid.UUID, iss db.Issue, body string) (bool, error) {
+	t, err := s.target(ctx, appID, iss.ProjectRepositoryID)
+	if err != nil {
+		return false, err
+	}
+	if t.Err != nil {
+		return false, t.Err
+	}
+	opener, err := s.openers.Opener(ctx, *t.Connection)
+	if err != nil {
+		return false, fmt.Errorf("issue: %s opener for %s: %w", t.Tracker, t.Repository, err)
+	}
+
+	ref := Ref{ID: iss.ExternalID, URL: iss.Url}
+	open, err := opener.IsOpen(ctx, ref)
+	if err != nil {
+		return false, fmt.Errorf("issue: state of %s on %s: %w", ref.ID, t.Tracker, err)
+	}
+	if !open {
+		if err := s.q.SetIssueState(ctx, db.SetIssueStateParams{ID: iss.ID, State: "closed"}); err != nil {
+			return false, fmt.Errorf("issue: record %s as closed: %w", ref.ID, err)
+		}
+		return false, nil
+	}
+	if err := opener.Comment(ctx, ref, body); err != nil {
+		return false, fmt.Errorf("issue: comment on %s %s: %w", t.Tracker, ref.ID, err)
+	}
+	return true, nil
+}
+
+// target resolves one project repository of the app and the app's
+// connection for it. A repository the app cannot reach has Err set.
+func (s *Service) target(ctx context.Context, appID, projectRepositoryID uuid.UUID) (Target, error) {
+	row, err := s.q.GetIssueTarget(ctx, db.GetIssueTargetParams{ID: projectRepositoryID, AppID: appID})
+	if err != nil {
+		return Target{}, fmt.Errorf("issue: resolve repository %s for app %s: %w", projectRepositoryID, appID, err)
+	}
+	conns, err := s.q.ListActiveConnectionsForApp(ctx, appID)
+	if err != nil {
+		return Target{}, fmt.Errorf("issue: list connections for app %s: %w", appID, err)
+	}
+	return s.resolve(Target{
+		ProjectID:           row.ProjectID,
+		ProjectRepositoryID: row.ProjectRepositoryID,
+		Repository:          row.Repository,
+		Tracker:             row.Tracker,
+	}, conns), nil
 }
 
 func (s *Service) open(ctx context.Context, t Target, appID uuid.UUID, d Draft) Result {

@@ -32,7 +32,8 @@ hands each message to one of them.
    coordinator is attached. Network request bodies are never included, and an `@` in
    reporter-written text can't notify anyone on GitHub.
 5. Opens the issue in each project that doesn't have it yet, through
-   `issue.Service.OpenInRepository(ctx, appID, repositoryID, draft)`, and
+   `issue.Service.OpenInRepository(ctx, appID, repositoryID, draft)`, or
+   adds the report to the open issue of the same bug (see below), and
    records each one in `report_deliveries`. Each issue goes through the
    reporting **app's own connection** for that repository's tracker (see
    [issue-service.md](issue-service.md#which-connection-opens-it)).
@@ -42,6 +43,48 @@ hands each message to one of them.
 The issue format is provisional: the report schema and the issue template
 will be settled once enrichment (crash, server context) is in. Everything
 about the format is in `render.go`.
+
+## One issue per bug
+
+A report with a crash gets a fingerprint (`internal/dedup`): its platform,
+the crash type and the top 5 frames of the stack trace, without line
+numbers, memory addresses and offsets, hashed. The app version is not part
+of it, so one issue covers every version a bug shows up in. A report
+without a crash has no fingerprint and always opens its own issue: what a
+reporter writes is too loose to group on without merging different bugs.
+
+For each route, when the repository has an open issue with the same
+fingerprint (`issues.fingerprint`, set when m-Seismo opens an issue):
+
+1. the worker counts the reports grouped under it, this one included: how
+   many, from how many installations, and in which versions;
+2. it checks on the tracker that the issue is still open, then adds a
+   comment with the counts and what is new in this report: the reporter's
+   description, the crash reason, the steps, the environment and the
+   server logs (`render_occurrence.go`). The stack trace is the issue's,
+   so it is not repeated;
+3. the delivery is recorded against that issue.
+
+An issue closed on the tracker since is recorded as closed and the report
+opens a new issue. Telling that a bug came back (a regression) is not done
+yet.
+
+Two reports of a new bug can come in together, on two workers. So the
+worker takes a Postgres advisory lock on the repository and fingerprint
+while it looks for the issue and opens it: the second report waits, then
+finds the issue the first one opened. The lock holds one database
+connection per report in progress, within `database.max_conns`.
+
+```
+crash report ──▶ fingerprint ──▶ lock (repository, fingerprint)
+                                   │
+                    open issue with that fingerprint?
+                     ├─ no ─────────────────────────▶ open a new issue
+                     └─ yes ─▶ still open on the tracker?
+                                ├─ yes ─▶ comment: "Seen again: 12 reports,
+                                │         5 installations · versions 2.4.0, 2.5.0"
+                                └─ no ──▶ record it closed, open a new issue
+```
 
 ## Never lost, never doubled
 
@@ -104,8 +147,10 @@ to:
 
 ## Not done yet
 
-- **Deduplication**: every report opens its own issue; the fingerprint and
-  `Opener.Comment` are ready for it.
+- **Regressions**: a closed issue's bug coming back opens a new issue
+  without saying it is back.
+- **Counts in the issue itself**: they are in each comment, as the
+  trackers' issue bodies are not updated.
 - **Crash enrichment**: no Crashlytics crash yet. Server logs come from the
   app's coordinator when one is attached (see [coordinator.md](coordinator.md)).
 - **Attachments**: the issue says a screenshot was sent but doesn't link it;

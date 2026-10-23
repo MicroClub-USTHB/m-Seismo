@@ -20,6 +20,7 @@ type fakeQuerier struct {
 	targets []db.ListIssueTargetsForAppRow
 	conns   map[uuid.UUID][]db.ProviderConnection
 	created []db.CreateIssueParams
+	states  []db.SetIssueStateParams
 }
 
 func (f *fakeQuerier) ListIssueTargetsForApp(_ context.Context, _ uuid.UUID) ([]db.ListIssueTargetsForAppRow, error) {
@@ -47,6 +48,11 @@ func (f *fakeQuerier) CreateIssue(_ context.Context, arg db.CreateIssueParams) (
 	return db.Issue{ID: uuid.New()}, nil
 }
 
+func (f *fakeQuerier) SetIssueState(_ context.Context, arg db.SetIssueStateParams) error {
+	f.states = append(f.states, arg)
+	return nil
+}
+
 // fakeOpener fails for repositories listed in fail and rate-limits those in
 // limited.
 type fakeOpener struct {
@@ -54,6 +60,9 @@ type fakeOpener struct {
 	limited map[string]bool
 	calls   []string
 	opened  []Issue
+	// closed lists the refs closed on the tracker.
+	closed   map[string]bool
+	comments []string
 }
 
 func (o *fakeOpener) Open(_ context.Context, in Issue) (Ref, error) {
@@ -68,8 +77,14 @@ func (o *fakeOpener) Open(_ context.Context, in Issue) (Ref, error) {
 	return Ref{ID: in.Repository + "#1", URL: "https://example.test/" + in.Repository}, nil
 }
 
-func (o *fakeOpener) Comment(context.Context, Ref, string) error { return nil }
-func (o *fakeOpener) IsOpen(context.Context, Ref) (bool, error)  { return true, nil }
+func (o *fakeOpener) Comment(_ context.Context, ref Ref, body string) error {
+	o.comments = append(o.comments, ref.ID+": "+body)
+	return nil
+}
+
+func (o *fakeOpener) IsOpen(_ context.Context, ref Ref) (bool, error) {
+	return !o.closed[ref.ID], nil
+}
 
 // fakeSource opens only on GitHub and covers like GitHub does: a connection
 // reaches the repositories of its own account.
@@ -263,6 +278,32 @@ func TestOpenInRepository(t *testing.T) {
 
 	if _, err := svc.OpenInRepository(context.Background(), uuid.New(), tg.ProjectRepositoryID, Draft{Title: "x"}); err == nil {
 		t.Error("an app not linked to the project must not open issues in it")
+	}
+}
+
+func TestCommentOn(t *testing.T) {
+	appID := uuid.New()
+	tg := newTarget("octo/ok", db.TrackerGithub)
+	q := &fakeQuerier{
+		targets: []db.ListIssueTargetsForAppRow{tg},
+		conns:   map[uuid.UUID][]db.ProviderConnection{appID: {newConn(appID, db.TrackerGithub, "42", "octo")}},
+	}
+	op := &fakeOpener{closed: map[string]bool{"octo/ok#2": true}}
+	svc := NewService(q, &fakeSource{opener: op})
+
+	open := db.Issue{ID: uuid.New(), ProjectRepositoryID: tg.ProjectRepositoryID, ExternalID: "octo/ok#1"}
+	posted, err := svc.CommentOn(context.Background(), appID, open, "seen again")
+	if err != nil || !posted || len(op.comments) != 1 || op.comments[0] != "octo/ok#1: seen again" {
+		t.Fatalf("posted %v, err %v, comments %v", posted, err, op.comments)
+	}
+
+	closed := db.Issue{ID: uuid.New(), ProjectRepositoryID: tg.ProjectRepositoryID, ExternalID: "octo/ok#2"}
+	posted, err = svc.CommentOn(context.Background(), appID, closed, "seen again")
+	if err != nil || posted || len(op.comments) != 1 {
+		t.Fatalf("closed issue: posted %v, err %v, comments %v", posted, err, op.comments)
+	}
+	if len(q.states) != 1 || q.states[0].ID != closed.ID || q.states[0].State != "closed" {
+		t.Errorf("closed issue not recorded as closed: %+v", q.states)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,8 @@ type fakeQueries struct {
 	// projectOf is the project of each repository.
 	projectOf map[uuid.UUID]uuid.UUID
 	processed int
+	// issues are the issues opened so far, as recorded by issue.Service.
+	issues []db.Issue
 }
 
 func (f *fakeQueries) GetReport(_ context.Context, id uuid.UUID) (db.Report, error) {
@@ -38,10 +41,12 @@ func (f *fakeQueries) ListReportAttachmentNames(context.Context, uuid.UUID) ([]s
 	return []string{"screenshot"}, nil
 }
 
-func (f *fakeQueries) ListReportDeliveryProjects(context.Context, uuid.UUID) ([]uuid.UUID, error) {
+func (f *fakeQueries) ListReportDeliveryProjects(_ context.Context, reportID uuid.UUID) ([]uuid.UUID, error) {
 	var out []uuid.UUID
 	for _, d := range f.deliveries {
-		out = append(out, f.projectOf[d.ProjectRepositoryID])
+		if d.ReportID == reportID {
+			out = append(out, f.projectOf[d.ProjectRepositoryID])
+		}
 	}
 	return out, nil
 }
@@ -49,6 +54,27 @@ func (f *fakeQueries) ListReportDeliveryProjects(context.Context, uuid.UUID) ([]
 func (f *fakeQueries) CreateReportDelivery(_ context.Context, arg db.CreateReportDeliveryParams) error {
 	f.deliveries = append(f.deliveries, db.ReportDelivery{ReportID: arg.ReportID, ProjectRepositoryID: arg.ProjectRepositoryID, IssueID: arg.IssueID, Url: arg.Url})
 	return nil
+}
+
+func (f *fakeQueries) GetOpenIssueByFingerprint(_ context.Context, arg db.GetOpenIssueByFingerprintParams) (db.Issue, error) {
+	for _, iss := range slices.Backward(f.issues) {
+		if iss.ProjectRepositoryID == arg.ProjectRepositoryID && *iss.Fingerprint == *arg.Fingerprint && iss.State == "open" {
+			return iss, nil
+		}
+	}
+	return db.Issue{}, pgx.ErrNoRows
+}
+
+// GetIssueOccurrences counts the deliveries to the issue, plus the report
+// being delivered; every report comes from another installation.
+func (f *fakeQueries) GetIssueOccurrences(_ context.Context, arg db.GetIssueOccurrencesParams) (db.GetIssueOccurrencesRow, error) {
+	n := int32(1)
+	for _, d := range f.deliveries {
+		if d.IssueID != nil && *d.IssueID == arg.IssueID {
+			n++
+		}
+	}
+	return db.GetIssueOccurrencesRow{Occurrences: n, Installations: n, Versions: []string{"2.3.1"}}, nil
 }
 
 func (f *fakeQueries) MarkReportProcessed(context.Context, uuid.UUID) error {
@@ -69,11 +95,15 @@ func (f *fakeRouter) Routes(_ context.Context, facts routing.Facts) ([]routing.R
 	return f.routes, nil
 }
 
-// fakeIssues opens issues, or fails with the error set for a repository.
+// fakeIssues opens issues and records them in q, or fails with the error
+// set for a repository. Issues listed in closed were closed on the tracker.
 type fakeIssues struct {
-	fail   map[uuid.UUID]error
-	opened []uuid.UUID
-	drafts []issue.Draft
+	q        *fakeQueries
+	fail     map[uuid.UUID]error
+	closed   map[uuid.UUID]bool
+	opened   []uuid.UUID
+	drafts   []issue.Draft
+	comments []string
 }
 
 func (f *fakeIssues) OpenInRepository(_ context.Context, _, repo uuid.UUID, d issue.Draft) (issue.Result, error) {
@@ -82,7 +112,29 @@ func (f *fakeIssues) OpenInRepository(_ context.Context, _, repo uuid.UUID, d is
 	}
 	f.opened = append(f.opened, repo)
 	f.drafts = append(f.drafts, d)
-	return issue.Result{IssueID: uuid.New(), Ref: issue.Ref{ID: "1", URL: "https://github.com/o/r/issues/1"}}, nil
+	iss := db.Issue{ID: uuid.New(), ProjectRepositoryID: repo, ExternalID: "1", Url: "https://github.com/o/r/issues/1", State: "open", Fingerprint: &d.Fingerprint}
+	f.q.issues = append(f.q.issues, iss)
+	return issue.Result{IssueID: iss.ID, Ref: issue.Ref{ID: iss.ExternalID, URL: iss.Url}}, nil
+}
+
+func (f *fakeIssues) CommentOn(_ context.Context, _ uuid.UUID, iss db.Issue, body string) (bool, error) {
+	if f.closed[iss.ID] {
+		return false, nil
+	}
+	f.comments = append(f.comments, body)
+	return true, nil
+}
+
+// fakeLocks records the keys locked and checks each is released.
+type fakeLocks struct {
+	keys []string
+	held int
+}
+
+func (f *fakeLocks) Lock(_ context.Context, key string) (func(), error) {
+	f.keys = append(f.keys, key)
+	f.held++
+	return func() { f.held-- }, nil
 }
 
 // newFixture routes the report to the default repository of `projects`
@@ -105,8 +157,8 @@ func newFixture(t *testing.T, projects int) (*fakeQueries, *fakeIssues, *Process
 		router.routes = append(router.routes, route)
 		q.projectOf[route.ProjectRepositoryID] = route.ProjectID
 	}
-	is := &fakeIssues{fail: map[uuid.UUID]error{}}
-	return q, is, NewProcessor(q, is, router, nil, time.Minute)
+	is := &fakeIssues{q: q, fail: map[uuid.UUID]error{}, closed: map[uuid.UUID]bool{}}
+	return q, is, NewProcessor(q, is, router, &fakeLocks{}, nil, time.Minute)
 }
 
 func TestProcessOpensOneIssuePerProject(t *testing.T) {
@@ -170,6 +222,86 @@ func TestProcessSkipsProjectsAlreadyDelivered(t *testing.T) {
 	}
 }
 
+// crashReport turns the fixture's report into a crash, a new report each
+// call, from the same bug.
+func crashReport(t *testing.T, q *fakeQueries) {
+	t.Helper()
+	payload, _ := json.Marshal(map[string]any{
+		"platform": "android",
+		"trigger":  "crash",
+		"release":  map[string]string{"version": "2.3.1", "build": "87"},
+		"crash": map[string]any{
+			"type":        "java.lang.IllegalStateException",
+			"reason":      "Fragment not attached",
+			"stack_trace": []string{"com.example.ProfileFragment.onResume(ProfileFragment.kt:88)"},
+		},
+	})
+	q.report = &db.Report{ID: uuid.New(), AppID: q.report.AppID, ReportID: uuid.New(), InstallationID: uuid.New(), Payload: payload}
+}
+
+func TestProcessGroupsReportsOfTheSameBug(t *testing.T) {
+	q, is, p := newFixture(t, 1)
+	locks := p.locks.(*fakeLocks)
+
+	crashReport(t, q)
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	first := q.issues[0]
+	if *first.Fingerprint == "" || len(is.opened) != 1 {
+		t.Fatalf("first crash: opened %d issues with fingerprint %q", len(is.opened), *first.Fingerprint)
+	}
+
+	for range 2 {
+		crashReport(t, q)
+		if err := p.Process(context.Background(), q.report.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(is.opened) != 1 || len(is.comments) != 2 {
+		t.Fatalf("opened %d issues and %d comments, want 1 and 2", len(is.opened), len(is.comments))
+	}
+	if !strings.Contains(is.comments[1], "**Seen again**: 3 reports, 3 installations · versions 2.3.1") {
+		t.Errorf("comment has no counts:\n%s", is.comments[1])
+	}
+	if d := q.deliveries[2]; d.IssueID == nil || *d.IssueID != first.ID || d.Url != first.Url {
+		t.Errorf("delivery = %+v, want the first issue", d)
+	}
+	if len(locks.keys) != 3 || locks.keys[0] != q.router.routes[0].ProjectRepositoryID.String()+"/"+*first.Fingerprint || locks.held != 0 {
+		t.Errorf("locks %v, still held %d", locks.keys, locks.held)
+	}
+}
+
+func TestProcessOpensAgainWhenTheIssueWasClosed(t *testing.T) {
+	q, is, p := newFixture(t, 1)
+	crashReport(t, q)
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	is.closed[q.issues[0].ID] = true
+
+	crashReport(t, q)
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(is.opened) != 2 || len(is.comments) != 0 {
+		t.Errorf("opened %d issues and %d comments, want a new issue", len(is.opened), len(is.comments))
+	}
+}
+
+func TestProcessNeverGroupsReportsWithoutCrash(t *testing.T) {
+	q, is, p := newFixture(t, 1)
+	for range 2 {
+		q.report.ID, q.report.ProcessedAt = uuid.New(), nil
+		if err := p.Process(context.Background(), q.report.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(is.opened) != 2 || len(p.locks.(*fakeLocks).keys) != 0 {
+		t.Errorf("opened %d issues, locked %v; want 2 issues and no lock", len(is.opened), p.locks.(*fakeLocks).keys)
+	}
+}
+
 type fakeLogs struct {
 	calls    int
 	from, to time.Time
@@ -189,7 +321,7 @@ func TestProcessAddsServerLogs(t *testing.T) {
 	q, is, _ := newFixture(t, 1)
 	q.report.OccurredAt = time.Date(2026, 10, 21, 14, 0, 0, 0, time.UTC)
 	logs := &fakeLogs{}
-	p := NewProcessor(q, is, q.router, logs, 2*time.Minute)
+	p := NewProcessor(q, is, q.router, &fakeLocks{}, logs, 2*time.Minute)
 
 	if err := p.Process(context.Background(), q.report.ID); err != nil {
 		t.Fatal(err)
@@ -213,7 +345,7 @@ func TestProcessAddsServerLogs(t *testing.T) {
 func TestProcessWithoutServerLogs(t *testing.T) {
 	for _, err := range []error{coordinator.ErrNotAttached, errors.New("NATS is down")} {
 		q, is, _ := newFixture(t, 1)
-		p := NewProcessor(q, is, q.router, &fakeLogs{err: err}, time.Minute)
+		p := NewProcessor(q, is, q.router, &fakeLocks{}, &fakeLogs{err: err}, time.Minute)
 		if err := p.Process(context.Background(), q.report.ID); err != nil {
 			t.Fatalf("logs failing with %v failed the report: %v", err, err)
 		}
