@@ -90,6 +90,10 @@ impl Backend {
             .expect("coordinator hung up")
     }
 
+    pub async fn send(&self, req: BackendRequest) {
+        self.to_coordinator.send(Ok(req)).await.unwrap();
+    }
+
     pub async fn ask(&self, q: QueryLogs) {
         let req = BackendRequest {
             request: Some(Req::QueryLogs(q)),

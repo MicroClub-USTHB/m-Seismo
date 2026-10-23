@@ -14,6 +14,7 @@ use tonic::{
     metadata::MetadataValue,
     transport::{Certificate, ClientTlsConfig, Endpoint},
 };
+use tracing::{info, warn};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
@@ -29,8 +30,8 @@ pub async fn run(cfg: &Config, engine: Arc<Engine>) -> ! {
     loop {
         let started = Instant::now();
         match session(cfg, engine.clone()).await {
-            Ok(()) => eprintln!("coordinator closed the stream"),
-            Err(status) => eprintln!("session ended: {status}"),
+            Ok(()) => info!("coordinator closed the stream"),
+            Err(status) => warn!("session ended: {status}"),
         }
         if started.elapsed() >= BACKOFF_RESET_AFTER {
             backoff = BACKOFF_MIN;
@@ -99,6 +100,22 @@ pub async fn session(cfg: &Config, engine: Arc<Engine>) -> Result<(), Status> {
                     async move {
                         let reply = match engine.answer(&q).await {
                             Ok(r) => Message::Result(r),
+                            Err(e) => Message::Error(e),
+                        };
+                        map.lock().unwrap().remove(&id);
+                        let _ = tx.send(wire(reply)).await;
+                    }
+                });
+                inflight.lock().unwrap().insert(id, handle);
+            }
+            Some(coordinator_message::Message::MetricsQuery(q)) => {
+                let (tx, engine, map) = (tx.clone(), engine.clone(), inflight.clone());
+                let id = q.query_id.clone();
+                let handle = tasks.spawn({
+                    let id = id.clone();
+                    async move {
+                        let reply = match engine.metrics(&q).await {
+                            Ok(r) => Message::MetricsResult(r),
                             Err(e) => Message::Error(e),
                         };
                         map.lock().unwrap().remove(&id);
