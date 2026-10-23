@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, anyhow, bail};
-use seismo_coordinator::{agents, backend, config::Config, registry::Registry};
+use seismo_coordinator::{agents, backend, config::Config, prometheus, registry::Registry};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tonic::transport::{Identity, ServerTlsConfig};
@@ -24,6 +24,13 @@ async fn main() -> Result<()> {
         .context("config")?;
     let registry = Arc::new(Registry::new(cfg.coordinator_id.clone(), cfg.query));
     let listener = TcpListener::bind(&cfg.listen).await.context("listen")?;
+    if let Some(m) = cfg.metrics.clone() {
+        let l = TcpListener::bind(&m.listen)
+            .await
+            .context("metrics listen")?;
+        info!("prometheus metrics on {}", m.listen);
+        tokio::spawn(prometheus::serve(l, registry.clone(), m));
+    }
     let tls = cfg
         .agents
         .tls
