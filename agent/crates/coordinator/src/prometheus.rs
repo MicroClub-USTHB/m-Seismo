@@ -1,7 +1,7 @@
 //! `GET /metrics` for Prometheus. Each scrape fans a metrics query out to the
 //! agents, so the numbers are gauges over the last `window_secs`, not
 //! counters: error rate is `error_lines / lines`.
-use crate::{config, registry::Registry};
+use crate::{config, logstats, registry::Registry};
 use prost_types::Timestamp;
 use seismo_proto::{self as pb, AgentStatus};
 use std::{
@@ -68,13 +68,24 @@ async fn scrape(registry: &Registry, cfg: &config::Metrics) -> String {
             + Duration::from_millis(registry.query.margin_ms))),
     };
     let agg = registry.query_metrics(q).await.unwrap_or_default();
-    render(&agg, registry.len())
+    render(&agg, registry.len(), &logstats::counts())
 }
 
-fn render(agg: &pb::AggregateMetrics, connected: usize) -> String {
+fn render(agg: &pb::AggregateMetrics, connected: usize, events: &[(&str, u64)]) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "# TYPE seismo_agents_connected gauge");
     let _ = writeln!(out, "seismo_agents_connected {connected}");
+    let _ = writeln!(
+        out,
+        "# HELP seismo_coordinator_log_events_total Coordinator log events by level.\n\
+         # TYPE seismo_coordinator_log_events_total counter"
+    );
+    for (level, n) in events {
+        let _ = writeln!(
+            out,
+            "seismo_coordinator_log_events_total{{level=\"{level}\"}} {n}"
+        );
+    }
     let _ = writeln!(out, "# TYPE seismo_agent_up gauge");
     for a in &agg.agents {
         let up = matches!(
@@ -141,8 +152,9 @@ mod tests {
             }],
             ..Default::default()
         };
-        let out = render(&agg, 1);
+        let out = render(&agg, 1, &[("warn", 3)]);
         assert!(out.contains("seismo_agents_connected 1"));
+        assert!(out.contains("seismo_coordinator_log_events_total{level=\"warn\"} 3"));
         assert!(out.contains("seismo_agent_up{agent=\"a\\\"1\"} 1"));
         assert!(out.contains("seismo_log_lines_window{agent=\"a\\\"1\",service=\"api\"} 10"));
         assert!(out.contains("seismo_error_lines_window{agent=\"a\\\"1\",service=\"api\"} 2"));

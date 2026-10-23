@@ -1,16 +1,19 @@
 use anyhow::{Context, Result, anyhow, bail};
-use seismo_coordinator::{agents, backend, config::Config, prometheus, registry::Registry};
+use seismo_coordinator::{
+    agents, backend, config::Config, logstats, prometheus, registry::Registry,
+};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tonic::transport::{Identity, ServerTlsConfig};
 use tracing::info;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{EnvFilter, prelude::*};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .with_writer(std::io::stderr)
+    tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+        .with(logstats::LogStats)
         .init();
 
     let Some(path) = std::env::args()
