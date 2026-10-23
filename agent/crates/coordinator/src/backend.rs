@@ -78,15 +78,28 @@ pub async fn attach(
     // queries run side by side, and die with the attachment
     let mut tasks = JoinSet::new();
     while let Some(msg) = inbound.message().await? {
-        if let Some(BackendRequest::QueryLogs(q)) = msg.request {
-            let (tx, registry) = (tx.clone(), registry.clone());
-            tasks.spawn(async move {
-                let event = match registry.query_logs(q).await {
-                    Ok(result) => Event::Result(result),
-                    Err(error) => Event::Error(error),
-                };
-                let _ = tx.send(wire(event)).await;
-            });
+        match msg.request {
+            Some(BackendRequest::QueryLogs(q)) => {
+                let (tx, registry) = (tx.clone(), registry.clone());
+                tasks.spawn(async move {
+                    let event = match registry.query_logs(q).await {
+                        Ok(result) => Event::Result(result),
+                        Err(error) => Event::Error(error),
+                    };
+                    let _ = tx.send(wire(event)).await;
+                });
+            }
+            Some(BackendRequest::QueryMetrics(q)) => {
+                let (tx, registry) = (tx.clone(), registry.clone());
+                tasks.spawn(async move {
+                    let event = match registry.query_metrics(q).await {
+                        Ok(result) => Event::Metrics(result),
+                        Err(error) => Event::Error(error),
+                    };
+                    let _ = tx.send(wire(event)).await;
+                });
+            }
+            None => {}
         }
     }
     Ok(())

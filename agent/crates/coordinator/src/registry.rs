@@ -16,6 +16,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub enum Reply {
     Result(pb::QueryResult),
     Error(pb::QueryError),
+    Metrics(pb::MetricsResult),
 }
 
 pub type Outbound = mpsc::Sender<Result<pb::CoordinatorMessage, Status>>;
@@ -115,6 +116,7 @@ impl Registry {
         let (id, reply) = match msg {
             Message::Result(r) => (r.query_id.clone(), Reply::Result(r)),
             Message::Error(e) => (e.query_id.clone(), Reply::Error(e)),
+            Message::MetricsResult(r) => (r.query_id.clone(), Reply::Metrics(r)),
             Message::Register(_) => return,
         };
         if let Some(waiter) = conn.pending.lock().unwrap().remove(&id) {
