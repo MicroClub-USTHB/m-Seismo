@@ -10,6 +10,7 @@ internal fun recordLifecycle(app: Application, record: (BreadcrumbKind, String) 
     var lastScreen: String? = null
     app.registerActivityLifecycleCallbacks(object : ActivityCallbacks {
         override fun onActivityResumed(activity: Activity) {
+            if (activity is ReportActivity) return
             if (hidden) record(BreadcrumbKind.LIFECYCLE, "foreground")
             hidden = false
             val screen = activity.javaClass.simpleName

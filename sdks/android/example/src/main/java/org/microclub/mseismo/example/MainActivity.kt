@@ -42,10 +42,15 @@ class MainActivity : Activity() {
                 result.text = if (id == null) "m-Seismo is off, see logcat" else "Sent report $id\nResult: adb logcat -s MSeismo"
             }
         }
+        val reportBug = Button(this).apply {
+            text = "Report a bug"
+            setOnClickListener { MSeismo.showReportScreen(this@MainActivity) }
+        }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 48, 48, 48)
             addView(status)
+            addView(reportBug)
             addView(send)
             addView(result)
         }

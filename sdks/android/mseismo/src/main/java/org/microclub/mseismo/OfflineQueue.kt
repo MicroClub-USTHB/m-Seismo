@@ -7,7 +7,8 @@ import java.io.IOException
 import kotlin.math.min
 import kotlin.random.Random
 
-// Reports waiting to be sent, one file each, kept until the backend accepts or rejects them. One thread only.
+// Reports waiting to be sent: <id>.json, plus <id>.jpg when there is a screenshot.
+// Kept until the backend accepts or rejects them. One thread only.
 internal class OfflineQueue(
     val dir: File,
     // Monotonic, so changing the phone's clock can't stall retries.
@@ -22,16 +23,17 @@ internal class OfflineQueue(
     private val backoffs = HashMap<String, Backoff>()
 
     init {
-        // Left by a crash mid-save.
+        // Left by a crash mid-save: .tmp files and screenshots without a report.
         dir.listFiles { f -> f.name.endsWith(".tmp") }?.forEach { it.delete() }
+        dir.listFiles { f -> f.name.endsWith(".jpg") && !File(dir, "${f.nameWithoutExtension}.json").exists() }
+            ?.forEach { it.delete() }
     }
 
-    fun add(id: String, reportJson: String) {
+    // The screenshot is saved first: once <id>.json exists, the report is complete.
+    fun add(id: String, reportJson: String, screenshotJpeg: ByteArray? = null) {
         dir.mkdirs()
-        val tmp = File(dir, "$id.tmp")
-        tmp.writeText(reportJson)
-        // Rename is atomic, so a .json file is always complete.
-        check(tmp.renameTo(File(dir, "$id.json"))) { "could not save report $id" }
+        if (screenshotJpeg != null) save(File(dir, "$id.jpg")) { it.writeBytes(screenshotJpeg) }
+        save(File(dir, "$id.json")) { it.writeText(reportJson) }
         files().dropLast(maxReports).forEach {
             Log.w(MSeismo.TAG, "queue full: report ${it.nameWithoutExtension} dropped")
             forget(it)
@@ -39,21 +41,21 @@ internal class OfflineQueue(
     }
 
     // Returns ms until the next retry, or null if none. send returns null when the SDK is off.
-    fun drain(send: (reportJson: String) -> SendResult?): Long? {
+    fun drain(send: (reportJson: String, screenshotJpeg: ByteArray?) -> SendResult?): Long? {
         val files = files()
         // Forget retries for reports deleted elsewhere (e.g. by another process of the app).
         backoffs.keys.retainAll(files.map { it.nameWithoutExtension }.toSet())
         for (file in files) {
             val id = file.nameWithoutExtension
             if ((backoffs[id]?.nextTryAt ?: 0) > now()) continue
-            val json = try {
-                file.readText()
+            val (json, screenshot) = try {
+                file.readText() to screenshotOf(file).takeIf { it.exists() }?.readBytes()
             } catch (e: IOException) {
                 Log.w(MSeismo.TAG, "report $id unreadable, skipped", e)
                 continue
             }
             val result = try {
-                send(json) ?: return null
+                send(json, screenshot) ?: return null
             } catch (e: RuntimeException) {
                 SendResult.Retry("unexpected error: $e")
             }
@@ -90,8 +92,18 @@ internal class OfflineQueue(
     private fun files(): List<File> =
         dir.listFiles { f -> f.name.endsWith(".json") }.orEmpty().sortedWith(compareBy({ it.lastModified() }, { it.name }))
 
+    // Rename is atomic, so a crash mid-write never leaves a half-written file under its real name.
+    private fun save(file: File, write: (File) -> Unit) {
+        val tmp = File(dir, "${file.name}.tmp")
+        write(tmp)
+        check(tmp.renameTo(file)) { "could not save ${file.name}" }
+    }
+
+    private fun screenshotOf(report: File) = File(dir, "${report.nameWithoutExtension}.jpg")
+
     private fun forget(file: File) {
         file.delete()
+        screenshotOf(file).delete()
         backoffs.remove(file.nameWithoutExtension)
     }
 }

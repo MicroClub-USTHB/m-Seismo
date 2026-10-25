@@ -2,8 +2,10 @@ package org.microclub.mseismo;
 
 import static org.junit.Assert.assertEquals;
 
+import android.app.Activity;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
@@ -25,6 +27,7 @@ public class JavaApiTest {
         MSeismo.report();
         MSeismo.report("title");
         MSeismo.report("title", "description", Category.BUG, Severity.HIGH);
+        MSeismo.showReportScreen(Robolectric.buildActivity(Activity.class).setup().get());
         MSeismo.getSessionId();
         MSeismo.getSDK_VERSION();
         MSeismo.getConfiguration();

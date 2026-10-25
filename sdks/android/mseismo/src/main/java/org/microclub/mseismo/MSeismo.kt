@@ -1,15 +1,17 @@
 package org.microclub.mseismo
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.app.Application
+import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.graphics.Bitmap
 import android.net.ConnectivityManager
 import android.net.Network
+import android.os.SystemClock
 import android.util.Log
 import java.io.File
-import java.lang.ref.WeakReference
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -17,6 +19,7 @@ import java.util.concurrent.TimeUnit
 // Call configure() once in Application.onCreate.
 public object MSeismo {
     internal const val TAG = "MSeismo"
+    private const val MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
     public const val SDK_NAME: String = "mseismo-android"
     @JvmStatic
     public val SDK_VERSION: String = BuildConfig.SDK_VERSION
@@ -70,7 +73,8 @@ public object MSeismo {
 
     // One thread for all background work: never blocks the app, needs no locks.
     private val worker = Executors.newSingleThreadScheduledExecutor { Thread(it, "mseismo").apply { isDaemon = true } }
-    internal var send: (url: String, appKey: String, reportJson: String) -> SendResult = ReportTransport()::send
+    internal var send: (url: String, appKey: String, reportJson: String, screenshotJpeg: ByteArray?) -> SendResult =
+        ReportTransport()::send
 
     // Text is cut when recorded, so huge lines can't fill memory.
     internal val logs = RingBuffer<LogLine>(200)
@@ -117,8 +121,9 @@ public object MSeismo {
     private var watchingNetwork = false
     private var watchedLifecycleOf: Application? = null
 
-    // Main thread only
-    private var promptDialog: WeakReference<AlertDialog>? = null
+    private val drafts = ConcurrentHashMap<String, Draft>()
+
+    private var openingSince: Long? = null
 
     // Sends a report in the background. Returns its ID, or null when the SDK is off. Never throws.
     @JvmStatic
@@ -131,67 +136,117 @@ public object MSeismo {
     ): String? = submit(Trigger.MANUAL, UserInput(title, description, category, severity))
 
     private fun submit(trigger: Trigger, userInput: UserInput): String? = try {
-        val config = configuration
-        val app = app
-        if (config == null || app == null) {
-            Log.w(TAG, "report ignored: m-Seismo is off")
-            null
-        } else {
-            val id = UUID.randomUUID().toString()
-            val input = userInput.takeIf { it != UserInput() }
-            val occurredAt = System.currentTimeMillis()
-            val recentLogs = logs.snapshot()
-            val recentBreadcrumbs = breadcrumbs.snapshot()
-            val recentRequests = requests.snapshot()
-            worker.execute {
-                safely {
-                    // Read on the worker: system services can be slow.
-                    val device = Device.current(app)
-                    deliver(app, config, id) { installationId, release ->
-                        Report(
-                            id = id,
-                            installationId = installationId,
-                            sessionId = sessionId,
-                            occurredAtMillis = occurredAt,
-                            environment = config.environment,
-                            release = release,
-                            trigger = trigger,
-                            autoSubmitted = false,
-                            userInput = input,
-                            device = device,
-                            logs = recentLogs,
-                            breadcrumbs = recentBreadcrumbs,
-                            networkRequests = recentRequests,
-                            bodiesCaptured = config.captureNetworkBodies,
-                        )
-                    }
-                }
-            }
-            id
-        }
+        draft(trigger)?.also { sendDraft(it, userInput, screenshot = null) }?.id
     } catch (t: Throwable) {
         Log.e(TAG, "report failed", t)
         null
     }
 
+    // Opens the report screen. Any thread.
+    @JvmStatic
+    public fun showReportScreen(activity: Activity) {
+        activity.runOnUiThread { open(activity, Trigger.MANUAL) }
+    }
+
+    private fun open(activity: Activity, trigger: Trigger) {
+        try {
+            // One screen at a time, even if the user shakes again during the capture.
+            val opening = openingSince?.let { SystemClock.elapsedRealtime() - it < 3_000 } == true
+            if (opening || ReportActivity.isOpen || activity.isFinishing) return
+            val draft = draft(trigger) ?: return
+            openingSince = SystemClock.elapsedRealtime()
+            captureScreen(activity) { screenshot ->
+                openingSince = null
+                if (activity.isFinishing || activity.isDestroyed) return@captureScreen
+                try {
+                    drafts.clear()
+                    drafts[draft.id] = draft.copy(screenshot = screenshot)
+                    activity.startActivity(Intent(activity, ReportActivity::class.java).putExtra(ReportActivity.DRAFT_ID, draft.id))
+                } catch (t: Throwable) {
+                    drafts.remove(draft.id) // frees the screenshot
+                    Log.e(TAG, "could not open the report screen", t)
+                }
+            }
+        } catch (t: Throwable) {
+            openingSince = null
+            Log.e(TAG, "could not open the report screen", t)
+        }
+    }
+
+    internal fun draftFor(id: String): Draft? = drafts[id]
+
+    internal fun finishDraft(id: String, userInput: UserInput, screenshot: Bitmap?) {
+        drafts.remove(id)?.let { sendDraft(it, userInput, screenshot) }
+    }
+
+    internal fun discardDraft(id: String) {
+        drafts.remove(id)
+    }
+
+    private fun draft(trigger: Trigger): Draft? {
+        val config = configuration
+        val app = app
+        if (config == null || app == null) {
+            Log.w(TAG, "report ignored: m-Seismo is off")
+            return null
+        }
+        return Draft(
+            id = UUID.randomUUID().toString(),
+            app = app,
+            config = config,
+            trigger = trigger,
+            occurredAt = System.currentTimeMillis(),
+            logs = logs.snapshot(),
+            breadcrumbs = breadcrumbs.snapshot(),
+            requests = requests.snapshot(),
+        )
+    }
+
+    private fun sendDraft(draft: Draft, userInput: UserInput, screenshot: Bitmap?) {
+        val input = userInput.takeIf { it != UserInput() }
+        worker.execute {
+            safely {
+                val device = Device.current(draft.app)
+                val jpeg = screenshot?.toJpeg()?.takeIf { it.size <= MAX_SCREENSHOT_BYTES }
+                deliver(draft.app, draft.config, draft.id, jpeg) { installationId, release ->
+                    Report(
+                        id = draft.id,
+                        installationId = installationId,
+                        sessionId = sessionId,
+                        occurredAtMillis = draft.occurredAt,
+                        environment = draft.config.environment,
+                        release = release,
+                        trigger = draft.trigger,
+                        autoSubmitted = false,
+                        userInput = input,
+                        device = device,
+                        logs = draft.logs,
+                        breadcrumbs = draft.breadcrumbs,
+                        networkRequests = draft.requests,
+                        bodiesCaptured = draft.config.captureNetworkBodies,
+                    )
+                }
+            }
+        }
+    }
+
     // Uses the app and configuration from when report() was called, even if configure() runs again meanwhile.
     // build gets the installation ID and release, which are read here, off the caller's thread.
-    private fun deliver(app: Application, config: Configuration, id: String, build: (String, Release) -> Report) {
+    private fun deliver(app: Application, config: Configuration, id: String, screenshot: ByteArray?, build: (String, Release) -> Report) {
         val installationId = installationIdCache.get(app)
         val release = config.release ?: releaseCache.get(app)
         if (installationId == null || release == null) {
             // Storage hiccup: retry in 10 s.
-            worker.schedule({ safely { deliver(app, config, id, build) } }, 10, TimeUnit.SECONDS)
+            worker.schedule({ safely { deliver(app, config, id, screenshot, build) } }, 10, TimeUnit.SECONDS)
             return
         }
         val redactor = Redactor(config.redactionRules, config.redactionAllowList, config.redactionDenyList)
         val json = redactor.redact(build(installationId, release)).toJsonUnder()
         try {
-            queueFor(app).add(id, json)
+            queueFor(app).add(id, json, screenshot)
         } catch (e: Exception) {
-            // Can't save (storage full): one unsaved try beats losing it.
             Log.w(TAG, "report $id could not be saved, sending it once without saving", e)
-            Log.i(TAG, "report $id: ${send(config.reportsUrl, config.appKey, json)}")
+            Log.i(TAG, "report $id: ${send(config.reportsUrl, config.appKey, json, screenshot)}")
             return
         }
         drain()
@@ -205,7 +260,7 @@ public object MSeismo {
     // Sends what is due, then schedules the next retry.
     private fun drain() {
         val app = app ?: return
-        val delay = queueFor(app).drain { json -> configuration?.let { send(it.reportsUrl, it.appKey, json) } }
+        val delay = queueFor(app).drain { json, screenshot -> configuration?.let { send(it.reportsUrl, it.appKey, json, screenshot) } }
         nextDrain?.cancel(false)
         nextDrain = delay?.let { worker.schedule({ safely { drain() } }, it, TimeUnit.MILLISECONDS) }
     }
@@ -231,26 +286,10 @@ public object MSeismo {
             Triggers(
                 shakeEnabled = { configuration?.shakeEnabled == true },
                 screenshotEnabled = { configuration?.screenshotEnabled == true },
-                onTrigger = ::prompt,
+                onTrigger = ::open,
             ),
         )
         watchedLifecycleOf = app
-    }
-
-    // the user confirms first.
-    // shortcut: a plain Send/Cancel dialog; the report sheet (step 5) replaces it.
-    private fun prompt(activity: Activity, trigger: Trigger) {
-        val open = promptDialog?.get()?.let { it.isShowing && it.ownerActivity === activity } == true
-        if (open || configuration == null || activity.isFinishing) return
-        safely {
-            val dialog = AlertDialog.Builder(activity)
-                .setTitle("Report a problem?")
-                .setMessage("Send a bug report about what you were doing?")
-                .setPositiveButton("Send") { _, _ -> submit(trigger, UserInput()) }
-                .setNegativeButton("Cancel", null)
-                .show()
-            promptDialog = WeakReference(dialog)
-        }
     }
 
     // Logs background failures instead of crashing the app.
@@ -261,6 +300,4 @@ public object MSeismo {
             Log.e(TAG, "background work failed", t)
         }
     }
-
-
 }

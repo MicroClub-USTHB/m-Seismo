@@ -36,9 +36,24 @@ Reports also start without any code from you (FR-05, FR-07):
   turn it on with `Configuration(screenshotEnabled = true)`.
 
 Both only listen while a screen of your app is showing, and never send on
-their own: they first ask "Report a problem?" with Send and Cancel. The SDK
+their own: they open the report screen below, where the user can still cancel. The SDK
 declares the `DETECT_SCREEN_CAPTURE` permission for the screenshot trigger;
 it is granted at install, with no prompt.
+
+### The report screen
+
+Shake, screenshot, or a call to `MSeismo.showReportScreen(activity)` (for a
+"Report a bug" button) opens the report screen. It first captures the screen
+the user was on, so they can circle the problem with the pen or hide private
+parts with the black-out marker, then shows a short form: title, description,
+category and severity. Send uploads the report with the drawn-on screenshot;
+"Skip screenshot" sends it without one. `MSeismo.report(...)` still sends a
+report straight away, without the screen.
+
+Screens your app marks with `FLAG_SECURE` are never captured. To translate the
+screen, override the `mseismo_*` strings in your own `values-xx/strings.xml`
+and keep the same number of items in `mseismo_categories` and
+`mseismo_severities`.
 
 Each report also carries context, already redacted on the device:
 

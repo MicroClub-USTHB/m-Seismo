@@ -1,6 +1,7 @@
 package org.microclub.mseismo
 
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -21,9 +22,9 @@ internal class ReportTransport(
     private val connectTimeoutMs: Int = 15_000,
     private val readTimeoutMs: Int = 30_000,
 ) {
-    fun send(url: String, appKey: String, reportJson: String): SendResult {
+    fun send(url: String, appKey: String, reportJson: String, screenshotJpeg: ByteArray? = null): SendResult {
         val boundary = "mseismo-" + UUID.randomUUID()
-        val body = multipart(boundary, reportJson)
+        val body = multipart(boundary, reportJson, screenshotJpeg)
         val connection = try {
             URL(url).openConnection() as HttpURLConnection
         } catch (e: IOException) {
@@ -62,11 +63,17 @@ internal class ReportTransport(
         return SendResult.Rejected(status, code, error.optString("message").ifEmpty { null })
     }
 
-    private fun multipart(boundary: String, reportJson: String): ByteArray = buildString {
-        append("--$boundary\r\n")
-        append("Content-Disposition: form-data; name=\"report\"\r\n")
-        append("Content-Type: application/json\r\n\r\n")
-        append(reportJson)
-        append("\r\n--$boundary--\r\n")
-    }.toByteArray(Charsets.UTF_8)
+    private fun multipart(boundary: String, reportJson: String, screenshotJpeg: ByteArray?): ByteArray {
+        val out = ByteArrayOutputStream()
+        fun text(s: String) = out.write(s.toByteArray(Charsets.UTF_8))
+        text("--$boundary\r\nContent-Disposition: form-data; name=\"report\"\r\nContent-Type: application/json\r\n\r\n")
+        text(reportJson)
+        if (screenshotJpeg != null) {
+            text("\r\n--$boundary\r\nContent-Disposition: form-data; name=\"screenshot\"; filename=\"screenshot.jpg\"\r\n")
+            text("Content-Type: image/jpeg\r\n\r\n")
+            out.write(screenshotJpeg)
+        }
+        text("\r\n--$boundary--\r\n")
+        return out.toByteArray()
+    }
 }

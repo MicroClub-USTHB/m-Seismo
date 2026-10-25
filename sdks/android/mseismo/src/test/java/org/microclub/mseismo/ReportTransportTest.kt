@@ -57,6 +57,20 @@ class ReportTransportTest {
     }
 
     @Test
+    fun theScreenshotIsSentAsASecondPart() {
+        answer(202)
+        assertEquals(SendResult.Accepted, ReportTransport().send(url, "msk_test", """{"id":"x"}""", byteArrayOf(0x41, 0x42)))
+
+        val boundary = headers.getValue("content-type").substringAfter("multipart/form-data; boundary=")
+        assertEquals(
+            "--$boundary\r\nContent-Disposition: form-data; name=\"report\"\r\nContent-Type: application/json\r\n\r\n{\"id\":\"x\"}" +
+                "\r\n--$boundary\r\nContent-Disposition: form-data; name=\"screenshot\"; filename=\"screenshot.jpg\"\r\n" +
+                "Content-Type: image/jpeg\r\n\r\nAB\r\n--$boundary--\r\n",
+            body,
+        )
+    }
+
+    @Test
     fun badReportIsRejectedWithTheBackendCode() {
         answer(400, """{"code":"invalid_report","message":"occurred_at: bad"}""")
         assertEquals(SendResult.Rejected(400, "invalid_report", "occurred_at: bad"), ReportTransport().send(url, "msk_test", "{}"))

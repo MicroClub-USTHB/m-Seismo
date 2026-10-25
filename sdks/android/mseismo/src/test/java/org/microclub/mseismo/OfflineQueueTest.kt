@@ -21,7 +21,7 @@ class OfflineQueueTest {
     private var clock = 1_000_000L
     private val sent = mutableListOf<String>()
     private fun queue(max: Int = 100) = OfflineQueue(File(folder.root, "queue"), { clock }, Random(0), max)
-    private fun answer(result: SendResult): (String) -> SendResult = { sent += it; result }
+    private fun answer(result: SendResult): (String, ByteArray?) -> SendResult = { json, _ -> sent += json; result }
     private fun saved() = File(folder.root, "queue").list().orEmpty().sorted()
 
     @Test
@@ -87,7 +87,7 @@ class OfflineQueueTest {
     fun nothingIsSentOrDeletedWhileOff() {
         val q = queue()
         q.add("a", "{}")
-        assertNull(q.drain { null })
+        assertNull(q.drain { _, _ -> null })
         assertEquals(listOf("a.json"), saved())
     }
 
@@ -104,7 +104,7 @@ class OfflineQueueTest {
         q.add("a", "a")
         File(folder.root, "queue/a.json").setLastModified(1_000)
         q.add("b", "b")
-        q.drain { sent += it; if (it == "a") SendResult.Retry("too large for a proxy") else SendResult.Accepted }
+        q.drain { json, _ -> sent += json; if (json == "a") SendResult.Retry("too large for a proxy") else SendResult.Accepted }
         assertEquals(listOf("a", "b"), sent) // oldest first, b not blocked
         assertEquals(listOf("a.json"), saved())
     }
@@ -143,7 +143,7 @@ class OfflineQueueTest {
     fun anUnexpectedSendErrorIsRetriedLater() {
         val q = queue()
         q.add("a", "{}")
-        assertTrue(q.drain { throw SecurityException("no INTERNET permission") }!! > 0)
+        assertTrue(q.drain { _, _ -> throw SecurityException("no INTERNET permission") }!! > 0)
         assertEquals(listOf("a.json"), saved())
     }
 
@@ -162,6 +162,25 @@ class OfflineQueueTest {
         q.drain(answer(SendResult.Retry("offline")))
         File(folder.root, "queue/a.json").delete()
         assertNull(q.drain(answer(SendResult.Accepted)))
+    }
+
+    @Test
+    fun theScreenshotIsSavedSentAndDeletedWithItsReport() {
+        val q = queue()
+        q.add("a", "{}", byteArrayOf(1, 2, 3))
+        assertEquals(listOf("a.jpg", "a.json"), saved())
+        var screenshot: ByteArray? = null
+        assertNull(q.drain { _, jpeg -> screenshot = jpeg; SendResult.Accepted })
+        assertEquals(listOf<Byte>(1, 2, 3), screenshot?.toList())
+        assertEquals(emptyList<String>(), saved())
+    }
+
+    @Test
+    fun aScreenshotWhoseReportWasNeverSavedIsCleanedUp() {
+        File(folder.root, "queue").mkdirs()
+        File(folder.root, "queue/a.jpg").writeBytes(byteArrayOf(1)) // crash between the two saves
+        queue()
+        assertEquals(emptyList<String>(), saved())
     }
 
     @Test
