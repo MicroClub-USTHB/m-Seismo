@@ -68,6 +68,53 @@ impl Source {
             Self::Journal(s) => s.fetch(p).await,
         }
     }
+
+    pub async fn status(&self, service: &str) -> Result<StatusInfo, SourceError> {
+        match self {
+            Self::Docker(s) => s.status(service).await,
+            // NOTE: logs-only sources have no container to ask about
+            _ => Err(err(
+                SourceErrorKind::DriverUnsupported,
+                "this log source has no container state",
+            )),
+        }
+    }
+}
+
+/// What a source knows about one service's container, without logs.
+pub struct StatusInfo {
+    pub workload: pb::Workload,
+    pub diagnostics: pb::WorkloadDiagnostics,
+}
+
+pub(crate) const NOT_REPORTED: &str = "not reported by the runtime";
+
+// A diagnostic is either there or says why not, see DiagnosticValue in the proto.
+pub(crate) fn str_diag(value: Option<String>) -> pb::StringDiagnostic {
+    pb::StringDiagnostic {
+        value: Some(match value {
+            Some(v) => pb::string_diagnostic::Value::Available(v),
+            None => pb::string_diagnostic::Value::UnavailableReason(NOT_REPORTED.into()),
+        }),
+    }
+}
+
+pub(crate) fn uint_diag(value: Option<u64>) -> pb::UintDiagnostic {
+    pb::UintDiagnostic {
+        value: Some(match value {
+            Some(v) => pb::uint_diagnostic::Value::Available(v),
+            None => pb::uint_diagnostic::Value::UnavailableReason(NOT_REPORTED.into()),
+        }),
+    }
+}
+
+pub(crate) fn bool_diag(value: Option<bool>) -> pb::BoolDiagnostic {
+    pb::BoolDiagnostic {
+        value: Some(match value {
+            Some(v) => pb::bool_diagnostic::Value::Available(v),
+            None => pb::bool_diagnostic::Value::UnavailableReason(NOT_REPORTED.into()),
+        }),
+    }
 }
 
 pub(crate) fn err(kind: SourceErrorKind, detail: impl Into<String>) -> SourceError {

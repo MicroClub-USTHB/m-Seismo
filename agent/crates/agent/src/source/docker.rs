@@ -1,12 +1,13 @@
 use super::{
-    Fetched, Params,
-    cli::{Filter, collect},
-    err, finish, ts_to_ns,
+    Fetched, Params, StatusInfo, bool_diag,
+    cli::{Filter, collect, spawn_error},
+    err, finish, str_diag, ts_to_ns, uint_diag,
 };
 use crate::config;
 use chrono::DateTime;
-use seismo_proto::{SourceError, SourceErrorKind};
-use std::collections::HashMap;
+use seismo_proto::{SourceError, SourceErrorKind, Workload, WorkloadDiagnostics};
+use serde_json::Value;
+use std::{collections::HashMap, process::Stdio};
 use tokio::process::Command;
 
 pub struct Docker {
@@ -27,6 +28,12 @@ impl Docker {
         }
     }
 
+    fn command(&self) -> Command {
+        let mut cmd = Command::new(&self.command[0]);
+        cmd.args(&self.command[1..]);
+        cmd
+    }
+
     pub async fn fetch(&self, p: Params<'_>) -> Result<Fetched, SourceError> {
         let container = self
             .containers
@@ -37,8 +44,8 @@ impl Docker {
                 .map(|d| d.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string())
                 .unwrap_or_default()
         };
-        let mut cmd = Command::new(&self.command[0]);
-        cmd.args(&self.command[1..]).args([
+        let mut cmd = self.command();
+        cmd.args([
             "logs",
             "--timestamps",
             "--since",
@@ -70,6 +77,46 @@ impl Docker {
             hit_limit,
         })
     }
+
+    pub async fn status(&self, service: &str) -> Result<StatusInfo, SourceError> {
+        let target = self.containers.get(service).map_or(service, String::as_str);
+        let mut cmd = self.command();
+        cmd.args(["inspect", "--type", "container", target])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let out = cmd.output().await.map_err(|e| spawn_error("docker", e))?;
+        if !out.status.success() {
+            return Err(inspect_failure(&String::from_utf8_lossy(&out.stderr)));
+        }
+
+        let inspected: Vec<Value> = serde_json::from_slice(&out.stdout).map_err(|e| {
+            err(
+                SourceErrorKind::InvalidResponse,
+                format!("docker inspect printed no JSON: {e}"),
+            )
+        })?;
+        let Some(container) = inspected.first() else {
+            return Err(err(
+                SourceErrorKind::WorkloadNotFound,
+                "docker inspect returned nothing",
+            ));
+        };
+        // inspect names the container with a leading slash
+        let name = container["Name"]
+            .as_str()
+            .unwrap_or(target)
+            .trim_start_matches('/');
+        Ok(StatusInfo {
+            workload: Workload {
+                id: name.to_owned(),
+                name: name.to_owned(),
+                scope_label: self.host.clone(),
+            },
+            diagnostics: diagnostics(container),
+        })
+    }
 }
 
 /// Maps `docker logs` complaints to the proto's error kinds.
@@ -84,5 +131,42 @@ fn failure_kind(stderr: &str) -> SourceErrorKind {
     } else {
         // includes "Cannot connect to the Docker daemon"
         SourceErrorKind::SourceUnreachable
+    }
+}
+
+/// Maps `docker inspect` complaints, which name the object instead of the container.
+fn inspect_failure(stderr: &str) -> SourceError {
+    let s = stderr.to_lowercase();
+    let kind = if s.contains("no such object") {
+        SourceErrorKind::WorkloadNotFound
+    } else if s.contains("permission denied") {
+        SourceErrorKind::AccessDenied
+    } else {
+        SourceErrorKind::SourceUnreachable
+    };
+    err(
+        kind,
+        format!(
+            "docker inspect failed: {}",
+            stderr.trim().chars().take(200).collect::<String>()
+        ),
+    )
+}
+
+/// Reads the fields `docker inspect` prints for a container. Absent or zero
+/// means "not reported", and zero limits mean no limit was set.
+fn diagnostics(c: &Value) -> WorkloadDiagnostics {
+    let state = &c["State"];
+    WorkloadDiagnostics {
+        runtime_state: Some(str_diag(state["Status"].as_str().map(str::to_owned))),
+        restart_count: Some(uint_diag(c["RestartCount"].as_u64())),
+        oom_killed: Some(bool_diag(state["OOMKilled"].as_bool())),
+        image: Some(str_diag(c["Config"]["Image"].as_str().map(str::to_owned))),
+        configured_cpu_nanocpus: Some(uint_diag(
+            c["HostConfig"]["NanoCpus"].as_u64().filter(|n| *n > 0),
+        )),
+        configured_memory_bytes: Some(uint_diag(
+            c["HostConfig"]["Memory"].as_u64().filter(|m| *m > 0),
+        )),
     }
 }

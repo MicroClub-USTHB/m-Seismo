@@ -49,14 +49,7 @@ pub(crate) async fn collect(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let mut child = cmd.spawn().map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => err(
-            SourceErrorKind::DriverUnsupported,
-            format!("{tool} not found"),
-        ),
-        std::io::ErrorKind::PermissionDenied => err(SourceErrorKind::AccessDenied, e.to_string()),
-        _ => err(SourceErrorKind::SourceUnreachable, e.to_string()),
-    })?;
+    let mut child = cmd.spawn().map_err(|e| spawn_error(tool, e))?;
     let (out, errs) = tokio::join!(
         read_pipe(
             child.stdout.take().expect("stdout is piped"),
@@ -87,6 +80,18 @@ pub(crate) async fn collect(
     // more matches than we may return also means older ones get cut
     let hit_limit = overflowed || rows.iter().filter(|r| r.matched).count() > f.limit;
     Ok((rows, hit_limit))
+}
+
+/// The program itself is missing or not ours to run, not a failed command.
+pub(crate) fn spawn_error(tool: &str, e: std::io::Error) -> SourceError {
+    match e.kind() {
+        std::io::ErrorKind::NotFound => err(
+            SourceErrorKind::DriverUnsupported,
+            format!("{tool} not found"),
+        ),
+        std::io::ErrorKind::PermissionDenied => err(SourceErrorKind::AccessDenied, e.to_string()),
+        _ => err(SourceErrorKind::SourceUnreachable, e.to_string()),
+    }
 }
 
 pub(crate) fn io_err(e: std::io::Error) -> SourceError {
