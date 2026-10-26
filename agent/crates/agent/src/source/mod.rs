@@ -1,5 +1,6 @@
 //! Where log lines come from. Every source answers the same question: the
 //! lines of one service inside a time window, newest kept when it has to cut.
+mod cli;
 pub mod docker;
 pub mod file;
 pub mod journal;
