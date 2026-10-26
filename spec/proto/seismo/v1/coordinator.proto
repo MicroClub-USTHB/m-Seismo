@@ -25,6 +25,8 @@ message CoordinatorEvent {
     AggregateError error = 3;
     // Added after v1.
     AggregateMetrics metrics = 4;
+    // Added after v1.
+    AggregateStatus status = 5;
   }
 }
 
@@ -34,6 +36,8 @@ message BackendRequest {
     QueryLogs query_logs = 1;
     // Added after v1.
     MetricsQuery query_metrics = 2;
+    // Added after v1.
+    StatusQuery query_status = 3;
   }
 }
 
@@ -120,4 +124,21 @@ message AggregateMetrics {
   string query_id = 2;
   TimeWindow requested_window = 3;
   repeated AgentMetrics agents = 4;
+}
+
+// One agent's answer to a StatusQuery. Same status rules as AgentSection,
+// except status never produces TRUNCATED.
+message AgentStatusReport {
+  string agent_id = 1;
+  AgentSource source = 2;
+  AgentStatus status = 3;
+  repeated ServiceStatus services = 4;
+  string detail = 5;
+}
+
+// Answer to a StatusQuery. Coordinator faults still come as AggregateError.
+message AggregateStatus {
+  uint32 schema_version = 1;
+  string query_id = 2;
+  repeated AgentStatusReport agents = 3;
 }

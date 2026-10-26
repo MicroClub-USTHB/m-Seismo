@@ -36,6 +36,7 @@ pub struct Coordinator {
 pub enum Source {
     Loki(Loki),
     Docker(Docker),
+    Kubernetes(Kubernetes),
     File(File),
     Journal(Journal),
 }
@@ -95,6 +96,18 @@ pub struct Docker {
     pub command: Vec<String>,
 }
 
+/// Reads pod logs and container state by running `kubectl`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Kubernetes {
+    /// Service name -> `namespace/pod/container`. Every service needs one.
+    #[serde(default)]
+    pub pods: HashMap<String, String>,
+    /// Program and leading args, e.g. `["sudo", "kubectl"]`.
+    #[serde(default = "default_kubectl")]
+    pub command: Vec<String>,
+}
+
 /// Secrets never live in the file, only the env var names do.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -120,6 +133,10 @@ fn default_token_env() -> String {
 
 fn default_docker() -> Vec<String> {
     vec!["docker".into()]
+}
+
+fn default_kubectl() -> Vec<String> {
+    vec!["kubectl".into()]
 }
 
 fn default_journalctl() -> Vec<String> {
@@ -181,6 +198,14 @@ impl Config {
             Source::Docker(d) => {
                 if d.command.first().is_none_or(|c| c.is_empty()) {
                     return Err("source.command must not be empty".into());
+                }
+            }
+            Source::Kubernetes(k) => {
+                if k.command.first().is_none_or(|c| c.is_empty()) {
+                    return Err("source.command must not be empty".into());
+                }
+                if let Some(s) = cfg.services.iter().find(|s| !k.pods.contains_key(*s)) {
+                    return Err(format!("source.pods has no entry for service {s}"));
                 }
             }
             Source::Journal(j) => {

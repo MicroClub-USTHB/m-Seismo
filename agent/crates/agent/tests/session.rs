@@ -253,6 +253,40 @@ async fn cancelled_query_gets_no_reply() {
 }
 
 #[tokio::test]
+async fn logs_only_source_answers_status_per_service_as_unsupported() {
+    let mut h = start(Duration::ZERO).await;
+    h.next().await; // register
+    let later = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+        + 60;
+    h.send(coordinator_message::Message::StatusQuery(
+        seismo_proto::StatusQuery {
+            query_id: "s1".into(),
+            deadline: Some(ts(later)),
+        },
+    ))
+    .await;
+
+    let Message::StatusResult(r) = h.next().await else {
+        panic!("expected a status result")
+    };
+    assert_eq!(r.query_id, "s1");
+    assert_eq!(r.services.len(), 1);
+    let postgres = &r.services[0];
+    assert_eq!(postgres.service, "postgres");
+    assert_eq!(
+        postgres.status,
+        seismo_proto::WorkloadStatus::Unavailable as i32
+    );
+    assert_eq!(
+        postgres.error.as_ref().map(|e| e.kind),
+        Some(seismo_proto::SourceErrorKind::DriverUnsupported as i32)
+    );
+}
+
+#[tokio::test]
 async fn rejection_status_ends_the_session() {
     let mut h = start(Duration::ZERO).await;
     h.next().await;
