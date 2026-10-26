@@ -4,6 +4,7 @@ mod cli;
 pub mod docker;
 pub mod file;
 pub mod journal;
+pub mod kubernetes;
 pub mod loki;
 
 use crate::config;
@@ -36,6 +37,7 @@ pub struct Fetched {
 pub enum Source {
     Loki(loki::Loki),
     Docker(docker::Docker),
+    Kubernetes(kubernetes::Kubernetes),
     File(file::File),
     Journal(journal::Journal),
 }
@@ -45,6 +47,7 @@ impl Source {
         match cfg {
             config::Source::Loki(c) => Ok(Self::Loki(loki::Loki::new(c.clone())?)),
             config::Source::Docker(c) => Ok(Self::Docker(docker::Docker::new(c))),
+            config::Source::Kubernetes(c) => Ok(Self::Kubernetes(kubernetes::Kubernetes::new(c)?)),
             config::Source::File(c) => Ok(Self::File(file::File::new(c))),
             config::Source::Journal(c) => Ok(Self::Journal(journal::Journal::new(c))),
         }
@@ -55,6 +58,7 @@ impl Source {
         match self {
             Self::Loki(_) => AgentSource::Loki,
             Self::Docker(_) => AgentSource::Docker,
+            Self::Kubernetes(_) => AgentSource::Kubernetes,
             Self::File(_) => AgentSource::File,
             Self::Journal(_) => AgentSource::Journal,
         }
@@ -64,6 +68,7 @@ impl Source {
         match self {
             Self::Loki(s) => s.fetch(p).await,
             Self::Docker(s) => s.fetch(p).await,
+            Self::Kubernetes(s) => s.fetch(p).await,
             Self::File(s) => s.fetch(p).await,
             Self::Journal(s) => s.fetch(p).await,
         }
@@ -72,6 +77,7 @@ impl Source {
     pub async fn status(&self, service: &str) -> Result<StatusInfo, SourceError> {
         match self {
             Self::Docker(s) => s.status(service).await,
+            Self::Kubernetes(s) => s.status(service).await,
             // NOTE: logs-only sources have no container to ask about
             _ => Err(err(
                 SourceErrorKind::DriverUnsupported,
