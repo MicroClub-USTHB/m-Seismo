@@ -53,6 +53,9 @@ type GitHubConfig struct {
 	// MaxRateLimitWait is the longest one call waits out a GitHub rate limit
 	// before failing with a retryable rate-limit error.
 	MaxRateLimitWait time.Duration
+	// WebhookSecret is the GitHub App's webhook secret. Webhooks are
+	// refused while it is empty.
+	WebhookSecret string
 }
 
 // OAuthTrackerConfig holds the deployment-wide settings of a tracker that

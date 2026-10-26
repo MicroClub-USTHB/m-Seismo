@@ -101,3 +101,31 @@ func (q *Queries) SetIssueState(ctx context.Context, arg SetIssueStateParams) er
 	_, err := q.db.Exec(ctx, setIssueState, arg.ID, arg.State)
 	return err
 }
+
+const setIssueStateByExternalID = `-- name: SetIssueStateByExternalID :execrows
+UPDATE issues i
+SET state = $1,
+    updated_at = now()
+FROM project_repositories pr
+WHERE pr.id = i.project_repository_id
+  AND pr.tracker = $2
+  AND lower(i.external_id) = lower($3)
+  AND i.state <> $1
+`
+
+type SetIssueStateByExternalIDParams struct {
+	State      string  `json:"state"`
+	Tracker    Tracker `json:"tracker"`
+	ExternalID string  `json:"external_id"`
+}
+
+// Sets the state of the issue m-Seismo opened on the tracker as
+// external_id, e.g. after the tracker said it was closed. References are
+// compared without case, like GitHub compares repository names.
+func (q *Queries) SetIssueStateByExternalID(ctx context.Context, arg SetIssueStateByExternalIDParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setIssueStateByExternalID, arg.State, arg.Tracker, arg.ExternalID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

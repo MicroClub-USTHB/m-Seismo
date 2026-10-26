@@ -11,6 +11,24 @@ import (
 	"github.com/google/uuid"
 )
 
+const deleteAppTrackerCredentials = `-- name: DeleteAppTrackerCredentials :execrows
+DELETE FROM app_tracker_credentials
+WHERE app_id = $1 AND tracker = $2
+`
+
+type DeleteAppTrackerCredentialsParams struct {
+	AppID   uuid.UUID `json:"app_id"`
+	Tracker Tracker   `json:"tracker"`
+}
+
+func (q *Queries) DeleteAppTrackerCredentials(ctx context.Context, arg DeleteAppTrackerCredentialsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAppTrackerCredentials, arg.AppID, arg.Tracker)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getAppTrackerCredentials = `-- name: GetAppTrackerCredentials :one
 SELECT id, app_id, tracker, client_id, client_secret_ciphertext, created_at, updated_at FROM app_tracker_credentials
 WHERE app_id = $1 AND tracker = $2
@@ -71,22 +89,4 @@ func (q *Queries) UpsertAppTrackerCredentials(ctx context.Context, arg UpsertApp
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const deleteAppTrackerCredentials = `-- name: DeleteAppTrackerCredentials :execrows
-DELETE FROM app_tracker_credentials
-WHERE app_id = $1 AND tracker = $2
-`
-
-type DeleteAppTrackerCredentialsParams struct {
-	AppID   uuid.UUID `json:"app_id"`
-	Tracker Tracker   `json:"tracker"`
-}
-
-func (q *Queries) DeleteAppTrackerCredentials(ctx context.Context, arg DeleteAppTrackerCredentialsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteAppTrackerCredentials, arg.AppID, arg.Tracker)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }

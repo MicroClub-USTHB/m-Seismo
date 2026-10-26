@@ -31,13 +31,19 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider"
 )
 
-// Module registers the GitHub provider when a GitHub App is configured.
+// Module registers the GitHub provider when a GitHub App is configured,
+// and the App's webhook.
 var Module = fx.Module("github",
-	fx.Provide(provider.AsProvider(FromConfig)),
+	fx.Provide(
+		provider.AsProvider(FromConfig),
+		func(q db.Querier) IssueStates { return q },
+		httpx.AsRoutes(NewWebhookHandler),
+	),
 )
 
 // FromConfig builds the provider from configuration. It returns no

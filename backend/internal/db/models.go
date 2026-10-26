@@ -118,6 +118,12 @@ type AppKey struct {
 	CreatedAt time.Time  `json:"created_at"`
 }
 
+type AppProject struct {
+	AppID     uuid.UUID `json:"app_id"`
+	ProjectID uuid.UUID `json:"project_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type AppTrackerCredential struct {
 	ID                     uuid.UUID `json:"id"`
 	AppID                  uuid.UUID `json:"app_id"`
@@ -126,12 +132,6 @@ type AppTrackerCredential struct {
 	ClientSecretCiphertext []byte    `json:"client_secret_ciphertext"`
 	CreatedAt              time.Time `json:"created_at"`
 	UpdatedAt              time.Time `json:"updated_at"`
-}
-
-type AppProject struct {
-	AppID     uuid.UUID `json:"app_id"`
-	ProjectID uuid.UUID `json:"project_id"`
-	CreatedAt time.Time `json:"created_at"`
 }
 
 type ConnectionSecret struct {

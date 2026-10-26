@@ -62,13 +62,15 @@ type Querier interface {
 	RevokeAppKey(ctx context.Context, arg RevokeAppKeyParams) (int64, error)
 	SetDefaultProjectRepository(ctx context.Context, arg SetDefaultProjectRepositoryParams) (int64, error)
 	SetIssueState(ctx context.Context, arg SetIssueStateParams) error
+	// Sets the state of the issue m-Seismo opened on the tracker as
+	// external_id, e.g. after the tracker said it was closed. References are
+	// compared without case, like GitHub compares repository names.
+	SetIssueStateByExternalID(ctx context.Context, arg SetIssueStateByExternalIDParams) (int64, error)
 	UnlinkAppProject(ctx context.Context, arg UnlinkAppProjectParams) (int64, error)
 	UnlinkProjectRepository(ctx context.Context, arg UnlinkProjectRepositoryParams) (int64, error)
 	UpdateApp(ctx context.Context, arg UpdateAppParams) (App, error)
 	UpdateOwner(ctx context.Context, arg UpdateOwnerParams) (Owner, error)
 	UpdateProject(ctx context.Context, arg UpdateProjectParams) (Project, error)
-	// Stores the app's OAuth application for the tracker (client_id and the
-	// encrypted client_secret), replacing an earlier one.
 	UpsertAppTrackerCredentials(ctx context.Context, arg UpsertAppTrackerCredentialsParams) (AppTrackerCredential, error)
 	// Stores a connection's encrypted credentials, replacing earlier ones (a
 	// re-connect, or a refreshed OAuth token).
