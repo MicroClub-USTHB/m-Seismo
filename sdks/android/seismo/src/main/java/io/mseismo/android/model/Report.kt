@@ -10,7 +10,7 @@ data class Report(
         val sessionId:String?=null,
         val recentLogs:List<String>?=null,
         val breadcrumbs:List<String>?=null,
-        val networkRequest: List<String>?=null
+        val networkRequests: List<String>?=null
         )
 
 enum class Category{
