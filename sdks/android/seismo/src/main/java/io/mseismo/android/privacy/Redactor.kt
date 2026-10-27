@@ -12,6 +12,14 @@ class Redactor(
         var working = text
         val placeholders = mutableListOf<Placeholder>()
 
+        for(denied in denyList){
+            if(denied.isNotEmpty()){
+                working = working.replace(denied,"[REDACTED]")
+
+            }
+        }
+
+
         for((index,allowed) in allowList.withIndex()){
             if(allowed.isNotEmpty() && working.contains(allowed)){
                 val placeholderToken = "\uE000ALLOW$index\uE001"
@@ -25,12 +33,6 @@ class Redactor(
             working = matcher.replaceAll(rule.replacement)
         }
 
-        for(denied in denyList){
-            if(denied.isNotEmpty()){
-                working = working.replace(denied,"[REDACTED]")
-
-            }
-        }
 
         for(placeholder in placeholders){
             working = working.replace(placeholder.token,placeholder.original)

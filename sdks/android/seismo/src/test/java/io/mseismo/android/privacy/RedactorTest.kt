@@ -15,14 +15,19 @@ class RedactorTest{
     }
 
     @Test
-    fun redact_respectAllowList(){
+    fun redact_denyListOverridesAllowList(){
         val redactor =Redactor(
+            denyList = listOf("support@mseismo.com"),
             allowList=listOf("support@mseismo.com")
             )
-        val input="Email support@mseismo.com or user@example.com"
-        val result=redactor.redact(input)
+        val result=redactor.redact(
+            "contact support@mseismo.com for help"
+        )
 
-        assertEquals("Email support@mseismo.com or [REDACTED]",result)
+        assertEquals(
+            "contact [REDACTED] for help",
+            result
+        )
     }
 
 }
