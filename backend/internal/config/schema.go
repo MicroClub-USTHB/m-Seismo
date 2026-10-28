@@ -132,6 +132,30 @@ type WorkerConfig struct {
 	MaxAttempts int
 }
 
+// CoordinatorConfig controls the gRPC server the log coordinator attaches
+// to, and the server logs the worker asks it for.
+type CoordinatorConfig struct {
+	// Enabled serves Coordinator.Attach in this process.
+	Enabled bool
+	// Addr is where the gRPC server listens, e.g. ":9443".
+	Addr string
+	// TLSCertFile and TLSKeyFile hold the server certificate. Without them
+	// the server speaks plain gRPC, which is only allowed in development
+	// or when Plaintext says TLS ends in front of the backend.
+	TLSCertFile string
+	TLSKeyFile  string
+	Plaintext   bool
+	// Window is how far before and after a report the worker asks for
+	// server logs.
+	Window time.Duration
+	// Timeout is how long the worker waits for the coordinator's answer.
+	Timeout time.Duration
+	// MaxBytes is the log budget of one query, for the whole aggregate.
+	MaxBytes int
+	// MaxLinesPerWorkload caps the lines of each service.
+	MaxLinesPerWorkload int
+}
+
 // CrashProvidersConfig holds operator-controlled credential encryption and allowed
 // Sentry origins. API clients cannot introduce arbitrary outbound destinations.
 type CrashProvidersConfig struct {
@@ -155,6 +179,7 @@ type Config struct {
 	Limits         LimitsConfig
 	Ingest         IngestConfig
 	Worker         WorkerConfig
+	Coordinator    CoordinatorConfig
 	CrashProviders CrashProvidersConfig
 	Crash          CrashConfig
 }

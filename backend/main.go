@@ -6,6 +6,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/app"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/auth"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/coordinator"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/infra"
@@ -18,6 +19,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider/github"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider/gitlab"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ratelimit"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/secrets"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/worker"
 )
@@ -44,6 +46,8 @@ func Options() fx.Option {
 		issue.Module,
 		ratelimit.Module,
 		ingest.Module,
+		routing.Module,
+		coordinator.Module,
 		crashprovider.Module,
 		worker.Module,
 	)

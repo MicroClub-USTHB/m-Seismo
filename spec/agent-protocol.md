@@ -131,8 +131,13 @@ one.
 
 ### 4.2 Queries
 
-- The backend sends `QueryLogs{query_id, window, trace_id?, deadline}`
-  when the pipeline needs backend logs.
+- The backend sends `QueryLogs{query_id, window, trace_id?, deadline,
+  limits}` when the pipeline needs backend logs.
+- `limits` is the backend's budget. `max_bytes_total` is for the whole
+  aggregate, and the coordinator splits it across agents (§3.3). A zero
+  field, or no `limits`, means the coordinator's default; a value above the
+  coordinator's ceiling (§6) is lowered to it. The backend keeps the
+  aggregate small enough for an issue and for its own transport.
 - The coordinator fans out to every connected agent under that deadline
   (minus a margin to aggregate) and replies with **one**
   `AggregateResult`, or an `AggregateError` for a coordinator fault.

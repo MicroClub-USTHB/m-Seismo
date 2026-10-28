@@ -27,11 +27,12 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/queue"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
 )
 
 type capturedIssue struct{ drafts chan issue.Draft }
 
-func (c *capturedIssue) OpenInRepository(_ context.Context, _ uuid.UUID, _ *uuid.UUID, d issue.Draft) (issue.Result, error) {
+func (c *capturedIssue) OpenInRepository(_ context.Context, _, _ uuid.UUID, d issue.Draft) (issue.Result, error) {
 	c.drafts <- d
 	return issue.Result{Ref: issue.Ref{ID: "1", URL: "https://github.com/test/repo/issues/1"}}, nil
 }
@@ -65,11 +66,10 @@ func TestSentryReportQueueToIssueIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	connection, err := q.UpsertProviderConnection(ctx, db.UpsertProviderConnectionParams{OwnerID: owner.ID, Tracker: db.TrackerGithub, ExternalID: uuid.NewString(), AccountLogin: "test", AccountType: "Organization"})
-	if err != nil {
+	if _, err := q.UpsertProviderConnection(ctx, db.UpsertProviderConnectionParams{OwnerID: owner.ID, AppID: app.ID, Tracker: db.TrackerGithub, ExternalID: uuid.NewString(), AccountLogin: "test", AccountType: "Organization"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := q.LinkProjectRepository(ctx, db.LinkProjectRepositoryParams{ProjectID: project.ID, ProviderConnectionID: connection.ID, Repository: "test/repo", IsDefault: true}); err != nil {
+	if _, err := q.LinkProjectRepository(ctx, db.LinkProjectRepositoryParams{ProjectID: project.ID, Tracker: db.TrackerGithub, Repository: "test/repo", IsDefault: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := q.LinkAppProject(ctx, db.LinkAppProjectParams{AppID: app.ID, ProjectID: project.ID}); err != nil {
@@ -138,7 +138,7 @@ func TestSentryReportQueueToIssueIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	sink := &capturedIssue{drafts: make(chan issue.Draft, 8)}
-	w := New(js, NewProcessor(q, sink, resolver), 1, 3)
+	w := New(js, NewProcessor(q, sink, routing.NewRouter(q), nil, 0, resolver), 1, 3)
 	if err := w.Start(ctx); err != nil {
 		t.Fatal(err)
 	}

@@ -91,6 +91,7 @@ fn logs() -> QueryLogs {
             seconds: t.as_secs() as i64,
             nanos: 0,
         }),
+        limits: None,
     }
 }
 

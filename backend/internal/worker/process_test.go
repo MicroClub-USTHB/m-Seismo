@@ -4,24 +4,29 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/coordinator"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
-	"strings"
+	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
 )
 
 type fakeQueries struct {
 	report     *db.Report
-	targets    []db.ListIssueTargetsForAppRow
+	router     *fakeRouter
 	deliveries []db.ReportDelivery
-	processed  int
+	// projectOf is the project of each repository.
+	projectOf map[uuid.UUID]uuid.UUID
+	processed int
 }
 
 func (f *fakeQueries) GetReport(_ context.Context, id uuid.UUID) (db.Report, error) {
@@ -35,12 +40,12 @@ func (f *fakeQueries) ListReportAttachmentNames(context.Context, uuid.UUID) ([]s
 	return []string{"screenshot"}, nil
 }
 
-func (f *fakeQueries) ListIssueTargetsForApp(context.Context, uuid.UUID) ([]db.ListIssueTargetsForAppRow, error) {
-	return f.targets, nil
-}
-
-func (f *fakeQueries) ListReportDeliveries(context.Context, uuid.UUID) ([]db.ReportDelivery, error) {
-	return f.deliveries, nil
+func (f *fakeQueries) ListReportDeliveryProjects(context.Context, uuid.UUID) ([]uuid.UUID, error) {
+	var out []uuid.UUID
+	for _, d := range f.deliveries {
+		out = append(out, f.projectOf[d.ProjectRepositoryID])
+	}
+	return out, nil
 }
 
 func (f *fakeQueries) CreateReportDelivery(_ context.Context, arg db.CreateReportDeliveryParams) error {
@@ -53,6 +58,17 @@ func (f *fakeQueries) MarkReportProcessed(context.Context, uuid.UUID) error {
 	now := time.Now()
 	f.report.ProcessedAt = &now
 	return nil
+}
+
+// fakeRouter routes every report the same way and keeps the facts it got.
+type fakeRouter struct {
+	routes []routing.Route
+	facts  []routing.Facts
+}
+
+func (f *fakeRouter) Routes(_ context.Context, facts routing.Facts) ([]routing.Route, error) {
+	f.facts = append(f.facts, facts)
+	return f.routes, nil
 }
 
 // fakeIssues opens issues, or fails with the error set for a repository.
@@ -71,7 +87,9 @@ func (f *fakeIssues) OpenInRepository(_ context.Context, _, repo uuid.UUID, d is
 	return issue.Result{IssueID: uuid.New(), Ref: issue.Ref{ID: "1", URL: "https://github.com/o/r/issues/1"}}, nil
 }
 
-func newFixture(t *testing.T, repos int) (*fakeQueries, *fakeIssues, *Processor) {
+// newFixture routes the report to the default repository of `projects`
+// projects.
+func newFixture(t *testing.T, projects int) (*fakeQueries, *fakeIssues, *Processor) {
 	t.Helper()
 	payload, _ := json.Marshal(map[string]any{
 		"platform": "ios",
@@ -82,15 +100,18 @@ func newFixture(t *testing.T, repos int) (*fakeQueries, *fakeIssues, *Processor)
 			"description": "I tapped pay",
 		},
 	})
-	q := &fakeQueries{report: &db.Report{ID: uuid.New(), AppID: uuid.New(), ReportID: uuid.New(), InstallationID: uuid.New(), Payload: payload}}
-	for i := 0; i < repos; i++ {
-		q.targets = append(q.targets, db.ListIssueTargetsForAppRow{ProjectRepositoryID: uuid.New(), Repository: "o/r"})
+	router := &fakeRouter{}
+	q := &fakeQueries{router: router, projectOf: map[uuid.UUID]uuid.UUID{}, report: &db.Report{ID: uuid.New(), AppID: uuid.New(), ReportID: uuid.New(), InstallationID: uuid.New(), Payload: payload}}
+	for i := 0; i < projects; i++ {
+		route := routing.Route{ProjectID: uuid.New(), ProjectRepositoryID: uuid.New(), Repository: "o/r"}
+		router.routes = append(router.routes, route)
+		q.projectOf[route.ProjectRepositoryID] = route.ProjectID
 	}
 	is := &fakeIssues{fail: map[uuid.UUID]error{}}
-	return q, is, NewProcessor(q, is, nil)
+	return q, is, NewProcessor(q, is, router, nil, time.Minute, nil)
 }
 
-func TestProcessOpensOneIssuePerRepository(t *testing.T) {
+func TestProcessOpensOneIssuePerProject(t *testing.T) {
 	q, is, p := newFixture(t, 2)
 	if err := p.Process(context.Background(), q.report.ID); err != nil {
 		t.Fatal(err)
@@ -111,9 +132,102 @@ func TestProcessOpensOneIssuePerRepository(t *testing.T) {
 	}
 }
 
+func TestProcessUsesTheRoute(t *testing.T) {
+	q, is, p := newFixture(t, 1)
+	route := &q.router.routes[0]
+	route.Labels, route.Assignees, route.Milestone = []string{"bug", "ios"}, []string{"octocat"}, "v2.4"
+
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	if f := q.router.facts[0]; f.AppID != q.report.AppID {
+		t.Errorf("routed with app %s, want %s", f.AppID, q.report.AppID)
+	}
+	if len(is.opened) != 1 || is.opened[0] != route.ProjectRepositoryID {
+		t.Fatalf("opened %v, want the route's repository", is.opened)
+	}
+	d := is.drafts[0]
+	if strings.Join(d.Labels, ",") != "bug,ios" || strings.Join(d.Assignees, ",") != "octocat" || d.Milestone != "v2.4" {
+		t.Errorf("labels %v, assignees %v, milestone %q", d.Labels, d.Assignees, d.Milestone)
+	}
+}
+
+func TestProcessSkipsProjectsAlreadyDelivered(t *testing.T) {
+	q, is, p := newFixture(t, 1)
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// A rule changed since and sends the project's issues to another of
+	// its repositories, but the project already has this report's issue.
+	q.report.ProcessedAt = nil
+	moved := uuid.New()
+	q.projectOf[moved] = q.router.routes[0].ProjectID
+	q.router.routes[0].ProjectRepositoryID = moved
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(is.opened) != 1 {
+		t.Errorf("opened %d issues, want 1", len(is.opened))
+	}
+}
+
+type fakeLogs struct {
+	calls    int
+	from, to time.Time
+	err      error
+}
+
+func (f *fakeLogs) QueryLogs(_ context.Context, _ uuid.UUID, from, to time.Time) (*seismov1.AggregateResult, error) {
+	f.calls++
+	f.from, f.to = from, to
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &seismov1.AggregateResult{Agents: []*seismov1.AgentSection{{AgentId: "prod-1"}}}, nil
+}
+
+func TestProcessAddsServerLogs(t *testing.T) {
+	q, is, _ := newFixture(t, 1)
+	q.report.OccurredAt = time.Date(2026, 10, 21, 14, 0, 0, 0, time.UTC)
+	logs := &fakeLogs{}
+	p := NewProcessor(q, is, q.router, logs, 2*time.Minute, nil)
+
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	if !logs.from.Equal(q.report.OccurredAt.Add(-2*time.Minute)) || !logs.to.Equal(q.report.OccurredAt.Add(2*time.Minute)) {
+		t.Errorf("window = [%s, %s]", logs.from, logs.to)
+	}
+	if !strings.Contains(is.drafts[0].Body, "**Agent `prod-1`**") {
+		t.Errorf("issue has no server logs:\n%s", is.drafts[0].Body)
+	}
+
+	// Nothing left to open: the coordinator is not asked again.
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	if logs.calls != 1 {
+		t.Errorf("asked for logs %d times, want 1", logs.calls)
+	}
+}
+
+func TestProcessWithoutServerLogs(t *testing.T) {
+	for _, err := range []error{coordinator.ErrNotAttached, errors.New("NATS is down")} {
+		q, is, _ := newFixture(t, 1)
+		p := NewProcessor(q, is, q.router, &fakeLogs{err: err}, time.Minute, nil)
+		if err := p.Process(context.Background(), q.report.ID); err != nil {
+			t.Fatalf("logs failing with %v failed the report: %v", err, err)
+		}
+		if len(is.opened) != 1 || strings.Contains(is.drafts[0].Body, "Server logs") {
+			t.Errorf("logs failing with %v: opened %d issues", err, len(is.opened))
+		}
+	}
+}
+
 func TestProcessRetriesOnlyFailedRepositories(t *testing.T) {
 	q, is, p := newFixture(t, 2)
-	failing := q.targets[1].ProjectRepositoryID
+	failing := q.router.routes[1].ProjectRepositoryID
 	is.fail[failing] = errors.New("github is down")
 
 	err := p.Process(context.Background(), q.report.ID)
@@ -136,7 +250,7 @@ func TestProcessRetriesOnlyFailedRepositories(t *testing.T) {
 
 func TestProcessStopsOnRateLimit(t *testing.T) {
 	q, is, p := newFixture(t, 2)
-	is.fail[q.targets[0].ProjectRepositoryID] = &issue.RateLimitError{Tracker: "github", Wait: time.Minute, Err: errors.New("403")}
+	is.fail[q.router.routes[0].ProjectRepositoryID] = &issue.RateLimitError{Tracker: "github", Wait: time.Minute, Err: errors.New("403")}
 
 	err := p.Process(context.Background(), q.report.ID)
 	var rl *issue.RateLimitError

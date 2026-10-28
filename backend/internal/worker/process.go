@@ -7,14 +7,18 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/coordinator"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
 )
 
 // Issues opens issues in project repositories. Implemented by
@@ -27,10 +31,21 @@ type Issues interface {
 type Queries interface {
 	GetReport(ctx context.Context, id uuid.UUID) (db.Report, error)
 	ListReportAttachmentNames(ctx context.Context, reportID uuid.UUID) ([]string, error)
-	ListIssueTargetsForApp(ctx context.Context, appID uuid.UUID) ([]db.ListIssueTargetsForAppRow, error)
-	ListReportDeliveries(ctx context.Context, reportID uuid.UUID) ([]db.ReportDelivery, error)
+	ListReportDeliveryProjects(ctx context.Context, reportID uuid.UUID) ([]uuid.UUID, error)
 	CreateReportDelivery(ctx context.Context, arg db.CreateReportDeliveryParams) error
 	MarkReportProcessed(ctx context.Context, id uuid.UUID) error
+}
+
+// Router picks where a report's issues go. Implemented by
+// *routing.Router.
+type Router interface {
+	Routes(ctx context.Context, f routing.Facts) ([]routing.Route, error)
+}
+
+// ServerLogs asks an app's log coordinator for server logs. Implemented by
+// *coordinator.Client.
+type ServerLogs interface {
+	QueryLogs(ctx context.Context, appID uuid.UUID, from, to time.Time) (*seismov1.AggregateResult, error)
 }
 
 // permanentError marks a failure that trying again won't fix.
@@ -48,22 +63,27 @@ type CrashResolver interface {
 
 // Processor turns one stored report into issues.
 type Processor struct {
-	q       Queries
-	issues  Issues
+	q      Queries
+	issues Issues
+	router Router
+	// logs is optional; window is how far around the report it looks.
+	logs    ServerLogs
+	window  time.Duration
 	crashes CrashResolver
 }
 
-func NewProcessor(q Queries, issues Issues, crashes CrashResolver) *Processor {
-	return &Processor{q: q, issues: issues, crashes: crashes}
+func NewProcessor(q Queries, issues Issues, router Router, logs ServerLogs, window time.Duration, crashes CrashResolver) *Processor {
+	return &Processor{q: q, issues: issues, router: router, logs: logs, window: window, crashes: crashes}
 }
 
-// Process opens the report's issue in the default repository of every
-// project its app is linked to.
+// Process opens the report's issue in every project its app is linked to,
+// in the repository and with the labels, assignees and milestone the
+// project's routing rules pick.
 //
 // The queue delivers a report at least once, so Process can run several
-// times for the same report: each repository that already got its issue is
+// times for the same report: each project that already got its issue is
 // recorded in report_deliveries and skipped, and a processed report is left
-// alone. When some repositories fail, the others are recorded and the next
+// alone. When some projects fail, the others are recorded and the next
 // attempt only retries the failed ones.
 //
 // A returned error is permanent (trying again won't help), an
@@ -86,21 +106,28 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 		return permanent(fmt.Errorf("decode report %s: %w", id, err))
 	}
 
-	targets, err := p.q.ListIssueTargetsForApp(ctx, row.AppID)
+	routes, err := p.router.Routes(ctx, routing.FactsOf(row.AppID, &r))
 	if err != nil {
-		return fmt.Errorf("list targets of app %s: %w", row.AppID, err)
+		return err
 	}
-	if len(targets) == 0 {
+	if len(routes) == 0 {
 		return permanent(fmt.Errorf("report %s: %w", id, issue.ErrNoTargets))
 	}
 
-	deliveries, err := p.q.ListReportDeliveries(ctx, id)
+	// One issue per project: a project that got it is skipped, even if
+	// its rules changed since and would now pick another repository.
+	projects, err := p.q.ListReportDeliveryProjects(ctx, id)
 	if err != nil {
 		return fmt.Errorf("list deliveries of report %s: %w", id, err)
 	}
-	delivered := make(map[uuid.UUID]bool, len(deliveries))
-	for _, d := range deliveries {
-		delivered[d.ProjectRepositoryID] = true
+	var todo []routing.Route
+	for _, route := range routes {
+		if !slices.Contains(projects, route.ProjectID) {
+			todo = append(todo, route)
+		}
+	}
+	if len(todo) == 0 {
+		return p.markProcessed(ctx, id)
 	}
 
 	names, err := p.q.ListReportAttachmentNames(ctx, id)
@@ -117,18 +144,18 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 			slog.WarnContext(ctx, "Sentry details unavailable; retaining crash reference", "report", id)
 		}
 	}
-	draft := render(&r, reportInfo{
+	base := render(&r, reportInfo{
 		CrashEvent:     crashEvent,
 		ID:             row.ReportID,
 		InstallationID: row.InstallationID,
 		Screenshot:     slices.Contains(names, ingest.ScreenshotName),
+		ServerLogs:     p.serverLogs(ctx, row),
 	})
 
 	var errs []error
-	for _, t := range targets {
-		if delivered[t.ProjectRepositoryID] {
-			continue
-		}
+	for _, t := range todo {
+		draft := base
+		draft.Labels, draft.Assignees, draft.Milestone = t.Labels, t.Assignees, t.Milestone
 		res, err := p.issues.OpenInRepository(ctx, row.AppID, t.ProjectRepositoryID, draft)
 		if err != nil {
 			var rl *issue.RateLimitError
@@ -164,9 +191,28 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
+	return p.markProcessed(ctx, id)
+}
 
+func (p *Processor) markProcessed(ctx context.Context, id uuid.UUID) error {
 	if err := p.q.MarkReportProcessed(ctx, id); err != nil {
 		return fmt.Errorf("mark report %s processed: %w", id, err)
 	}
 	return nil
+}
+
+// serverLogs asks the app's coordinator for the server logs around the
+// report. The issue is opened without them when there are none.
+func (p *Processor) serverLogs(ctx context.Context, row db.Report) *seismov1.AggregateResult {
+	if p.logs == nil {
+		return nil
+	}
+	res, err := p.logs.QueryLogs(ctx, row.AppID, row.OccurredAt.Add(-p.window), row.OccurredAt.Add(p.window))
+	switch {
+	case errors.Is(err, coordinator.ErrNotAttached):
+		slog.DebugContext(ctx, "no coordinator attached, opening the issue without server logs", "report", row.ID)
+	case err != nil:
+		slog.WarnContext(ctx, "server logs unavailable, opening the issue without them", "report", row.ID, "err", err)
+	}
+	return res
 }

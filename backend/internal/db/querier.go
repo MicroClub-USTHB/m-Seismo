@@ -12,19 +12,22 @@ import (
 
 type Querier interface {
 	ClearDefaultProjectRepository(ctx context.Context, projectID uuid.UUID) error
+	CountRoutingRulesForRepository(ctx context.Context, projectRepositoryID uuid.UUID) (int64, error)
 	CreateApp(ctx context.Context, arg CreateAppParams) (App, error)
 	CreateAppKey(ctx context.Context, arg CreateAppKeyParams) (AppKey, error)
 	CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue, error)
 	CreateOwner(ctx context.Context, arg CreateOwnerParams) (Owner, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateReportDelivery(ctx context.Context, arg CreateReportDeliveryParams) error
+	CreateRoutingRule(ctx context.Context, arg CreateRoutingRuleParams) (RoutingRule, error)
 	DeleteApp(ctx context.Context, arg DeleteAppParams) (int64, error)
 	DeleteAppConnection(ctx context.Context, arg DeleteAppConnectionParams) (int64, error)
 	DeleteAppCrashProvider(ctx context.Context, appID uuid.UUID) error
 	DeleteAppTrackerCredentials(ctx context.Context, arg DeleteAppTrackerCredentialsParams) (int64, error)
 	DeleteOwner(ctx context.Context, id uuid.UUID) (int64, error)
 	DeleteProject(ctx context.Context, arg DeleteProjectParams) (int64, error)
-	GetActiveAppKeyByHash(ctx context.Context, keyHash []byte) (AppKey, error)
+	DeleteRoutingRule(ctx context.Context, arg DeleteRoutingRuleParams) (int64, error)
+	GetActiveAppKeyByHash(ctx context.Context, arg GetActiveAppKeyByHashParams) (AppKey, error)
 	GetApp(ctx context.Context, arg GetAppParams) (App, error)
 	GetAppConnection(ctx context.Context, arg GetAppConnectionParams) (ProviderConnection, error)
 	GetAppCrashProvider(ctx context.Context, appID uuid.UUID) (AppCrashProvider, error)
@@ -42,6 +45,7 @@ type Querier interface {
 	GetProjectRepository(ctx context.Context, arg GetProjectRepositoryParams) (ProjectRepository, error)
 	GetReport(ctx context.Context, id uuid.UUID) (Report, error)
 	GetReportByReportID(ctx context.Context, arg GetReportByReportIDParams) (Report, error)
+	GetRoutingRule(ctx context.Context, arg GetRoutingRuleParams) (RoutingRule, error)
 	// Returns no row when the app already sent a report with this report_id.
 	InsertReport(ctx context.Context, arg InsertReportParams) (Report, error)
 	InsertReportAttachment(ctx context.Context, arg InsertReportAttachmentParams) error
@@ -51,7 +55,7 @@ type Querier interface {
 	ListActiveConnectionsForApp(ctx context.Context, appID uuid.UUID) ([]ProviderConnection, error)
 	ListAppConnections(ctx context.Context, arg ListAppConnectionsParams) ([]ProviderConnection, error)
 	ListAppCrashProviderCredentials(ctx context.Context) ([]ListAppCrashProviderCredentialsRow, error)
-	ListAppKeys(ctx context.Context, appID uuid.UUID) ([]AppKey, error)
+	ListAppKeys(ctx context.Context, arg ListAppKeysParams) ([]AppKey, error)
 	ListAppProjects(ctx context.Context, appID uuid.UUID) ([]Project, error)
 	ListApps(ctx context.Context, ownerID uuid.UUID) ([]App, error)
 	ListCrashlyticsConnections(ctx context.Context) ([]CrashlyticsConnection, error)
@@ -62,6 +66,13 @@ type Querier interface {
 	ListProjects(ctx context.Context, ownerID uuid.UUID) ([]Project, error)
 	ListReportAttachmentNames(ctx context.Context, reportID uuid.UUID) ([]string, error)
 	ListReportDeliveries(ctx context.Context, reportID uuid.UUID) ([]ReportDelivery, error)
+	// The projects that already got the report's issue, whichever of their
+	// repositories it went to.
+	ListReportDeliveryProjects(ctx context.Context, reportID uuid.UUID) ([]uuid.UUID, error)
+	ListRoutingRules(ctx context.Context, projectID uuid.UUID) ([]RoutingRule, error)
+	// The rules of every project the app reports into, in the order they are
+	// tried, with the repository each one sends to.
+	ListRoutingRulesForApp(ctx context.Context, appID uuid.UUID) ([]ListRoutingRulesForAppRow, error)
 	MarkReportProcessed(ctx context.Context, id uuid.UUID) error
 	MarkReportQueued(ctx context.Context, id uuid.UUID) error
 	RevokeAppKey(ctx context.Context, arg RevokeAppKeyParams) (int64, error)
@@ -75,6 +86,7 @@ type Querier interface {
 	UpdateApp(ctx context.Context, arg UpdateAppParams) (App, error)
 	UpdateOwner(ctx context.Context, arg UpdateOwnerParams) (Owner, error)
 	UpdateProject(ctx context.Context, arg UpdateProjectParams) (Project, error)
+	UpdateRoutingRule(ctx context.Context, arg UpdateRoutingRuleParams) (RoutingRule, error)
 	UpsertAppTrackerCredentials(ctx context.Context, arg UpsertAppTrackerCredentialsParams) (AppTrackerCredential, error)
 	// Stores a connection's encrypted credentials, replacing earlier ones (a
 	// re-connect, or a refreshed OAuth token).

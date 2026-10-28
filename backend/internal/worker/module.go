@@ -5,9 +5,11 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/coordinator"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
 )
 
 // Module runs the worker in this process, unless worker.enabled is false.
@@ -16,7 +18,9 @@ var Module = fx.Module("worker",
 		func(q db.Querier) Queries { return q },
 		func(s *issue.Service) Issues { return s },
 		func(s *crashprovider.Service) CrashResolver { return s },
-		NewProcessor,
+		func(q Queries, is Issues, r *routing.Router, c *coordinator.Client, cr CrashResolver, cfg *config.Config) *Processor {
+			return NewProcessor(q, is, r, c, cfg.Coordinator.Window, cr)
+		},
 	),
 	fx.Invoke(register),
 )
