@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -34,7 +35,17 @@ func Load(configPath string) (*Config, error) {
 		}
 	}
 
+	maxConns := v.GetInt("database.max_conns")
+	if maxConns < 0 || maxConns > math.MaxInt32 {
+		return nil, fmt.Errorf("config: database.max_conns %d is out of range", maxConns)
+	}
+
 	cfg := &Config{
+		CrashProviders: CrashProvidersConfig{
+			EncryptionKey:          v.GetString("crash_providers.encryption_key"),
+			PreviousEncryptionKeys: v.GetStringSlice("crash_providers.previous_encryption_keys"),
+			SentryOrigins:          v.GetStringSlice("crash_providers.sentry_origins"),
+		},
 		Env:      v.GetString("env"),
 		LogLevel: v.GetString("log_level"),
 		Server: ServerConfig{
@@ -43,7 +54,7 @@ func Load(configPath string) (*Config, error) {
 		},
 		Database: DatabaseConfig{
 			URL:      v.GetString("database.url"),
-			MaxConns: int32(v.GetInt("database.max_conns")),
+			MaxConns: int32(maxConns),
 		},
 		Redis: RedisConfig{
 			URL: v.GetString("redis.url"),
@@ -67,6 +78,11 @@ func Load(configPath string) (*Config, error) {
 			MinWriteInterval: v.GetDuration("github.min_write_interval"),
 			MaxRateLimitWait: v.GetDuration("github.max_rate_limit_wait"),
 		},
+		GitLab:    oauthTracker(v, "gitlab"),
+		Bitbucket: oauthTracker(v, "bitbucket"),
+		Secrets: SecretsConfig{
+			EncryptionKey: v.GetString("secrets.encryption_key"),
+		},
 		Limits: LimitsConfig{
 			TestIssuesPerMinute: v.GetInt("limits.test_issues_per_minute"),
 		},
@@ -80,19 +96,26 @@ func Load(configPath string) (*Config, error) {
 				QuotaProject: v.GetString("crash.crashlytics.quota_project"),
 			},
 		},
-		Security: SecurityConfig{
-			SecretKey: v.GetString("security.secret_key"),
-		},
 		Ingest: IngestConfig{
 			AppPerMinute:          v.GetFloat64("ingest.app_per_minute"),
 			AppBurst:              v.GetInt("ingest.app_burst"),
 			InstallationPerMinute: v.GetFloat64("ingest.installation_per_minute"),
 			InstallationBurst:     v.GetInt("ingest.installation_burst"),
 		},
+		Worker: WorkerConfig{
+			Enabled:     v.GetBool("worker.enabled"),
+			Concurrency: v.GetInt("worker.concurrency"),
+			MaxAttempts: v.GetInt("worker.max_attempts"),
+		},
 	}
 
 	cfg.Server.PublicURL = v.GetString("server.public_url")
 	cfg.Server.FrontendURL = v.GetString("server.frontend_url")
+	for name, t := range map[string]*OAuthTrackerConfig{"gitlab": &cfg.GitLab, "bitbucket": &cfg.Bitbucket} {
+		if t.RedirectURL == "" {
+			t.RedirectURL = strings.TrimRight(cfg.Server.PublicURL, "/") + "/api/v1/providers/" + name + "/callback"
+		}
+	}
 
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
@@ -101,9 +124,18 @@ func Load(configPath string) (*Config, error) {
 	return cfg, nil
 }
 
+func oauthTracker(v *viper.Viper, name string) OAuthTrackerConfig {
+	return OAuthTrackerConfig{
+		WebURL:           v.GetString(name + ".web_url"),
+		APIURL:           v.GetString(name + ".api_url"),
+		RedirectURL:      v.GetString(name + ".redirect_url"),
+		MaxRateLimitWait: v.GetDuration(name + ".max_rate_limit_wait"),
+	}
+}
+
 // devJWTSecret is used only when env is "development" and no secret is set,
 // so a fresh checkout runs without extra setup.
-const devJWTSecret = "m-seismo-development-only-secret"
+const devJWTSecret = "m-seismo-development-only-secret" //nolint:gosec // known on purpose, refused outside development
 
 func (c *Config) validate() error {
 	if c.Auth.JWTSecret == "" {
@@ -115,12 +147,24 @@ func (c *Config) validate() error {
 	if c.Auth.JWTTTL <= 0 {
 		return fmt.Errorf("auth.jwt_ttl must be positive")
 	}
+	// GitLab and Bitbucket store OAuth tokens, and every app's own OAuth
+	// application secret, encrypted. Both trackers are always available
+	// (each app registers its own application when it connects), so the
+	// key is required outside development rather than only once a tracker
+	// is configured. Development falls back to a fixed key (see the
+	// secrets package).
+	if c.Secrets.EncryptionKey == "" && c.Env != "development" {
+		return fmt.Errorf("secrets.encryption_key is required when env is %q", c.Env)
+	}
 	if _, err := c.SlogLevel(); err != nil {
 		return err
 	}
 	if c.Ingest.AppPerMinute <= 0 || c.Ingest.AppBurst < 1 ||
 		c.Ingest.InstallationPerMinute <= 0 || c.Ingest.InstallationBurst < 1 {
 		return fmt.Errorf("ingest rate limits must be positive")
+	}
+	if c.Worker.Concurrency < 1 || c.Worker.MaxAttempts < 1 {
+		return fmt.Errorf("worker.concurrency and worker.max_attempts must be at least 1")
 	}
 	return nil
 }

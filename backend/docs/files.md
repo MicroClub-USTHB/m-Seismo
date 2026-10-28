@@ -5,6 +5,18 @@ apps / providers / issue-service work. For each file it covers what the file
 is for, what it contains, and anything not obvious from the code. Files are
 grouped by directory, roughly in dependency order (lowest level first).
 
+The work came in three rounds, and the sections follow them:
+
+1. The domain model and the GitHub issue service (the per-directory
+   sections).
+2. The dev stack, test-issue action and rate limits.
+3. App-scoped connections, which moved tracker connections from the owner to
+   the app.
+4. GitLab and Bitbucket, reached with per-app OAuth tokens.
+
+Where round 3 changed a file described earlier, the earlier entry is updated
+and points to the [last section](#app-scoped-connections).
+
 Generated files (`internal/db/*.go`) are described here, but **never edit
 them**. Change the SQL and regenerate.
 
@@ -23,6 +35,8 @@ them**. Change the SQL and regenerate.
 - [`internal/project`](#internalproject)
 - [`internal/app`](#internalapp)
 - [Dev stack, test-issue action and rate limits](#dev-stack-test-issue-action-and-rate-limits)
+- [App-scoped connections](#app-scoped-connections)
+- [GitLab and Bitbucket](#gitlab-and-bitbucket)
 
 ---
 
@@ -90,16 +104,17 @@ New direct dependencies:
 
 ### `db/migrations/20261017120000_owners_apps_providers.sql` (new)
 
-The single migration for this feature. The step-by-step explanation, the
-down path and the warning about existing data are in
-[data-model.md → The migration](data-model.md#the-migration).
+The first migration for this feature. The step-by-step explanation, the down
+path and the warning about existing data are in
+[data-model.md → The migrations](data-model.md#the-migrations). Round 3 adds
+a second one; see [App-scoped connections](#app-scoped-connections).
 
 ### `db/schema.sql` (changed)
 
-The schema snapshot sqlc compiles against, in pg_dump format. It now
-contains both enums (`app_platform`, `tracker`), the eight application
-tables, their constraints and indexes, and the three migration versions.
-Normally `make db-up` regenerates it.
+The schema snapshot sqlc compiles against, in pg_dump format. It contains
+both enums (`app_platform`, `tracker`), the eight application tables, their
+constraints and indexes, the `pgcrypto` and `btree_gist` extensions, and the
+four migration versions. Normally `make db-up` regenerates it.
 
 ### `db/queries/owners.sql` (new)
 
@@ -118,17 +133,20 @@ from "not found or not yours".
 ### `db/queries/project_repositories.sql` (rewritten)
 
 Link, list, default handling and unlink, plus the two **issue-targeting
-queries** `GetIssueTarget` and `ListIssueTargetsForApp`, which join through
-to the connection's `tracker` and `external_id`.
+queries** `GetIssueTarget` and `ListIssueTargetsForApp`.
 `GetDefaultProjectRepository` was removed; the targeting queries replace it.
+Since round 3, a repository row carries a `tracker` instead of a connection,
+and the targeting queries return the repository only. The connection comes
+from the app (see [App-scoped connections](#app-scoped-connections)).
 
 ### `db/queries/provider_connections.sql` (new)
 
-The notable query is `UpsertProviderConnection`. Its
-`ON CONFLICT … DO UPDATE … WHERE owner matches` handles both re-installs by
-the same owner and attempts by a *different* owner to claim the installation
-(no row is returned, so the service answers 409) in one statement, with no
-race window.
+Rewritten in round 3 for app-scoped connections (see
+[App-scoped connections](#app-scoped-connections)).
+`UpsertProviderConnection` conflicts on `(app_id, tracker, external_id)`. A
+different owner claiming the installation is stopped by the exclusion
+constraint, which runs inside the same statement, so there is no race
+window.
 
 ### `db/queries/apps.sql` (new)
 
@@ -379,17 +397,19 @@ POST /auth/login         public
 
 ### `issue.go` (changed)
 
-Only the package doc comment changed. Tracker implementations now live in
-`internal/provider/<tracker>/` instead of `internal/issue/<tracker>/`. The
+In round 1 only the package doc comment changed. Tracker implementations now
+live in `internal/provider/<tracker>/` instead of `internal/issue/<tracker>/`.
+Round 3 adds `Connection` and `ConnectionFromRow`. The
 vendor-isolation rule is unchanged, and the doc names `OpenerSource` as the
 second interface domain code depends on. `Ref`, `Issue` and `Opener` are
 unchanged.
 
 ### `service.go` (new)
 
-`Module`, `OpenerSource`, `ErrNoTargets`, `Draft`, `Result`, `Service`,
-`OpenForApp`, `OpenInRepository`, and the private `target` and `open`
-helpers. The behaviour is documented in full in
+`Module`, `OpenerSource`, `ErrNoTargets`, `ErrNoConnection`, `Draft`,
+`Target`, `Result`, `Service`, `Targets`, `OpenForApp`, `OpenInRepository`,
+and the private `resolve` and `open` helpers. Round 3 reworked target
+resolution around the app's connections. The behaviour is documented in full in
 [issue-service.md](issue-service.md).
 
 ### `service_test.go` (new)
@@ -422,9 +442,9 @@ panics, which shows when the service makes an unexpected query) and a
 - `Registry` maps `db.Tracker` to `Provider`:
   - `Get` returns 404 "provider X is not available" for unknown trackers;
   - `Trackers()` returns them sorted, for `GET /providers`;
-  - `Opener(ctx, tracker, externalID)` implements `issue.OpenerSource`. The
-    compile-time assertion `var _ issue.OpenerSource = (*Registry)(nil)`
-    keeps it that way.
+  - `Opener(ctx, c)` and `Covers(c, repo)` implement `issue.OpenerSource`
+    by dispatching on `c.Tracker`. The compile-time assertion
+    `var _ issue.OpenerSource = (*Registry)(nil)` keeps it that way.
 
 ### `service.go` (new)
 
@@ -433,45 +453,40 @@ panics, which shows when the service makes an unexpected query) and a
   its Redis implementation, `redisStateStore`, which uses `SET … EX` and
   `GETDEL` (Redis ≥ 6.2). `GETDEL` makes taking a state atomic, so two
   concurrent callbacks with the same state can't both succeed.
-- `Service`:
-  - `StartConnect`: a 32-byte random state, stored as
-    `provider_state:<state>` → `"<tracker>:<ownerID>"` for 10 minutes;
-    returns `InstallURL`.
-  - `FinishConnect`: take the state, check its tracker, recover the owner,
-    `CompleteInstall`, upsert; `pgx.ErrNoRows` from the upsert becomes 409.
-  - `ListConnections` and `Disconnect` (owner-scoped).
-  - `ListRepositories` and `VerifyRepository` share
-    `connection(ctx, owner, id)`, which loads the connection owner-scoped,
-    rejects suspended ones, and finds the provider.
+- `Service` (as rewritten in round 3):
+  - `StartConnect(owner, app, tracker)`: checks the app is the owner's,
+    then stores a 32-byte random state as `provider_state:<state>` →
+    `"<tracker>:<ownerID>:<appID>"` for 10 minutes; returns `InstallURL`.
+  - `FinishConnect`: take the state, decode and check it, recover the owner
+    and the app, `CompleteInstall`, upsert on the app. Returns the app ID
+    even on a later error. An exclusion violation becomes 409.
+  - `AttachConnection`, `ListConnections`, `ListOwnerConnections`,
+    `Disconnect`, `ListRepositories`: all owner-scoped, and all but the owner
+    list app-scoped.
+  - `VerifyRepository` was removed in round 3, since projects no longer
+    hold credentials.
 
 ### `handler.go` (new)
 
 `Module` provides the registry, the registry as `issue.OpenerSource`, the
 Redis state store, the service and the handler. Routes are under
-`/providers`:
+`/providers` (since round 3):
 
 ```
 GET    /{tracker}/callback               public — GitHub redirects here
 GET    /                                 auth
-GET    /{tracker}/connect                auth
-GET    /connections                      auth
-DELETE /connections/{id}                 auth
-GET    /connections/{id}/repositories    auth
+GET    /connections                      auth — every app's connections (read-only)
 ```
 
-chi gives static segments priority over parameters, so `/connections/...`
-never matches `{tracker}`. `callback` turns every outcome into a `302` to the
-frontend with `status`, `provider` and either `connection_id` or `reason`,
-and logs internal errors.
+The connect, disconnect and repository routes moved to `/apps/{appID}/…` in
+round 3. `callback` turns every outcome into a `302` to the frontend:
+`/apps/{appID}/connections`, or `/apps` when the state is unknown. The
+redirect carries `status`, `provider` and either `connection_id` or
+`reason`. Internal errors are logged.
 
 ### `service_test.go` (new)
 
-Uses an in-memory `memStates`, a `fakeProvider` and a `fakeQuerier`. Covers:
-the full connect flow; that a state can't be replayed; an unknown tracker;
-a missing state; a state issued for another tracker; an installation already
-owned by someone else (409); and `VerifyRepository` with a reachable
-repository, an unreachable one, another owner's connection and a suspended
-connection.
+Rewritten in round 3; see [App-scoped connections](#app-scoped-connections).
 
 ---
 
@@ -546,11 +561,12 @@ Tests:
 
 ### `service.go` (new)
 
-- `Project` and `Repository` DTOs. `Repository` includes `tracker` and
-  `account_login`, taken from the join or from the verified connection.
+- `Project` and `Repository` DTOs. `Repository` is `{id, project_id,
+  tracker, repository, is_default, created_at}`; since round 3 it has no
+  connection.
 - `Service` takes the **pool** and the concrete `*db.Queries`, because
   `LinkRepository` and `SetDefaultRepository` need transactions, and the
-  `*provider.Service` for repository checks.
+  `*provider.Registry` for repository name checks.
 - `Create`: validate the name; derive the slug when missing (`slugify`:
   lower-case, runs of non-`[a-z0-9]` become `-`, trimmed, cut to 64); validate
   the slug; insert; a unique violation becomes "a project with this slug
@@ -558,17 +574,14 @@ Tests:
 - `List`, `Get`, `Update` (pointer-merge), `Delete`.
 - `LinkRepository`:
   1. owner-scoped project check;
-  2. trim and require the repository name;
-  3. `providers.VerifyRepository`, which checks the connection's owner and
-     suspension and calls the tracker;
+  2. trim and require the repository name; require `tracker`;
+  3. `providers.Get(tracker).ValidateRepository(name)`: 404 for a tracker
+     that isn't configured, 422 for a bad format. No network call;
   4. **in one transaction**: list the existing repositories → default if
      requested or if this is the first → `ClearDefault` if default →
      insert;
   5. a unique violation becomes "repository is already linked to this
      project".
-
-  The tracker call happens *before* the transaction starts, so no database
-  transaction stays open during network I/O.
 - `SetDefaultRepository`: in a transaction, `ClearDefault` then
   `SetDefault`; 0 rows means 404 and the clear is rolled back.
 - `UnlinkRepository`.
@@ -624,6 +637,10 @@ POST /   GET /
 GET /{appID}   PATCH /{appID}   DELETE /{appID}
 GET /{appID}/keys   POST /{appID}/keys   DELETE /{appID}/keys/{keyID}
 GET /{appID}/projects   PUT /{appID}/projects/{projectID}   DELETE /{appID}/projects/{projectID}
+POST /{appID}/test-issue                                            (round 2)
+GET /{appID}/connect/{tracker}   GET|POST /{appID}/connections      (round 3)
+DELETE /{appID}/connections/{connectionID}
+GET /{appID}/connections/{connectionID}/repositories   GET /{appID}/targets
 ```
 
 ### `service_test.go` (new)
@@ -772,3 +789,289 @@ New keys: `github.min_write_interval` (1s), `github.max_rate_limit_wait`
 | `internal/httpx/httpx_test.go` | 429 + rounded `Retry-After`; upstream `RetryAfter()` errors classified |
 | `internal/app/service_test.go` | test-issue throttle gives `KindRateLimited` with the limiter's wait |
 
+---
+
+## App-scoped connections
+
+Round 3 moved tracker connections from the owner to the app. Each app now
+brings its own credentials, and a project only says where its code lives.
+The model is explained in
+[github.md → Who a connection belongs to](github.md#who-a-connection-belongs-to)
+and [data-model.md](data-model.md).
+
+### `db/migrations/20261021130000_app_scoped_connections.sql` (new)
+
+- Adds `provider_connections.app_id` and backfills it by copying every
+  owner-level connection to each of the owner's apps.
+- Adds `issues.provider_connection_id` and fills it from those copies.
+- Swaps `project_repositories.provider_connection_id` for `tracker`, merging
+  rows that now collide.
+- Adds the composite FK, the per-app unique and the
+  one-owner-per-account exclusion constraint (`btree_gist`).
+- The down migration is lossy.
+
+Step by step in
+[data-model.md → The migrations](data-model.md#20261021130000_app_scoped_connectionssql).
+
+### `db/schema.sql` (regenerated)
+
+Dumped from the dev database with `dbmate dump` after the migration, with
+pg_dump 18's `\restrict` lines removed.
+
+### `db/queries/provider_connections.sql` (rewritten)
+
+`UpsertProviderConnection` (conflict on `(app_id, tracker, external_id)`),
+`GetAppConnection`, `GetOwnerConnection`, `ListAppConnections`,
+`ListOwnerConnections`, `ListActiveConnectionsForApp`, `DeleteAppConnection`.
+The old owner-only queries (`GetProviderConnection`,
+`ListProviderConnections`, `DeleteProviderConnection`) are gone.
+
+### `db/queries/project_repositories.sql`, `issues.sql` (changed)
+
+- `LinkProjectRepository` takes `tracker`, and `ListProjectRepositories` no
+  longer joins.
+- `ListIssueTargetsForApp` returns `(project_repository_id, project_id,
+  tracker, repository)`.
+- `GetIssueTarget` takes `(id, app_id)` and joins `app_projects`.
+- `CreateIssue` takes `provider_connection_id`.
+
+### `internal/db/*` (regenerated)
+
+`ProviderConnection.AppID`, `ProjectRepository.Tracker`,
+`Issue.ProviderConnectionID`, and the new query methods and param structs.
+
+### `internal/apperr/apperr.go` (changed)
+
+`Classify` maps SQLSTATE `23P01` (exclusion violation) to `KindConflict`,
+like `23505`.
+
+### `internal/issue/issue.go` (changed)
+
+`Connection{ID, Tracker, ExternalID, AccountLogin}` is the value every
+connection-scoped provider call now takes. `ConnectionFromRow` builds one
+from a `db.ProviderConnection`. It lives in `issue` because `issue` can't
+import `provider`.
+
+### `internal/issue/service.go` (changed)
+
+- `OpenerSource` is now `Opener(ctx, Connection)` + `Covers(Connection, repo)`.
+- New `Target`, `ErrNoConnection` and `Result.ConnectionID`.
+- `Targets(appID)` pairs each default repository with the first active app
+  connection on the same tracker that `Covers` it.
+- `OpenForApp` builds on `Targets`, fails uncovered targets without calling
+  the tracker, and records the connection used.
+- `OpenInRepository(ctx, appID, repositoryID, draft)`: the app is now
+  required, and must be linked to the repository's project.
+- The rate-limit skip key is still `tracker/external_id`, because limits are
+  per installation even when apps share one.
+
+### `internal/provider/provider.go` (changed)
+
+- `Provider` methods take `issue.Connection` instead of `externalID`.
+- New `ValidateRepository` and `Covers`.
+- `Registry` implements the new `OpenerSource`. A connection on an
+  unconfigured tracker covers nothing.
+
+### `internal/provider/service.go` (rewritten)
+
+`Connection` gains `app_id`. The state encodes owner and app
+(`connectState`, `decodeState`). There are new `AttachConnection` and
+`ListOwnerConnections` methods, `requireApp` checks app ownership, and every
+query is app- and owner-scoped. `VerifyRepository` was removed.
+
+### `internal/provider/handler.go` (changed)
+
+- Only `/providers`, `/providers/{tracker}/callback` and the read-only
+  `/providers/connections` remain.
+- The callback redirects to `/apps/{appID}/connections`, or to `/apps` when
+  the state is unknown.
+
+### `internal/provider/github/github.go` (changed)
+
+- `ListRepositories`, `HasRepository` and `Opener` take an `issue.Connection`.
+- New `ValidateRepository`, and `Covers`, which compares the repository
+  owner with `AccountLogin` ignoring case.
+- The package doc describes the per-app model.
+
+### `internal/project/service.go` (changed)
+
+- Links take `{tracker, repository, is_default}` and are validated through
+  `provider.Registry`. Reachability is no longer checked here.
+- The `Repository` DTO lost `connection_id` and `account_login`.
+
+### `internal/app/connections.go` (new)
+
+- The handlers for `GET /apps/{appID}/connect/{tracker}`,
+  `GET|POST /apps/{appID}/connections`,
+  `DELETE /apps/{appID}/connections/{connectionID}`,
+  `GET …/connections/{connectionID}/repositories` and
+  `GET /apps/{appID}/targets`, all calling `provider.Service`.
+- `Service.Targets` and its `Target` DTO, which turns `ErrNoConnection` into
+  "no github connection on this app covers …".
+
+### `internal/app/handler.go`, `testissue.go`, `service.go` (changed)
+
+- `Handler` takes `*provider.Service` and mounts the routes above.
+- `TestIssueResult` gains `connection_id`.
+- The package doc now says the app holds its tracker connections.
+
+### `cmd/fakegithub/main.go` (changed)
+
+- Installations `N ≥ 100000000` are on `other-org`, which has
+  `other-org/tools`.
+- An installation token only reaches its own account's repositories: others
+  get 404, and `/installation/repositories` is filtered, as on GitHub.
+
+### `e2e_test.go` (changed)
+
+The doc comment says the app needs its own connection. The log line includes
+the connection used.
+
+### Tests
+
+| File | Covers |
+|---|---|
+| `internal/issue/service_test.go` | covering connection chosen and recorded; uncovered repository → `ErrNoConnection` without a tracker call; two apps on one project use their own connections; `OpenInRepository` requires the link and a connection; `Targets`; rate-limited connection skipped |
+| `internal/provider/service_test.go` | state carries the app; connect for another owner's app refused; state without an app refused; account held by another owner → 409 with the app ID kept for the redirect; same account on two apps → two rows; attach (own, foreign, suspended, into a foreign app); repository listing app-scoped; registry `Covers` |
+| `internal/provider/github/github_test.go` | `Covers` (case, other accounts, malformed names); `ValidateRepository` |
+| `internal/httpx/httpx_test.go` | `23P01` → 409 |
+| `scripts/api/providers.sh`, `issues.sh`, `lib.sh` | see [test-scripts.md](test-scripts.md) |
+
+---
+
+## GitLab and Bitbucket
+
+Round 4 added GitLab (gitlab.com or self-managed) and Bitbucket Cloud. Each
+app runs its own OAuth flow, and its token is stored encrypted for that
+app's connection. The model is explained in
+[gitlab-bitbucket.md](gitlab-bitbucket.md).
+
+### `internal/secrets/secrets.go` (new)
+
+- `Cipher`: AES-256-GCM. `Seal(plaintext, aad)` prepends a random nonce;
+  `Open(ciphertext, aad)` refuses a wrong key, wrong associated data or
+  tampering.
+- `New(key)` takes a 32-byte key, or nil for a keyless cipher whose every
+  call returns `ErrNoKey`.
+- `FromConfig` decodes `secrets.encryption_key` (base64). In development, an
+  empty key becomes a fixed development key, with a warning.
+- `Module` provides `*Cipher`.
+
+### `db/migrations/20261022120000_connection_secrets.sql`, `db/queries/connection_secrets.sql` (new)
+
+- The `connection_secrets` table: one ciphertext per connection, cascading
+  with it.
+- `UpsertConnectionSecret` and `GetConnectionSecret`.
+- `schema.sql` and `internal/db` are regenerated.
+
+### `internal/provider/secrets.go` (new)
+
+- `SecretStore` (`Load` / `Save` per connection) and `ErrNoSecret`.
+- `NewDBSecretStore(q, cipher)` seals with the connection ID as associated
+  data. `provider.Module` provides it.
+
+### `internal/provider/provider.go`, `service.go`, `handler.go` (changed)
+
+- `Account.Secret` carries the credentials to keep.
+- `Service.upsert` saves a non-nil `Secret` for the connection.
+  `NewService` takes the `SecretStore`.
+- `AttachConnection` refuses a source connection that has a stored secret,
+  answering 422 "… cannot be shared".
+
+### `internal/provider/oauth/token.go` (new)
+
+- `Token` (JSON-encoded for storage), with `Encode` and `DecodeToken`.
+- `Endpoint`: `AuthCodeURL`, `Exchange` and `Refresh`. Client credentials go
+  in the form body or with HTTP Basic. A rejected code is `apperr.Invalid`;
+  a rejected refresh is `ErrRevoked` "…; connect the app again". A refresh
+  without a new refresh token keeps the old one.
+- `Store`: the subset of `provider.SecretStore` it needs, declared locally
+  so `oauth` does not import `provider`.
+- `Tokens`: a per-connection lock, refresh within a minute of expiry, save
+  after a refresh, and `Renew(rejected)` after a 401 that refreshes only if
+  nobody already did.
+
+### `internal/provider/oauth/client.go` (new)
+
+- `Auth` (`Tokens.For(connectionID)`, `StaticToken`).
+- `Client.Do(ctx, auth, method, path, in, out)`:
+  - JSON in and out;
+  - relative paths keep `%2F`;
+  - absolute URLs only on the API host;
+  - one renew-and-retry on 401;
+  - 429 waited out or turned into `*issue.RateLimitError`.
+- `APIError` and `IsStatus` read GitLab and Bitbucket error bodies.
+
+### `internal/provider/gitlab/gitlab.go`, `opener.go` (new)
+
+- `FromConfig` / `New` / `Options`.
+- The `Provider` methods:
+  - the authorize URL with scope `api`;
+  - `CompleteInstall`: denied, missing code, exchange, `GET /user`, and the
+    token as `Secret`;
+  - project listing with `X-Next-Page`;
+  - `HasRepository`, `ValidateRepository` (nested paths) and `Covers`
+    (any valid path).
+- The opener: labels as a comma-separated list, milestone by title,
+  assignees by username, notes, and `state == "opened"`. Project paths are
+  URL-encoded.
+
+### `internal/provider/gitlab/fakegitlab/fakegitlab.go` (new)
+
+The fake GitLab, as an importable package: OAuth grants with rotating
+refresh tokens, the API v4 endpoints the provider uses, special projects and
+inspection endpoints. See
+[test-scripts.md → contracts](test-scripts.md#the-fake-gitlab-and-bitbucket-contracts).
+
+### `internal/provider/bitbucket/bitbucket.go`, `opener.go` (new)
+
+- The same shape for Bitbucket Cloud: HTTP Basic client credentials, no
+  scope parameter, `GET /user` (uuid), and `next`-link pagination.
+- The opener puts labels at the end of the body, sends `kind: bug`, skips
+  assignees, and maps the open/closed states.
+
+### `internal/provider/bitbucket/fakebitbucket/fakebitbucket.go` (new)
+
+The fake Bitbucket (OAuth and API 2.0 on one host), including a repository
+with its issue tracker turned off.
+
+### `cmd/fakegitlab/main.go`, `cmd/fakebitbucket/main.go` (new)
+
+These serve the fakes on `:9091` and `:9092`.
+
+### `internal/config/*` (changed)
+
+- `OAuthTrackerConfig` for `gitlab` and `bitbucket`, and `SecretsConfig`.
+- The redirect URLs are derived from `server.public_url`.
+- `validate` requires `secrets.encryption_key` outside development once
+  either tracker is configured.
+
+### `main.go`, `Dockerfile`, `deploy/compose.dev.yml`, `deploy/.env.example` (changed)
+
+- `secrets.Module`, `gitlab.Module` and `bitbucket.Module` are in the graph.
+- Two image targets and two compose services. The backend's defaults point
+  at the fakes and it waits for them to be healthy.
+- The env example documents real GitLab and Bitbucket setups and the
+  encryption key.
+
+### Scripts (new / changed)
+
+- `scripts/api/oauth_suite.sh`: the shared OAuth tracker suite.
+- `gitlab.sh` and `bitbucket.sh`: fixtures plus tracker-specific checks.
+- `lib.sh`: `start_connect`, `tracker_callback`, `tracker_connect` and
+  `fake_tracker_*`.
+- `all.sh` runs eight scripts.
+- `providers.sh` uses `jira` as its unknown tracker and expects all three
+  providers.
+
+See [test-scripts.md](test-scripts.md).
+
+### Tests
+
+| File | Covers |
+|---|---|
+| `internal/secrets/secrets_test.go` | round trip, nonces, wrong row/key, tampering, keyless, dev key, config |
+| `internal/provider/oauth/oauth_test.go` | exchange (body and Basic), refresh and rotation, concurrent refresh once, renew after 401, revoked, 429 handling, error bodies, host check |
+| `internal/provider/gitlab/gitlab_test.go`, `internal/provider/bitbucket/bitbucket_test.go` | every provider and opener method against the in-process fake, refresh, revocation, two apps of one user, failures and rate limits |
+| `internal/provider/service_test.go` | token saved on connect, attach refused for OAuth connections, `NewDBSecretStore` encryption and row binding |
+| `internal/config/config_test.go` | tracker settings, derived redirects, the encryption key rule |

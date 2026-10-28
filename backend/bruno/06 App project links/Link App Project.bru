@@ -1,0 +1,17 @@
+meta {
+  name: Link App Project
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/apps/{{appId}}/projects/{{projectId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  204; idempotent. 404 "project not found" if the project isn't yours.
+  An app's issues go to the default repository of every linked project,
+  each through the app's own connection.
+}

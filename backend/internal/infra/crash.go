@@ -17,7 +17,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crash/none"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
-	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/secret"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/secrets"
 )
 
 // crashCallbackPath is where Google sends the browser back after consent.
@@ -32,6 +32,7 @@ type CrashParams struct {
 	Pool      *pgxpool.Pool
 	Redis     *redis.Client
 	Require   httpx.AuthMiddleware
+	Cipher    *secrets.Cipher
 }
 
 // CrashResult is the crash source, plus the routes that connect a project
@@ -61,12 +62,8 @@ func NewCrashSource(p CrashParams) (CrashResult, error) {
 		return CrashResult{}, fmt.Errorf("infra: unknown crash source %q", cfg.Crash.Source)
 	}
 
-	if cfg.Security.SecretKey == "" {
-		return CrashResult{}, errors.New("infra: crash source crashlytics needs SEISMO_SECURITY_SECRET_KEY to encrypt refresh tokens")
-	}
-	box, err := secret.New(cfg.Security.SecretKey)
-	if err != nil {
-		return CrashResult{}, fmt.Errorf("infra: %w", err)
+	if cfg.Secrets.EncryptionKey == "" && cfg.Env != "development" {
+		return CrashResult{}, errors.New("infra: crash source crashlytics needs SEISMO_SECRETS_ENCRYPTION_KEY to encrypt refresh tokens")
 	}
 
 	c := cfg.Crash.Crashlytics
@@ -80,7 +77,7 @@ func NewCrashSource(p CrashParams) (CrashResult, error) {
 		RedirectURL:  redirect,
 		QuotaProject: c.QuotaProject,
 	}
-	store := crashlytics.NewPGStore(db.New(p.Pool), box)
+	store := crashlytics.NewPGStore(db.New(p.Pool), p.Cipher)
 
 	src, err := crashlytics.New(ccfg, store)
 	if err != nil {

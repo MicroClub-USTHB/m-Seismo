@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"os"
 	"testing"
@@ -15,7 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
-	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/secret"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/secrets"
 )
 
 // These tests need a migrated database and a Redis server. They are skipped
@@ -35,9 +34,9 @@ func TestPGStore(t *testing.T) {
 	t.Cleanup(pool.Close)
 	q := db.New(pool)
 
-	key := make([]byte, secret.KeySize)
+	key := make([]byte, secrets.KeySize)
 	rand.Read(key)
-	box, err := secret.New(base64.StdEncoding.EncodeToString(key))
+	box, err := secrets.New(key)
 	if err != nil {
 		t.Fatal(err)
 	}

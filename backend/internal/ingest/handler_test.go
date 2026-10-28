@@ -161,9 +161,13 @@ func multipartRequest(t *testing.T, key string, parts ...part) *http.Request {
 		if err != nil {
 			t.Fatal(err)
 		}
-		w.Write(p.data)
+		if _, err := w.Write(p.data); err != nil {
+			t.Fatal(err)
+		}
 	}
-	mw.Close()
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/reports", &body)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
@@ -198,7 +202,9 @@ func TestAccepted(t *testing.T) {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
 	var body map[string]string
-	json.Unmarshal(rec.Body.Bytes(), &body)
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
 	if body["id"] != "0192a5f0-7c3e-7d4a-9b1e-3f6a2c8d4e51" || body["status"] != "accepted" {
 		t.Errorf("body = %s", rec.Body)
 	}
@@ -395,7 +401,9 @@ func TestRateLimiterDownLetsReportsThrough(t *testing.T) {
 func TestBodiesDroppedUnlessCaptured(t *testing.T) {
 	ht := newHandlerTest()
 	var m map[string]any
-	json.Unmarshal(exampleReport(t), &m)
+	if err := json.Unmarshal(exampleReport(t), &m); err != nil {
+		t.Fatal(err)
+	}
 	m["network_requests"] = []any{map[string]any{
 		"timestamp": "2026-10-18T14:03:09.866Z", "url": "https://api.example.com/pay", "method": "POST",
 		"duration_ms": 120, "request_body": `{"card":"4111111111111111"}`,

@@ -1,0 +1,18 @@
+meta {
+  name: Disconnect
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/apps/{{appId}}/connections/{{connectionId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  204. Only this app loses the connection: other apps sharing the same
+  installation keep theirs, project repositories are untouched, recorded
+  issues keep a null `provider_connection_id`. Nothing is uninstalled on
+  the tracker side.
+}

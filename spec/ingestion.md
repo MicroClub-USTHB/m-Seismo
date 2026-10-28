@@ -75,8 +75,8 @@ A retried report counts against the rate limits like any other request.
 - **UUIDs** (`id`, `installation_id`) are accepted in either case, since
   iOS writes them uppercase. The backend lowercases them, so the same ID in
   another case is the same report for idempotency.
-- **Crash reports.** When `trigger` is `crash` or `non_fatal`, `crash` is
-  required. `session_id`, `logs` and `breadcrumbs` must come from the
+- **Crash reports.** When `trigger` is `crash` or `non_fatal`, either `crash`
+  details or a valid `sentry.event_id` reference is required. `session_id`, `logs` and `breadcrumbs` must come from the
   session that crashed, not from the launch that sends the report.
 - **Bodies.** When `bodies_captured` is false or absent, any
   `request_body` or `response_body` is dropped.
@@ -158,5 +158,16 @@ breadcrumbs, …).
    into Crashlytics as a custom key. The field is in the schema but stays
    optional until this is decided.
 2. **GitHub webhook** for closed issues: separate document.
-3. **Agent protocol** (server-side context): separate
-   document.
+3. **Agent protocol** (server-side context): [`agent-protocol.md`](agent-protocol.md).
+
+## 9. External crash references and web reports
+
+`platform` also accepts `web`. Apps may attach `sentry: {"event_id": "<32 hex characters>"}`
+to any report. Event IDs are normalized to lowercase. Organization, project and
+API credentials are never selected by an SDK payload: the owner configures them
+independently for each app through the crash-provider management API. The existing
+`crashlytics` reference remains accepted. Neither provider is mandatory.
+
+Sentry references permit `crash`/`non_fatal` reports without inline crash details;
+the owner can resolve the external event after ingestion. No upstream Sentry API
+call is made during acceptance. See [crash providers](../backend/docs/crash-providers.md).

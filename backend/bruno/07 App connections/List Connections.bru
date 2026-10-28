@@ -1,0 +1,20 @@
+meta {
+  name: List Connections
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/apps/{{appId}}/connections
+  body: none
+  auth: inherit
+}
+
+vars:post-response {
+  connectionId: res.body[0].id
+}
+
+docs {
+  200 `[connection]`, oldest first. Sets `connectionId` from the first
+  entry, if any.
+}

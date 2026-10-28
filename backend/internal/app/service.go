@@ -1,6 +1,7 @@
 // Package app manages apps: the mobile apps that report bugs. An app holds
-// the SDK keys and is linked to the projects whose repositories receive its
-// issues.
+// the SDK keys, its own tracker connections (the credentials its issues are
+// opened with), and is linked to the projects whose repositories receive
+// its issues.
 package app
 
 import (
@@ -318,10 +319,10 @@ func validateName(raw string) (string, error) {
 
 func validatePlatform(p db.AppPlatform) error {
 	switch p {
-	case db.AppPlatformIos, db.AppPlatformAndroid, db.AppPlatformFlutter, db.AppPlatformReactNative:
+	case db.AppPlatformIos, db.AppPlatformAndroid, db.AppPlatformFlutter, db.AppPlatformReactNative, db.AppPlatformWeb:
 		return nil
 	}
-	return apperr.Invalid("platform must be one of ios, android, flutter, react_native")
+	return apperr.Invalid("platform must be one of ios, android, flutter, react_native, web")
 }
 
 func validateBundleID(raw string) (string, error) {

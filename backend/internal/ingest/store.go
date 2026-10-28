@@ -12,6 +12,9 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 )
 
+// ScreenshotName is the attachment name of a report's screenshot.
+const ScreenshotName = "screenshot"
+
 // Attachment is a file sent with a report.
 type Attachment struct {
 	Name        string
@@ -64,7 +67,7 @@ func (s *PGStore) Save(ctx context.Context, appID uuid.UUID, r *Report, payload 
 	if err != nil {
 		return Saved{}, fmt.Errorf("ingest: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	q := db.New(tx)
 
 	row, err := q.InsertReport(ctx, db.InsertReportParams{

@@ -17,3 +17,26 @@ VALUES ($1, $2, $3, $4);
 UPDATE reports
 SET queued_at = now()
 WHERE id = $1 AND queued_at IS NULL;
+
+-- name: GetReport :one
+SELECT * FROM reports
+WHERE id = $1;
+
+-- name: MarkReportProcessed :exec
+UPDATE reports
+SET processed_at = now()
+WHERE id = $1 AND processed_at IS NULL;
+
+-- name: ListReportDeliveries :many
+SELECT * FROM report_deliveries
+WHERE report_id = $1;
+
+-- name: CreateReportDelivery :exec
+INSERT INTO report_deliveries (report_id, project_repository_id, issue_id, url)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (report_id, project_repository_id) DO NOTHING;
+
+-- name: ListReportAttachmentNames :many
+SELECT name FROM report_attachments
+WHERE report_id = $1
+ORDER BY name;

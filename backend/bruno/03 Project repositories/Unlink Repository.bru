@@ -1,0 +1,16 @@
+meta {
+  name: Unlink Repository
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/projects/{{projectId}}/repositories/{{repositoryId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  204. If this was the default, the project has no default until another
+  one is set, and issues from linked apps skip this project.
+}

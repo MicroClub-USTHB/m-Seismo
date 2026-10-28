@@ -22,22 +22,22 @@ func TestNewCrashSource(t *testing.T) {
 	tests := []struct {
 		name       string
 		crash      config.CrashConfig
-		security   config.SecurityConfig
+		secrets    config.SecretsConfig
 		want       any
 		wantRoutes int
 		wantErr    bool
 	}{
 		{name: "default", want: none.Source{}},
 		{name: "none", crash: config.CrashConfig{Source: "none"}, want: none.Source{}},
-		{name: "crashlytics", crash: config.CrashConfig{Source: "crashlytics", Crashlytics: client}, security: config.SecurityConfig{SecretKey: secretKey}, want: &crashlytics.Source{}, wantRoutes: 1},
+		{name: "crashlytics", crash: config.CrashConfig{Source: "crashlytics", Crashlytics: client}, secrets: config.SecretsConfig{EncryptionKey: secretKey}, want: &crashlytics.Source{}, wantRoutes: 1},
 		{name: "crashlytics without secret key", crash: config.CrashConfig{Source: "crashlytics", Crashlytics: client}, wantErr: true},
-		{name: "crashlytics without client", crash: config.CrashConfig{Source: "crashlytics"}, security: config.SecurityConfig{SecretKey: secretKey}, wantErr: true},
+		{name: "crashlytics without client", crash: config.CrashConfig{Source: "crashlytics"}, secrets: config.SecretsConfig{EncryptionKey: secretKey}, wantErr: true},
 		{name: "unknown", crash: config.CrashConfig{Source: "sentry"}, wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{Crash: tt.crash, Security: tt.security}
+			cfg := &config.Config{Env: "production", Crash: tt.crash, Secrets: tt.secrets}
 			res, err := NewCrashSource(CrashParams{
 				Lifecycle: fxtest.NewLifecycle(t),
 				Config:    cfg,
@@ -73,9 +73,9 @@ func TestCrashlyticsRedirectDefaultsToPublicURL(t *testing.T) {
 	key := make([]byte, 32)
 	rand.Read(key)
 	cfg := &config.Config{
-		Server:   config.ServerConfig{PublicURL: "https://seismo.example.com/"},
-		Crash:    config.CrashConfig{Source: "crashlytics", Crashlytics: config.CrashlyticsConfig{ClientID: "id", ClientSecret: "secret"}},
-		Security: config.SecurityConfig{SecretKey: base64.StdEncoding.EncodeToString(key)},
+		Server:  config.ServerConfig{PublicURL: "https://seismo.example.com/"},
+		Crash:   config.CrashConfig{Source: "crashlytics", Crashlytics: config.CrashlyticsConfig{ClientID: "id", ClientSecret: "secret"}},
+		Secrets: config.SecretsConfig{EncryptionKey: base64.StdEncoding.EncodeToString(key)},
 	}
 	res, err := NewCrashSource(CrashParams{
 		Lifecycle: fxtest.NewLifecycle(t),

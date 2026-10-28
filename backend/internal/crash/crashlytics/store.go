@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
-	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/secret"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/secrets"
 )
 
 // ErrNotConnected is returned when a project has no Crashlytics connection.
@@ -44,16 +44,16 @@ type Store interface {
 }
 
 // PGStore is the Store backed by Postgres. Refresh tokens are encrypted
-// with box before they are written.
+// with cipher before they are written, bound to their project.
 type PGStore struct {
-	q   db.Querier
-	box *secret.Box
+	q      db.Querier
+	cipher *secrets.Cipher
 }
 
 var _ Store = (*PGStore)(nil)
 
-func NewPGStore(q db.Querier, box *secret.Box) *PGStore {
-	return &PGStore{q: q, box: box}
+func NewPGStore(q db.Querier, cipher *secrets.Cipher) *PGStore {
+	return &PGStore{q: q, cipher: cipher}
 }
 
 func (s *PGStore) OwnsProject(ctx context.Context, ownerID uuid.UUID, projectID string) (bool, error) {
@@ -76,7 +76,7 @@ func (s *PGStore) Save(ctx context.Context, projectID, email, refreshToken strin
 	if !ok {
 		return ErrUnknownProject
 	}
-	sealed, err := s.box.Seal([]byte(refreshToken))
+	sealed, err := s.cipher.Seal([]byte(refreshToken), associatedData(id))
 	if err != nil {
 		return err
 	}
@@ -138,7 +138,7 @@ func (s *PGStore) SetApps(ctx context.Context, projectID string, apps []string) 
 }
 
 func (s *PGStore) toConnection(row db.CrashlyticsConnection) (Connection, error) {
-	token, err := s.box.Open(row.RefreshToken)
+	token, err := s.cipher.Open(row.RefreshToken, associatedData(row.ProjectID))
 	if err != nil {
 		return Connection{}, fmt.Errorf("crashlytics: decrypt refresh token of project %s: %w", row.ProjectID, err)
 	}
@@ -154,3 +154,6 @@ func parseUUID(s string) (uuid.UUID, bool) {
 	id, err := uuid.Parse(s)
 	return id, err == nil
 }
+
+// associatedData binds a refresh token to its project's row.
+func associatedData(projectID uuid.UUID) []byte { return projectID[:] }

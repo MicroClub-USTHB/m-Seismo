@@ -1,0 +1,12 @@
+{
+  "version": 3,
+  "file": "mapped.js",
+  "sources": [
+    "plain.src.js"
+  ],
+  "sourcesContent": [
+    "function labMinifiedMapped() {\n  const a = 1;\n  const b = 2;\n  throw new Error(\"minified mapped\");\n}\nlabMinifiedMapped();\n"
+  ],
+  "names": [],
+  "mappings": ""
+}

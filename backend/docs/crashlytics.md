@@ -23,7 +23,7 @@ There are two levels of setup:
 The API refuses service account credentials, so m-Seismo calls it as a
 Google user. The project's owner connects it through the OAuth flow below;
 Google returns a refresh token, which m-Seismo encrypts with
-`SEISMO_SECURITY_SECRET_KEY` (AES-256-GCM) and stores in
+`SEISMO_SECRETS_ENCRYPTION_KEY` (AES-256-GCM) and stores in
 `crashlytics_connections`.
 
 To find a crash, `events.list` can filter by time but not by installation.
@@ -63,7 +63,7 @@ time.
 | `SEISMO_CRASH_CRASHLYTICS_CLIENT_SECRET` | Client secret from step 2 |
 | `SEISMO_CRASH_CRASHLYTICS_REDIRECT_URL` | The redirect URI from step 2. Empty means `SEISMO_SERVER_PUBLIC_URL` + `/api/v1/oauth/crashlytics/callback` |
 | `SEISMO_CRASH_CRASHLYTICS_QUOTA_PROJECT` | Project ID from step 1 |
-| `SEISMO_SECURITY_SECRET_KEY` | `openssl rand -base64 32`; required with `crashlytics` |
+| `SEISMO_SECRETS_ENCRYPTION_KEY` | `openssl rand -base64 32`; required with `crashlytics` |
 
 Keep the secret key safe and stable: if it is lost or changed, the stored
 refresh tokens can no longer be read and every project must be connected

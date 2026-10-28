@@ -1,0 +1,22 @@
+meta {
+  name: Create Key
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/apps/{{appId}}/keys
+  body: none
+  auth: inherit
+}
+
+vars:post-response {
+  keyId: res.body.id
+}
+
+docs {
+  201 key, plus `"secret": "msk_..."` which appears only in this response
+  — m-Seismo stores only its SHA-256 hash. An app can have several active
+  keys for rotation (create the new one, ship it, revoke the old one).
+  Sets `keyId`.
+}

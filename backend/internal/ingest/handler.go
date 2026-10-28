@@ -226,7 +226,7 @@ func readParts(w http.ResponseWriter, r *http.Request) (report []byte, files []A
 			if ct != "image/jpeg" && ct != "image/png" {
 				return nil, nil, http.StatusUnsupportedMediaType, "unsupported_media_type", "the screenshot must be a JPEG or PNG image"
 			}
-			files = []Attachment{{Name: "screenshot", ContentType: ct, Data: data}}
+			files = []Attachment{{Name: ScreenshotName, ContentType: ct, Data: data}}
 
 		default:
 			// Unknown parts are ignored.
