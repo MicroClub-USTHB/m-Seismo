@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/testenv"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -38,10 +39,7 @@ func (c *capturedIssue) OpenInRepository(_ context.Context, _ uuid.UUID, _ *uuid
 // Exercise the real queue consumer, report/connection persistence and processor.
 // Only Sentry and the tracker write boundary are simulated.
 func TestSentryReportQueueToIssueIntegration(t *testing.T) {
-	databaseURL, natsURL := os.Getenv("SEISMO_TEST_DATABASE_URL"), os.Getenv("SEISMO_TEST_NATS_URL")
-	if databaseURL == "" || natsURL == "" {
-		t.Skip("requires isolated Postgres and NATS")
-	}
+	databaseURL, natsURL := testenv.DatabaseURL(t), testenv.NATSURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, databaseURL)
