@@ -1,0 +1,17 @@
+meta {
+  name: List Connection Repositories
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/apps/{{appId}}/connections/{{connectionId}}/repositories
+  body: none
+  auth: inherit
+}
+
+docs {
+  200 `[{"full_name", "private", "url"}]` — the repositories the
+  installation/authorization was granted. 422 "connection is suspended"
+  if suspended.
+}

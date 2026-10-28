@@ -41,3 +41,8 @@ sdks/web/playwright-report/
 sdks/web/.vite/
 
 report/
+
+# Nix
+.direnv/
+.envrc
+shell.nix

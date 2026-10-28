@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "0192a5f0-7c3e-7d4a-9b1e-3f6a2c8d4e51",
+  "installation_id": "5b8f2c1e-9a4d-4e7b-8c3f-1d2e6a9b0c47",
+  "session_id": "c41d9e2a-6b7f-4a3c-9e8d-2f1a5b6c7d80",
+  "occurred_at": "2026-10-18T14:03:12.123Z",
+  "platform": "ios",
+  "sdk": { "name": "mseismo-ios", "version": "0.2.0" },
+  "environment": "staging",
+  "release": { "version": "2.4.0", "build": "412" },
+  "mode": "qa",
+  "trigger": "shake",
+  "auto_submitted": false,
+  "consent": "given",
+  "user_input": {
+    "title": "Checkout button does nothing",
+    "description": "Tapped Pay twice, nothing happened.",
+    "category": "bug",
+    "severity": "high"
+  },
+  "device": {
+    "os_name": "iOS",
+    "os_version": "18.1",
+    "model": "iPhone15,2",
+    "locale": "fr-DZ",
+    "battery_level": 0.62,
+    "available_memory_bytes": 1073741824,
+    "network_type": "wifi",
+    "orientation": "portrait"
+  },
+  "feature_flags": { "new_checkout": true, "max_items": 20 },
+  "experiments": { "pay_button_color": "green" },
+  "logs": [
+    { "timestamp": "2026-10-18T14:03:01.004Z", "level": "info", "message": "Cart loaded with 3 items" },
+    { "timestamp": "2026-10-18T14:03:09.870Z", "level": "error", "message": "Payment request failed: 502" }
+  ],
+  "breadcrumbs": [
+    { "timestamp": "2026-10-18T14:02:55.512Z", "kind": "navigation", "message": "CartView" },
+    { "timestamp": "2026-10-18T14:03:08.201Z", "kind": "tap", "message": "Pay button" },
+    { "timestamp": "2026-10-18T14:03:09.866Z", "kind": "network", "message": "POST /v1/payments 502" }
+  ],
+  "bodies_captured": false
+}

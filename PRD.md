@@ -3,18 +3,21 @@
 |                   |                                                        |
 | ----------------- | ------------------------------------------------------ |
 | **Status**        | Draft, under product review                            |
-| **Version**       | 1.0                                                    |
-| **Last updated**  | 2026-10-15                                             |
+| **Version**       | 1.3                                                    |
+| **Last updated**  | 2026-10-22                                             |
 | **Product owner** | @wail                                                  |
 | **Organisation**  | MicroClub USTHB                                        |
 | **Source**        | m-Seismo cahier des charges (2026-10-14)               |
-| **Platforms**     | iOS and Android apps; Flutter and React Native apps    |
+| **Platforms**     | iOS, Android, Flutter, React Native and web apps    |
 
 ### Revision history
 
 | Version | Change                                                                                                                                                                       |
 | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1.0     | First full product scope, derived from the cahier des charges. Technical architecture removed; only the features and the behaviour they must have are kept. |
+| 1.1     | Amendments from building the iOS SDK's first release (FR-03, FR-08, FR-11, FR-20, FR-21, NFR-09): see the implementation notes under each affected requirement, added per the change-control process in section 22. |
+| 1.2     | GitLab and Bitbucket issue destinations moved from v2 into v1 scope (3.1, 3.2, 3.3, FR-70), and the per-app OAuth connection model is documented under section 12. Each app brings its own GitLab application or Bitbucket OAuth consumer instead of one shared per deployment; GitHub still uses one App installed for the whole deployment, with a self-service manifest flow planned next. Added NFR-11 (backend code layering). Decided by the product owner per section 22. |
+| 1.3     | Per-app optional Sentry or Crashlytics selection, mobile/web crash references, and removal of the mandatory Firebase dependency (2026-10-21). |
 
 ### How to read this document
 
@@ -103,10 +106,16 @@ Shake-to-report and the other triggers · the in-app report sheet · automatic
 capture of device, app and user-action context · screenshot with masking tools ·
 automatic crash and error reporting alongside Crashlytics · reliable delivery,
 including offline · server-side logs and diagnostics collected for each report ·
-crash correlation with Crashlytics · automatic GitHub issue creation with full
-context · deduplication and grouping · per-project routing · privacy controls,
-redaction and deletion · abuse protection · iOS, Android, Flutter and React
-Native apps with identical behaviour.
+crash correlation with Crashlytics · automatic issue creation in GitHub,
+GitLab or Bitbucket with full context · deduplication and grouping ·
+per-project routing · privacy controls, redaction and deletion · abuse
+protection · iOS, Android, Flutter and React Native apps with identical
+behaviour.
+
+> **Implementation note (2026-10-22):** GitLab and Bitbucket issue
+> destinations moved from "planned v2" into v1 scope. Each app brings its
+> own OAuth application per tracker (see section 12); GitHub still uses one
+> App installed for the whole deployment.
 
 ### 3.2 Planned later
 
@@ -116,8 +125,9 @@ Native apps with identical behaviour.
   observability tools, release correlation, more server log sources.
 - **v2** — reporter notification when a bug is fixed, lightweight session
   replay, short screen recording, web and command-line reporting, trackers
-  other than GitHub (Jira, Linear, GitLab), reporting dashboard, performance
-  snapshots, reports opened automatically by the server side.
+  other than GitHub, GitLab or Bitbucket (Jira, Linear), reporting
+  dashboard, performance snapshots, reports opened automatically by the
+  server side.
 
 ### 3.3 Out of scope
 
@@ -126,7 +136,8 @@ Explicitly excluded from v1:
 - reporting from web apps (planned v2);
 - full video session replay;
 - replacing Crashlytics as the crash reporter;
-- issue trackers other than GitHub (planned v2);
+- issue trackers other than GitHub, GitLab or Bitbucket (Jira, Linear;
+  planned v2);
 - a public, hosted SaaS offering;
 - customer-facing support chat or any reporter–developer messaging;
 - reporter accounts, names, emails or any personal identity;
@@ -135,10 +146,10 @@ Explicitly excluded from v1:
 
 ### 3.4 Assumptions and constraints
 
-- Our apps already use Crashlytics. Crash correlation (section 11) depends on
-  the Crashlytics data export being turned on for each target Firebase project,
-  which is **not the case today** and requires the paid Firebase plan. Turning
-  it on, and documenting how, is part of v1 (FR-44).
+- Each app independently selects Sentry, Crashlytics, or no external crash
+  provider. One owner may use different providers for different apps. Sentry
+  integrations support mobile and web apps and never require Firebase.
+  Crashlytics export setup is needed only for apps selecting Crashlytics (FR-44).
 - Issues are filed on GitHub. m-Seismo is installed on the GitHub organisation
   with the smallest set of permissions it needs: write issues, read metadata.
 - Where m-Seismo is hosted, where attachments are stored and which repository
@@ -170,6 +181,13 @@ looks and which fields are required. For example, `QA` can require a
 description and severity, while `production` can disable shake entirely.
 `[FE-04]` — v1
 
+> **iOS v1 implementation note (2026-10-16):** the mode system is not built
+> yet. In its place, the iOS SDK's `Configuration` exposes flat per-trigger
+> switches (`shakeEnabled`, default on; `screenshotEnabled`, default off)
+> set once at `configure()`, with no per-mode variation and no required-field
+> logic. `internal`/`QA`/`production` modes remain planned, not yet
+> implemented.
+
 **FR-04** — A project admin can create, rotate and revoke project keys. A
 revoked key stops being accepted immediately. `[BE-09]` — v1
 
@@ -198,6 +216,18 @@ next launch if it could not be sent at the time. `[SDK-08]` — v1
 **FR-09** — Non-fatal errors that the app chooses to record are reported the
 same way as crashes, flagged as non-fatal. `[SDK-08]` — v1
 
+> **iOS v1 implementation note (2026-10-16):** FR-08's automatic capture
+> currently covers uncaught Objective-C/Swift-bridged exceptions
+> (`NSException`) and errors the app explicitly records via `recordError(_:)`
+> (FR-09) — both reported on the next launch, as specified. It does **not**
+> yet catch native/signal-level crashes (`fatalError()`, force-unwraps,
+> array-index traps, `SIGSEGV`-class failures), which cover most of what
+> actually crashes a Swift app day to day. Catching those safely needs an
+> async-signal-safe handler (no memory allocation at crash time); getting
+> that wrong risks violating NFR-02 ("must never crash the app"), so it was
+> deliberately left out of this release. Crashlytics remains the only source
+> of those crash traces until a dedicated native crash handler is built.
+
 ---
 
 ## 6. Report sheet
@@ -209,10 +239,23 @@ category and a severity, and shows the screenshot of the screen they were on.
 **FR-11** — The reporter can draw on the screenshot to point at the bug, and
 blur or black out any part of it before sending. `[SDK-04, SDK-06]` — v1
 
+> **iOS v1 implementation note (2026-10-16):** masking is implemented as a
+> freehand solid-black stroke (draw over the area to hide it), not a true
+> Gaussian blur. A blackout fully hides the content underneath, same
+> practical effect as a blur, and was far simpler to implement correctly; a
+> real blur region was not built for this release.
+
 **FR-12** — Every field is optional by default. The sheet can be skipped
 entirely: in **auto-submit** mode the report is sent as soon as it is triggered,
 with whatever context was captured. Which fields are required depends on the
 mode (FR-03). `[SDK-04]` — v1
+
+> **iOS v1 implementation note (2026-10-16):** every field being optional is
+> implemented. Auto-submit (skipping the sheet entirely) is not: every
+> manual trigger (shake, screenshot, long-press, the manual call) currently
+> always opens the report sheet. Automatic crash/error reports (FR-08/FR-09)
+> are the one exception already in place — those are sent with no sheet
+> shown, which is auto-submit behavior for that one path.
 
 **FR-13** — The report sheet must never block the app: the reporter can
 dismiss it at any time and return exactly where they were. `[SDK-04]` — v1
@@ -249,12 +292,31 @@ actions: screens visited, taps, network calls made, and app lifecycle events
 moment of the trigger, before the report sheet appears. `[SDK-06]` — v1
 
 **FR-20** — **Crash details.** A crash report includes the full crash trace and
-the state of the app at the time of the crash. `[SDK-08]` — v1
+the state of the app at the time of the crash. `[SDK-08]` — v1 — see the
+implementation note under FR-08/FR-09: this currently applies to uncaught
+exceptions and recorded errors, not native/signal-level crashes.
 
-**FR-21** — **Works with Crashlytics.** m-Seismo's crash handling runs alongside
-Crashlytics and never replaces it: every crash still reaches Crashlytics
-exactly as before. Each report carries the Crashlytics installation and user
-identifiers and custom keys, so the two can be linked. `[SDK-08, SDK-11]` — v1
+**FR-21** — **Works with existing crash SDKs.** The app keeps its existing
+Sentry or Crashlytics setup. Sentry apps have no Crashlytics dependency. The
+following Crashlytics-specific behavior applies only to apps choosing it.
+m-Seismo never replaces the host app's crash SDK.
+
+Crash references must remain anonymous and retain the original crash session.
+`[SDK-08, SDK-11]` — v1
+
+The historical iOS implementation note below applies only to Crashlytics.
+
+> **iOS v1 implementation note / conflict (2026-10-16):** decided during the
+> iOS SDK build that the SDK will **not** integrate with the Crashlytics SDK
+> on-device at all — it never reads Crashlytics' installation ID, user ID or
+> custom keys, and does not attach them to the report. The first sentence of
+> FR-21 (crash handling runs alongside Crashlytics, never replaces it) still
+> holds. The second sentence (identifiers attached to the report) does not:
+> that linking is intended to happen entirely on the backend instead, via the
+> Crashlytics Data Export API, matching on installation ID and time proximity
+> (FR-43/FR-44) — not by embedding Crashlytics' own identifiers into the
+> report at capture time. SDK-11 ("attach Crashlytics user/installation ID
+> and custom keys to the report") is accordingly out of scope for the SDK.
 
 **FR-22** — **Session link.** Every report carries a session reference that is
 also attached to every request the app makes to our servers, so a report can be
@@ -364,14 +426,24 @@ Prometheus, Loki and CloudWatch Logs. `[AG-07]` — v1.x
 
 ## 11. Crash correlation
 
-**FR-43** — **Link to Crashlytics.** When a report matches a Crashlytics crash
-(same installation, close in time), the issue links to that crash and includes
-its crash trace, its breadcrumbs and its custom keys. `[INT-02]` — v1
+**FR-43** — **Link to the app's crash provider.** An owner may configure Sentry,
+Crashlytics, or no crash provider independently for each app. Mobile and web
+reports can link to the matching external crash. For Sentry, an exact event ID
+from the app's existing Sentry SDK selects the event within that app's configured
+project. Crash context and a link are available for report/issue enrichment.
+Reporting still works without a provider. `[INT-02]` — v1
 
-**FR-44** — **Crashlytics data available.** The Crashlytics data export is
-turned on for every target Firebase project, the steps are documented for the
-team, and m-Seismo checks when it starts that it can read that data, warning the
-project admin if it cannot. `[INT-05]` — v1
+**FR-44** — **Provider access.** Connection setup and required permissions are
+documented for each provider. Sentry project access is verified before saving
+credentials, which remain on the backend. Firebase data export is required only
+for apps selecting Crashlytics. Provider outages must not block report acceptance.
+`[INT-05]` — v1
+
+> **Implementation status (2026-10-21):** Sentry project connection and lazy
+> report-event resolution and report-to-GitHub enrichment are implemented.
+> The Crashlytics export adapter remains pending. The existing iOS SDK transport
+> also needs migration to the shared ingestion contract; mobile apps can use that
+> HTTP contract directly in the meantime.
 
 **FR-45** — **Readable crash traces without Crashlytics.** For crashes that did
 not go through Crashlytics, crash traces are translated back into readable file
@@ -421,6 +493,33 @@ them. `[INT-03]` — v1.x
 
 **FR-53** — **Release correlation.** The issue links to the GitHub release and
 the range of commits that shipped the affected build. `[INT-04]` — v1.x
+
+**FR-53a — Issue destination is configured, not hardcoded.** *(added
+2026-10-22)* Where an app's issues go is chosen by the app owner, through
+two separate, explicit steps — never fixed by the deployment's operator:
+
+1. **Which tracker and repository.** Per project, the owner links one or
+   more repositories (`tracker` + `repository`), and picks a default. An
+   app's issues go to the default repository of every project it is linked
+   to (section 14 covers labels/assignees/milestone routing on top of this).
+2. **Which account reaches that repository.** Per app, the owner connects
+   a tracker account through that tracker's own OAuth (or App-install)
+   flow. An app can hold several connections, even several on the same
+   tracker; issue delivery picks the connection that covers the target
+   repository.
+
+**FR-53b — Each app brings its own OAuth application.** *(added
+2026-10-22)* For GitLab and Bitbucket, the OAuth application an app
+authorizes against (client ID and secret) is registered by that app's
+owner, not shared across every app on the deployment. This means the
+operator who self-hosts m-Seismo never holds a single OAuth application
+that reaches every connected account on every tracker — only the app
+owner who registered it does. GitHub is the current exception: it still
+uses one GitHub App installed for the whole deployment, because minting
+installation tokens needs a private key, which is heavier to self-serve
+than an OAuth client secret; a GitHub-side "manifest flow" (GitHub
+generates the App and hands back its private key through a redirect, no
+manual key paste) is planned so GitHub reaches the same per-app model.
 
 ---
 
@@ -509,8 +608,11 @@ seconds of the screen, attached to the report. `[SDK-14]`
 **FR-69** — **Web and command line.** Reports can be filed from web apps, from
 CI pipelines and from scripts. `[FE-13]`
 
-**FR-70** — **Other trackers.** Issues can be filed in Jira, Linear or GitLab
-instead of GitHub. `[FE-14]`
+**FR-70** — **Other trackers.** Issues can be filed in Jira or Linear
+instead of GitHub, GitLab or Bitbucket. `[FE-14]`
+
+> **Implementation note (2026-10-22):** GitLab and Bitbucket shipped in v1
+> (section 12); this item now covers only Jira and Linear.
 
 **FR-71** — **Dashboard.** Reports per app and version, time from report to
 issue, most frequent bugs and reporter activity. `[FE-15]`
@@ -556,13 +658,24 @@ grow by adding more capacity.
 m-Seismo. Hosting and storage are choices made at installation, not built into
 the product. The code is published under an open-source licence.
 
-**NFR-09 — Supported platforms.** iOS 15 and later, Android 7.0 (API 24) and
-later, Flutter 3, React Native 0.73 and later. These minimums are placeholders
-until the open question in section 19 is answered.
+**NFR-09 — Supported platforms.** iOS 13 and later, Android 7.0 (API 24) and
+later, Flutter 3, React Native 0.73 and later. The iOS minimum was decided
+2026-10-16 building the iOS SDK's first release (was an iOS 15 placeholder in
+v1.0); Android/Flutter/React Native minimums remain placeholders until the
+open question in section 19 is answered.
 
 **NFR-10 — m-Seismo watches itself.** m-Seismo reports its own health and
 failures to the operator, and never tries to report its own failures through
 itself.
+
+**NFR-11 — Layered backend code.** New backend code must not define its
+request/response (DTO) structs or domain types inline inside handler or
+service files. Each package separates: a `dto` layer (wire-format request and
+response structs, decoded/encoded at the HTTP boundary) from a `domain` layer
+(the package's own types and errors), with an explicit translation step
+between a domain error/type and the DTO the handler returns. This applies
+going forward to new and touched code; the existing codebase does not yet
+follow it and is not being retrofitted as part of this requirement.
 
 ---
 
@@ -570,7 +683,7 @@ itself.
 
 | # | Question                                                                                                    | Owner         |
 | - | ----------------------------------------------------------------------------------------------------------- | ------------- |
-| 1 | Which apps and platforms ship first, and which minimum OS versions are required? (NFR-09)                   | Product owner |
+| 1 | Which apps and platforms ship first, and which minimum OS versions are required? (NFR-09) — **iOS minimum decided: iOS 13** (2026-10-16); Android/Flutter/React Native minimums and ship order still open | Product owner |
 | 2 | Which licence: Apache-2.0 or MIT?                                                                           | Product owner |
 | 3 | Does the name m-Seismo clash with an existing project or trademark? To be checked before the public release | Product owner |
 
@@ -647,8 +760,8 @@ v1 is ready for launch consideration when:
   iOS and Android, then on Flutter and React Native;
 - every v1 requirement in this document is met;
 - the shared test cases pass identically on all four platforms;
-- the Crashlytics data export is turned on for every target Firebase project and
-  the setup is documented;
+- Sentry access works for Sentry apps; Crashlytics data export is enabled for
+  Crashlytics apps; setup for both providers is documented;
 - crash correlation works on real crashes from at least one real app;
 - server-side context is collected for at least one real backend;
 - the success targets of section 1.4 are met on a pilot app;

@@ -1,0 +1,13 @@
+[package]
+name = "seismo-proto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+prost = "0.14.4"
+prost-types = "0.14.4"
+tonic.workspace = true
+tonic-prost = "0.14.6"
+
+[build-dependencies]
+tonic-prost-build = "0.14.6"
