@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
@@ -40,14 +41,20 @@ func (e *permanentError) Unwrap() error { return e.err }
 
 func permanent(err error) error { return &permanentError{err: err} }
 
-// Processor turns one stored report into issues.
-type Processor struct {
-	q      Queries
-	issues Issues
+// CrashResolver resolves a persisted report within its app's configured project.
+type CrashResolver interface {
+	ForReport(context.Context, uuid.UUID, *ingest.Report) (*crashprovider.Event, error)
 }
 
-func NewProcessor(q Queries, issues Issues) *Processor {
-	return &Processor{q: q, issues: issues}
+// Processor turns one stored report into issues.
+type Processor struct {
+	q       Queries
+	issues  Issues
+	crashes CrashResolver
+}
+
+func NewProcessor(q Queries, issues Issues, crashes CrashResolver) *Processor {
+	return &Processor{q: q, issues: issues, crashes: crashes}
 }
 
 // Process opens the report's issue in the default repository of every
@@ -100,7 +107,18 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return fmt.Errorf("list attachments of report %s: %w", id, err)
 	}
+	var crashEvent *crashprovider.Event
+	if r.Sentry != nil && p.crashes != nil {
+		var resolveErr error
+		crashEvent, resolveErr = p.crashes.ForReport(ctx, row.AppID, &r)
+		if resolveErr != nil {
+			// Sentry delays or outages must not discard or indefinitely delay the issue.
+			// The resolver returns a validated link when its configuration is available.
+			slog.WarnContext(ctx, "Sentry details unavailable; retaining crash reference", "report", id)
+		}
+	}
 	draft := render(&r, reportInfo{
+		CrashEvent:     crashEvent,
 		ID:             row.ReportID,
 		InstallationID: row.InstallationID,
 		Screenshot:     slices.Contains(names, ingest.ScreenshotName),
