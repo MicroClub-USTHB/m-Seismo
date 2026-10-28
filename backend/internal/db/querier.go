@@ -30,6 +30,7 @@ type Querier interface {
 	GetAppCrashProvider(ctx context.Context, appID uuid.UUID) (AppCrashProvider, error)
 	GetAppTrackerCredentials(ctx context.Context, arg GetAppTrackerCredentialsParams) (AppTrackerCredential, error)
 	GetConnectionSecret(ctx context.Context, providerConnectionID uuid.UUID) ([]byte, error)
+	GetCrashlyticsConnection(ctx context.Context, projectID uuid.UUID) (CrashlyticsConnection, error)
 	// One project repository, provided the app is linked to its project. The
 	// credentials come from the app's connections, resolved by the caller.
 	GetIssueTarget(ctx context.Context, arg GetIssueTargetParams) (GetIssueTargetRow, error)
@@ -53,6 +54,7 @@ type Querier interface {
 	ListAppKeys(ctx context.Context, appID uuid.UUID) ([]AppKey, error)
 	ListAppProjects(ctx context.Context, appID uuid.UUID) ([]Project, error)
 	ListApps(ctx context.Context, ownerID uuid.UUID) ([]App, error)
+	ListCrashlyticsConnections(ctx context.Context) ([]CrashlyticsConnection, error)
 	// The default repository of every project linked to the app.
 	ListIssueTargetsForApp(ctx context.Context, appID uuid.UUID) ([]ListIssueTargetsForAppRow, error)
 	ListOwnerConnections(ctx context.Context, ownerID uuid.UUID) ([]ProviderConnection, error)
@@ -65,6 +67,7 @@ type Querier interface {
 	RevokeAppKey(ctx context.Context, arg RevokeAppKeyParams) (int64, error)
 	RotateAppCrashProviderCredentials(ctx context.Context, arg RotateAppCrashProviderCredentialsParams) (int64, error)
 	SetAppCrashProvider(ctx context.Context, arg SetAppCrashProviderParams) (AppCrashProvider, error)
+	SetCrashlyticsApps(ctx context.Context, arg SetCrashlyticsAppsParams) (int64, error)
 	SetDefaultProjectRepository(ctx context.Context, arg SetDefaultProjectRepositoryParams) (int64, error)
 	SetIssueState(ctx context.Context, arg SetIssueStateParams) error
 	UnlinkAppProject(ctx context.Context, arg UnlinkAppProjectParams) (int64, error)
@@ -76,6 +79,7 @@ type Querier interface {
 	// Stores a connection's encrypted credentials, replacing earlier ones (a
 	// re-connect, or a refreshed OAuth token).
 	UpsertConnectionSecret(ctx context.Context, arg UpsertConnectionSecretParams) error
+	UpsertCrashlyticsConnection(ctx context.Context, arg UpsertCrashlyticsConnectionParams) (CrashlyticsConnection, error)
 	// Connecting the same tracker account to the same app again refreshes the
 	// account details. Connecting an account that another owner holds fails on
 	// provider_connections_one_owner_per_account (SQLSTATE 23P01).

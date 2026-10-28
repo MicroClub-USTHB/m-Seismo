@@ -70,6 +70,21 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: app_crash_providers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_crash_providers (
+    app_id uuid NOT NULL,
+    provider text NOT NULL,
+    settings jsonb NOT NULL,
+    credentials bytea,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_crash_providers_check CHECK (((provider <> 'sentry'::text) OR (credentials IS NOT NULL))),
+    CONSTRAINT app_crash_providers_provider_check CHECK ((provider = ANY (ARRAY['sentry'::text, 'crashlytics'::text])))
+);
+
+
+--
 -- Name: app_keys; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -79,6 +94,17 @@ CREATE TABLE public.app_keys (
     key_hash bytea NOT NULL,
     key_prefix text NOT NULL,
     revoked_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: app_projects; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_projects (
+    app_id uuid NOT NULL,
+    project_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
@@ -96,17 +122,6 @@ CREATE TABLE public.app_tracker_credentials (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT app_tracker_credentials_tracker_check CHECK ((tracker = ANY (ARRAY['gitlab'::public.tracker, 'bitbucket'::public.tracker])))
-);
-
-
---
--- Name: app_projects; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.app_projects (
-    app_id uuid NOT NULL,
-    project_id uuid NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -132,6 +147,20 @@ CREATE TABLE public.apps (
 CREATE TABLE public.connection_secrets (
     provider_connection_id uuid NOT NULL,
     ciphertext bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: crashlytics_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.crashlytics_connections (
+    project_id uuid NOT NULL,
+    google_email text NOT NULL,
+    refresh_token bytea NOT NULL,
+    apps text[] DEFAULT '{}'::text[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -272,6 +301,14 @@ CREATE TABLE public.schema_migrations (
 
 
 --
+-- Name: app_crash_providers app_crash_providers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_crash_providers
+    ADD CONSTRAINT app_crash_providers_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_keys app_keys_key_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -288,11 +325,11 @@ ALTER TABLE ONLY public.app_keys
 
 
 --
--- Name: app_tracker_credentials app_tracker_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: app_projects app_projects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.app_tracker_credentials
-    ADD CONSTRAINT app_tracker_credentials_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.app_projects
+    ADD CONSTRAINT app_projects_pkey PRIMARY KEY (app_id, project_id);
 
 
 --
@@ -304,11 +341,11 @@ ALTER TABLE ONLY public.app_tracker_credentials
 
 
 --
--- Name: app_projects app_projects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: app_tracker_credentials app_tracker_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.app_projects
-    ADD CONSTRAINT app_projects_pkey PRIMARY KEY (app_id, project_id);
+ALTER TABLE ONLY public.app_tracker_credentials
+    ADD CONSTRAINT app_tracker_credentials_pkey PRIMARY KEY (id);
 
 
 --
@@ -333,6 +370,14 @@ ALTER TABLE ONLY public.apps
 
 ALTER TABLE ONLY public.connection_secrets
     ADD CONSTRAINT connection_secrets_pkey PRIMARY KEY (provider_connection_id);
+
+
+--
+-- Name: crashlytics_connections crashlytics_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crashlytics_connections
+    ADD CONSTRAINT crashlytics_connections_pkey PRIMARY KEY (project_id);
 
 
 --
@@ -532,19 +577,19 @@ CREATE INDEX reports_not_queued_idx ON public.reports USING btree (received_at) 
 
 
 --
+-- Name: app_crash_providers app_crash_providers_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_crash_providers
+    ADD CONSTRAINT app_crash_providers_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_keys app_keys_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.app_keys
     ADD CONSTRAINT app_keys_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-
-
---
--- Name: app_tracker_credentials app_tracker_credentials_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_tracker_credentials
-    ADD CONSTRAINT app_tracker_credentials_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -564,6 +609,14 @@ ALTER TABLE ONLY public.app_projects
 
 
 --
+-- Name: app_tracker_credentials app_tracker_credentials_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_tracker_credentials
+    ADD CONSTRAINT app_tracker_credentials_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: apps apps_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -577,6 +630,14 @@ ALTER TABLE ONLY public.apps
 
 ALTER TABLE ONLY public.connection_secrets
     ADD CONSTRAINT connection_secrets_provider_connection_id_fkey FOREIGN KEY (provider_connection_id) REFERENCES public.provider_connections(id) ON DELETE CASCADE;
+
+
+--
+-- Name: crashlytics_connections crashlytics_connections_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crashlytics_connections
+    ADD CONSTRAINT crashlytics_connections_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
 
 
 --
@@ -675,16 +736,6 @@ ALTER TABLE ONLY public.reports
     ADD CONSTRAINT reports_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
-
-CREATE TABLE public.app_crash_providers (
-    app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
-    provider text NOT NULL CHECK (provider IN ('sentry', 'crashlytics')),
-    settings jsonb NOT NULL,
-    credentials bytea,
-    updated_at timestamp with time zone NOT NULL DEFAULT now(),
-    CHECK (provider <> 'sentry' OR credentials IS NOT NULL)
-);
-
 --
 -- PostgreSQL database dump complete
 --
@@ -699,8 +750,10 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016190043'),
     ('20261016192420'),
     ('20261017120000'),
+    ('20261017140000'),
     ('20261018120000'),
     ('20261021120000'),
     ('20261021130000'),
     ('20261022120000'),
+    ('20261022200000'),
     ('20261022210000');

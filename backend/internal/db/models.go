@@ -150,6 +150,15 @@ type ConnectionSecret struct {
 	UpdatedAt            time.Time `json:"updated_at"`
 }
 
+type CrashlyticsConnection struct {
+	ProjectID    uuid.UUID `json:"project_id"`
+	GoogleEmail  string    `json:"google_email"`
+	RefreshToken []byte    `json:"refresh_token"`
+	Apps         []string  `json:"apps"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 type Issue struct {
 	ID                   uuid.UUID  `json:"id"`
 	ProjectRepositoryID  uuid.UUID  `json:"project_repository_id"`

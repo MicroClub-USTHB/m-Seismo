@@ -97,6 +97,27 @@ type IngestConfig struct {
 	InstallationBurst     int
 }
 
+// CrashConfig selects the crash reporter reports are linked to.
+type CrashConfig struct {
+	// Source is "none" or "crashlytics".
+	Source string
+	// Window is how far apart a report and a crash may be and still match.
+	Window      time.Duration
+	Crashlytics CrashlyticsConfig
+}
+
+// CrashlyticsConfig identifies m-Seismo to Google as an OAuth client. Each
+// project's own access (refresh token, Firebase apps) is stored in the
+// database by the OAuth flow, not here.
+type CrashlyticsConfig struct {
+	ClientID     string
+	ClientSecret string
+	// RedirectURL is the public URL of /api/v1/oauth/crashlytics/callback.
+	// Empty means server.public_url plus that path.
+	RedirectURL  string
+	QuotaProject string
+}
+
 // WorkerConfig controls the pipeline worker that turns accepted reports
 // into issues.
 type WorkerConfig struct {
@@ -135,4 +156,5 @@ type Config struct {
 	Ingest         IngestConfig
 	Worker         WorkerConfig
 	CrashProviders CrashProvidersConfig
+	Crash          CrashConfig
 }
