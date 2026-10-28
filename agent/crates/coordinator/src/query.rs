@@ -120,6 +120,47 @@ impl Registry {
         })
     }
 
+    /// Container state per service from every agent. Same partial-tolerant
+    /// rules as `query_metrics`, and no window since there are no logs.
+    pub async fn query_status(
+        &self,
+        q: pb::StatusQuery,
+    ) -> Result<pb::AggregateStatus, pb::AggregateError> {
+        let fail = |detail: &str| pb::AggregateError {
+            query_id: q.query_id.clone(),
+            error: Some(SourceError {
+                kind: SourceErrorKind::Unspecified as i32,
+                detail: detail.into(),
+            }),
+        };
+        let left = remaining(q.deadline.as_ref())
+            .ok_or_else(|| fail("deadline missing or already passed"))?;
+        let wait = left
+            .checked_sub(Duration::from_millis(self.query.margin_ms))
+            .filter(|d| !d.is_zero())
+            .ok_or_else(|| fail("deadline is closer than the aggregation margin"))?;
+        let (deadline, until) = (after(wait), Instant::now() + wait);
+
+        let agents = self.snapshot();
+        let agents_out = join_all(agents.iter().map(|a| async {
+            let outcome = self
+                .roundtrip(a, until, |query_id| {
+                    Message::StatusQuery(pb::StatusQuery {
+                        query_id,
+                        deadline: Some(deadline),
+                    })
+                })
+                .await;
+            status_section(a, outcome)
+        }))
+        .await;
+        Ok(pb::AggregateStatus {
+            schema_version: SCHEMA_VERSION,
+            query_id: q.query_id,
+            agents: agents_out,
+        })
+    }
+
     async fn ask(&self, a: &AgentHandle, ask: &Ask) -> pb::AgentSection {
         let outcome = self
             .roundtrip(a, ask.until, |query_id| {
@@ -208,8 +249,8 @@ fn section(a: &AgentHandle, outcome: Outcome) -> pb::AgentSection {
             });
             (AgentStatus::Error, None, detail)
         }
-        Outcome::Reply(Reply::Metrics(_)) => {
-            (AgentStatus::Error, None, "unexpected metrics reply".into())
+        Outcome::Reply(Reply::Metrics(_) | Reply::Status(_)) => {
+            (AgentStatus::Error, None, "unexpected reply type".into())
         }
         Outcome::Disconnected => (
             AgentStatus::Disconnected,
@@ -246,8 +287,8 @@ fn metrics_section(a: &AgentHandle, outcome: Outcome) -> pb::AgentMetrics {
             let detail = e.error.map_or("no detail".into(), |e| e.detail);
             (AgentStatus::Error, vec![], detail)
         }
-        Outcome::Reply(Reply::Result(_)) => {
-            (AgentStatus::Error, vec![], "unexpected log reply".into())
+        Outcome::Reply(Reply::Result(_) | Reply::Status(_)) => {
+            (AgentStatus::Error, vec![], "unexpected reply type".into())
         }
         Outcome::Disconnected => (
             AgentStatus::Disconnected,
@@ -261,6 +302,36 @@ fn metrics_section(a: &AgentHandle, outcome: Outcome) -> pb::AgentMetrics {
         ),
     };
     pb::AgentMetrics {
+        agent_id: a.id.clone(),
+        source: a.source,
+        status: status as i32,
+        services,
+        detail,
+    }
+}
+
+fn status_section(a: &AgentHandle, outcome: Outcome) -> pb::AgentStatusReport {
+    let (status, services, detail) = match outcome {
+        Outcome::Reply(Reply::Status(s)) => (AgentStatus::Ok, s.services, String::new()),
+        Outcome::Reply(Reply::Error(e)) => {
+            let detail = e.error.map_or("no detail".into(), |e| e.detail);
+            (AgentStatus::Error, vec![], detail)
+        }
+        Outcome::Reply(Reply::Result(_) | Reply::Metrics(_)) => {
+            (AgentStatus::Error, vec![], "unexpected reply type".into())
+        }
+        Outcome::Disconnected => (
+            AgentStatus::Disconnected,
+            vec![],
+            "stream closed before the agent answered".into(),
+        ),
+        Outcome::Timeout => (
+            AgentStatus::Timeout,
+            vec![],
+            "no answer before the deadline".into(),
+        ),
+    };
+    pb::AgentStatusReport {
         agent_id: a.id.clone(),
         source: a.source,
         status: status as i32,

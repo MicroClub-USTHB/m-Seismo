@@ -17,6 +17,7 @@ pub enum Reply {
     Result(pb::QueryResult),
     Error(pb::QueryError),
     Metrics(pb::MetricsResult),
+    Status(pb::StatusResult),
 }
 
 pub type Outbound = mpsc::Sender<Result<pb::CoordinatorMessage, Status>>;
@@ -117,6 +118,7 @@ impl Registry {
             Message::Result(r) => (r.query_id.clone(), Reply::Result(r)),
             Message::Error(e) => (e.query_id.clone(), Reply::Error(e)),
             Message::MetricsResult(r) => (r.query_id.clone(), Reply::Metrics(r)),
+            Message::StatusResult(r) => (r.query_id.clone(), Reply::Status(r)),
             Message::Register(_) => return,
         };
         if let Some(waiter) = conn.pending.lock().unwrap().remove(&id) {

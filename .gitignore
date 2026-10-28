@@ -34,6 +34,14 @@ local.properties
 node_modules/
 .dart_tool/
 
+# Web SDK build artifacts (sdks/web)
+sdks/web/dist/
+sdks/web/test-results/
+sdks/web/playwright-report/
+sdks/web/.vite/
+
+report/
+
 # Nix
 .direnv/
 .envrc

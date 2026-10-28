@@ -97,6 +97,27 @@ type IngestConfig struct {
 	InstallationBurst     int
 }
 
+// CrashConfig selects the crash reporter reports are linked to.
+type CrashConfig struct {
+	// Source is "none" or "crashlytics".
+	Source string
+	// Window is how far apart a report and a crash may be and still match.
+	Window      time.Duration
+	Crashlytics CrashlyticsConfig
+}
+
+// CrashlyticsConfig identifies m-Seismo to Google as an OAuth client. Each
+// project's own access (refresh token, Firebase apps) is stored in the
+// database by the OAuth flow, not here.
+type CrashlyticsConfig struct {
+	ClientID     string
+	ClientSecret string
+	// RedirectURL is the public URL of /api/v1/oauth/crashlytics/callback.
+	// Empty means server.public_url plus that path.
+	RedirectURL  string
+	QuotaProject string
+}
+
 // WorkerConfig controls the pipeline worker that turns accepted reports
 // into issues.
 type WorkerConfig struct {
@@ -111,19 +132,29 @@ type WorkerConfig struct {
 	MaxAttempts int
 }
 
+// CrashProvidersConfig holds operator-controlled credential encryption and allowed
+// Sentry origins. API clients cannot introduce arbitrary outbound destinations.
+type CrashProvidersConfig struct {
+	EncryptionKey          string   // base64-encoded 32-byte AES key; empty disables Sentry connections
+	PreviousEncryptionKeys []string // decryption-only keys retained during rotation (at most five)
+	SentryOrigins          []string
+}
+
 type Config struct {
-	Env       string
-	LogLevel  string
-	Server    ServerConfig
-	Database  DatabaseConfig
-	Redis     RedisConfig
-	NATS      NATSConfig
-	Auth      AuthConfig
-	GitHub    GitHubConfig
-	GitLab    OAuthTrackerConfig
-	Bitbucket OAuthTrackerConfig
-	Secrets   SecretsConfig
-	Limits    LimitsConfig
-	Ingest    IngestConfig
-	Worker    WorkerConfig
+	Env            string
+	LogLevel       string
+	Server         ServerConfig
+	Database       DatabaseConfig
+	Redis          RedisConfig
+	NATS           NATSConfig
+	Auth           AuthConfig
+	GitHub         GitHubConfig
+	GitLab         OAuthTrackerConfig
+	Bitbucket      OAuthTrackerConfig
+	Secrets        SecretsConfig
+	Limits         LimitsConfig
+	Ingest         IngestConfig
+	Worker         WorkerConfig
+	CrashProviders CrashProvidersConfig
+	Crash          CrashConfig
 }

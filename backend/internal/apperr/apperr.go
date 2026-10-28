@@ -22,6 +22,7 @@ const (
 	// KindRateLimited means the caller, or an upstream tracker acting for
 	// it, is over a rate limit. Retrying after RetryAfterOf(err) may succeed.
 	KindRateLimited
+	KindUnavailable
 )
 
 // Error is a domain error whose message is safe to show to clients.
@@ -45,6 +46,8 @@ func (e *Error) Unwrap() error { return e.Err }
 
 // RetryAfter implements RetryAfterer for rate-limited errors.
 func (e *Error) RetryAfter() time.Duration { return e.Wait }
+
+func Unavailable(msg string) error { return &Error{Kind: KindUnavailable, Msg: msg} }
 
 func NotFound(msg string) error     { return &Error{Kind: KindNotFound, Msg: msg} }
 func Conflict(msg string) error     { return &Error{Kind: KindConflict, Msg: msg} }
