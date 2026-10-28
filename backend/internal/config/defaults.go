@@ -5,6 +5,8 @@ import "github.com/spf13/viper"
 func setDefaults(v *viper.Viper) {
 	// Production unless told otherwise, so a deployment that forgets
 	// SEISMO_ENV never falls back to development-only settings.
+	v.SetDefault("crash_providers.encryption_key", "")
+	v.SetDefault("crash_providers.sentry_origins", []string{"https://sentry.io", "https://us.sentry.io", "https://de.sentry.io"})
 	v.SetDefault("env", "production")
 	v.SetDefault("log_level", "info")
 
@@ -53,6 +55,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("ingest.installation_per_minute", 10)
 	v.SetDefault("ingest.installation_burst", 5)
 
+	v.SetDefault("crash.source", "none")
+	v.SetDefault("crash.window", "2m")
+	v.SetDefault("crash_providers.previous_encryption_keys", []string{})
 	v.SetDefault("worker.enabled", true)
 	v.SetDefault("worker.concurrency", 4)
 	v.SetDefault("worker.max_attempts", 10)

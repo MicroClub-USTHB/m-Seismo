@@ -1,6 +1,5 @@
-
 -- Dumped from database version 17.11
--- Dumped by pg_dump version 18.4
+-- Dumped by pg_dump version 18.6
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -60,7 +59,8 @@ CREATE TYPE public.app_platform AS ENUM (
     'ios',
     'android',
     'flutter',
-    'react_native'
+    'react_native',
+    'web'
 );
 
 
@@ -78,6 +78,21 @@ CREATE TYPE public.tracker AS ENUM (
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
+
+--
+-- Name: app_crash_providers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_crash_providers (
+    app_id uuid NOT NULL,
+    provider text NOT NULL,
+    settings jsonb NOT NULL,
+    credentials bytea,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_crash_providers_check CHECK (((provider <> 'sentry'::text) OR (credentials IS NOT NULL))),
+    CONSTRAINT app_crash_providers_provider_check CHECK ((provider = ANY (ARRAY['sentry'::text, 'crashlytics'::text])))
+);
+
 
 --
 -- Name: app_keys; Type: TABLE; Schema: public; Owner: -
@@ -143,6 +158,20 @@ CREATE TABLE public.apps (
 CREATE TABLE public.connection_secrets (
     provider_connection_id uuid NOT NULL,
     ciphertext bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: crashlytics_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.crashlytics_connections (
+    project_id uuid NOT NULL,
+    google_email text NOT NULL,
+    refresh_token bytea NOT NULL,
+    apps text[] DEFAULT '{}'::text[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -306,6 +335,14 @@ CREATE TABLE public.schema_migrations (
 
 
 --
+-- Name: app_crash_providers app_crash_providers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_crash_providers
+    ADD CONSTRAINT app_crash_providers_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_keys app_keys_key_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -367,6 +404,14 @@ ALTER TABLE ONLY public.apps
 
 ALTER TABLE ONLY public.connection_secrets
     ADD CONSTRAINT connection_secrets_pkey PRIMARY KEY (provider_connection_id);
+
+
+--
+-- Name: crashlytics_connections crashlytics_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crashlytics_connections
+    ADD CONSTRAINT crashlytics_connections_pkey PRIMARY KEY (project_id);
 
 
 --
@@ -595,6 +640,14 @@ CREATE INDEX routing_rules_project_repository_id_idx ON public.routing_rules USI
 
 
 --
+-- Name: app_crash_providers app_crash_providers_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_crash_providers
+    ADD CONSTRAINT app_crash_providers_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_keys app_keys_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -640,6 +693,14 @@ ALTER TABLE ONLY public.apps
 
 ALTER TABLE ONLY public.connection_secrets
     ADD CONSTRAINT connection_secrets_provider_connection_id_fkey FOREIGN KEY (provider_connection_id) REFERENCES public.provider_connections(id) ON DELETE CASCADE;
+
+
+--
+-- Name: crashlytics_connections crashlytics_connections_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crashlytics_connections
+    ADD CONSTRAINT crashlytics_connections_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
 
 
 --
@@ -776,10 +837,12 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016190043'),
     ('20261016192420'),
     ('20261017120000'),
+    ('20261017140000'),
     ('20261018120000'),
     ('20261021120000'),
     ('20261021130000'),
     ('20261021150000'),
     ('20261022120000'),
+    ('20261022200000'),
     ('20261022210000'),
     ('20261023090000');

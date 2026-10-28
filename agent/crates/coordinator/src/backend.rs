@@ -99,6 +99,16 @@ pub async fn attach(
                     let _ = tx.send(wire(event)).await;
                 });
             }
+            Some(BackendRequest::QueryStatus(q)) => {
+                let (tx, registry) = (tx.clone(), registry.clone());
+                tasks.spawn(async move {
+                    let event = match registry.query_status(q).await {
+                        Ok(result) => Event::Status(result),
+                        Err(error) => Event::Error(error),
+                    };
+                    let _ = tx.send(wire(event)).await;
+                });
+            }
             None => {}
         }
     }

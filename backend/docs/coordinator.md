@@ -79,17 +79,10 @@ is noticed, and accepts messages up to 10 MiB.
 
 ## Trying it locally
 
-The dev stack serves plain gRPC on `localhost:9443`. `cmd/fakecoordinator`
-attaches with a key and answers every query with made-up logs from two
-services:
-
-```sh
-FAKECOORDINATOR_BACKEND=127.0.0.1:9443 FAKECOORDINATOR_KEY=mco_… \
-  go run ./cmd/fakecoordinator
-```
-
-Then send a report: its issue on the fake GitHub has the Server logs
-section.
+The dev stack serves plain gRPC on `localhost:9443`. Create a coordinator key
+for an app (`POST /apps/{id}/coordinator-keys`) and attach the Rust log
+coordinator of `agent/` with it; send a report and its issue gets the Server
+logs section.
 
 ## Regenerating the Go types
 
@@ -111,8 +104,8 @@ make proto-generate   # needs protoc, protoc-gen-go and protoc-gen-go-grpc
 ## Tests
 
 `go test ./internal/coordinator/` runs a real gRPC server in memory with a
-fake coordinator and needs NATS (`SEISMO_TEST_NATS_URL`, skipped
-otherwise): query relayed and answered, no coordinator attached, key and
+fake coordinator and needs NATS (a testcontainers container, or
+`SEISMO_TEST_NATS_URL`): query relayed and answered, no coordinator attached, key and
 `Hello` rejections, a newer attach replacing the older one on the same and
 on another instance, a silent coordinator timing out, the budget fitting in
 one NATS message. The worker's tests cover the issue's Server logs section

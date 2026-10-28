@@ -3,8 +3,8 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/testenv"
 	"net"
-	"os"
 	"testing"
 	"time"
 
@@ -21,8 +21,8 @@ import (
 	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
 )
 
-// These tests need a NATS server. They are skipped unless
-// SEISMO_TEST_NATS_URL is set, e.g. nats://localhost:4222.
+// These tests need a NATS server: a container, or the one in
+// SEISMO_TEST_NATS_URL.
 
 type fakeAuth map[string]uuid.UUID
 
@@ -128,10 +128,7 @@ func hello() *seismov1.Hello {
 
 func natsConn(t *testing.T) *nats.Conn {
 	t.Helper()
-	url := os.Getenv("SEISMO_TEST_NATS_URL")
-	if url == "" {
-		t.Skip("SEISMO_TEST_NATS_URL not set")
-	}
+	url := testenv.NATSURL(t)
 	nc, err := nats.Connect(url)
 	if err != nil {
 		t.Fatal(err)

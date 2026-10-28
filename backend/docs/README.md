@@ -5,6 +5,8 @@ each app's tracker connections (GitHub, GitLab, Bitbucket), and the issue
 service. For setup and a quick
 route list, start with [../README.md](../README.md).
 
+See [crash-providers.md](crash-providers.md) for per-app Sentry/Crashlytics selection, web reporting, and Sentry event resolution.
+
 ## Reading order
 
 | # | Page | Read it to… |

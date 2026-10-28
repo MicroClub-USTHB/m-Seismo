@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/coordinator"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
@@ -55,18 +56,24 @@ func (e *permanentError) Unwrap() error { return e.err }
 
 func permanent(err error) error { return &permanentError{err: err} }
 
+// CrashResolver resolves a persisted report within its app's configured project.
+type CrashResolver interface {
+	ForReport(context.Context, uuid.UUID, *ingest.Report) (*crashprovider.Event, error)
+}
+
 // Processor turns one stored report into issues.
 type Processor struct {
 	q      Queries
 	issues Issues
 	router Router
 	// logs is optional; window is how far around the report it looks.
-	logs   ServerLogs
-	window time.Duration
+	logs    ServerLogs
+	window  time.Duration
+	crashes CrashResolver
 }
 
-func NewProcessor(q Queries, issues Issues, router Router, logs ServerLogs, window time.Duration) *Processor {
-	return &Processor{q: q, issues: issues, router: router, logs: logs, window: window}
+func NewProcessor(q Queries, issues Issues, router Router, logs ServerLogs, window time.Duration, crashes CrashResolver) *Processor {
+	return &Processor{q: q, issues: issues, router: router, logs: logs, window: window, crashes: crashes}
 }
 
 // Process opens the report's issue in every project its app is linked to,
@@ -127,7 +134,18 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return fmt.Errorf("list attachments of report %s: %w", id, err)
 	}
+	var crashEvent *crashprovider.Event
+	if r.Sentry != nil && p.crashes != nil {
+		var resolveErr error
+		crashEvent, resolveErr = p.crashes.ForReport(ctx, row.AppID, &r)
+		if resolveErr != nil {
+			// Sentry delays or outages must not discard or indefinitely delay the issue.
+			// The resolver returns a validated link when its configuration is available.
+			slog.WarnContext(ctx, "Sentry details unavailable; retaining crash reference", "report", id)
+		}
+	}
 	base := render(&r, reportInfo{
+		CrashEvent:     crashEvent,
 		ID:             row.ReportID,
 		InstallationID: row.InstallationID,
 		Screenshot:     slices.Contains(names, ingest.ScreenshotName),
