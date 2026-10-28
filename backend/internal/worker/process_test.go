@@ -10,8 +10,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	"strings"
 )
 
 type fakeQueries struct {
@@ -84,7 +87,7 @@ func newFixture(t *testing.T, repos int) (*fakeQueries, *fakeIssues, *Processor)
 		q.targets = append(q.targets, db.ListIssueTargetsForAppRow{ProjectRepositoryID: uuid.New(), Repository: "o/r"})
 	}
 	is := &fakeIssues{fail: map[uuid.UUID]error{}}
-	return q, is, NewProcessor(q, is)
+	return q, is, NewProcessor(q, is, nil)
 }
 
 func TestProcessOpensOneIssuePerRepository(t *testing.T) {
@@ -170,5 +173,47 @@ func assertPermanent(t *testing.T, err error) {
 	var perm *permanentError
 	if !errors.As(err, &perm) {
 		t.Fatalf("got %v, want a permanent error", err)
+	}
+}
+
+type fakeCrashResolver struct {
+	event *crashprovider.Event
+	err   error
+	app   uuid.UUID
+}
+
+func (f *fakeCrashResolver) ForReport(_ context.Context, app uuid.UUID, _ *ingest.Report) (*crashprovider.Event, error) {
+	f.app = app
+	return f.event, f.err
+}
+func TestProcessSentryOnlyReportIncludesCrashDetailsAndSurvivesProviderFailure(t *testing.T) {
+	for _, unavailable := range []bool{false, true} {
+		q, is, p := newFixture(t, 1)
+		id := strings.Repeat("a", 32)
+		q.report.Payload = []byte(`{"platform":"web","trigger":"crash","sentry":{"event_id":"` + id + `"}}`)
+		resolver := &fakeCrashResolver{event: &crashprovider.Event{EventID: id, URL: "https://sentry.example/organizations/club/issues/?query=" + id, Title: "Unhandled error", StackTrace: []string{"render (app.js:12)"}}}
+		if unavailable {
+			resolver.err = errors.New("provider unavailable")
+			resolver.event.Title = ""
+			resolver.event.StackTrace = nil
+		}
+		p.crashes = resolver
+		if err := p.Process(context.Background(), q.report.ID); err != nil {
+			t.Fatal(err)
+		}
+		if resolver.app != q.report.AppID {
+			t.Fatal("resolver used another app")
+		}
+		for _, text := range []string{"### Crash", id, "[View in Sentry](" + resolver.event.URL + ")"} {
+			if !strings.Contains(is.drafts[0].Body, text) {
+				t.Fatalf("missing %q in issue", text)
+			}
+		}
+		if !unavailable && !strings.Contains(is.drafts[0].Body, "render (app.js:12)") {
+			t.Fatal("resolved stack missing")
+		}
+		if q.processed != 1 {
+			t.Fatal("Sentry failure prevented issue publication")
+		}
 	}
 }

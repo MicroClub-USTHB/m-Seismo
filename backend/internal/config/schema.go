@@ -111,6 +111,14 @@ type WorkerConfig struct {
 	MaxAttempts int
 }
 
+// CrashProvidersConfig holds operator-controlled credential encryption and allowed
+// Sentry origins. API clients cannot introduce arbitrary outbound destinations.
+type CrashProvidersConfig struct {
+	EncryptionKey          string   // base64-encoded 32-byte AES key; empty disables Sentry connections
+	PreviousEncryptionKeys []string // decryption-only keys retained during rotation (at most five)
+	SentryOrigins          []string
+}
+
 type Config struct {
 	Env       string
 	LogLevel  string
@@ -126,4 +134,5 @@ type Config struct {
 	Limits    LimitsConfig
 	Ingest    IngestConfig
 	Worker    WorkerConfig
+	CrashProviders CrashProvidersConfig
 }
