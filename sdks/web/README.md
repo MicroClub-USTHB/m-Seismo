@@ -1,73 +1,135 @@
-# Web reporting adapter
+# m-Seismo Web SDK
 
-A small, dependency-free ES module for reporting from browser apps that already
-use Sentry. It uses the shared ingestion contract and does not initialize Sentry.
-Import `createReporter` from `./index.js` (or use a local package dependency).
+A browser SDK for collecting bug reports: built-in form, optional screenshots, automatic capture of uncaught errors and unhandled rejections, breadcrumbs (navigation, selected clicks), failed `fetch` diagnostics, browser/app context, and sending a unified JSON report to a backend.
 
-```js
-import * as Sentry from "@sentry/browser"; // or your existing framework SDK
-import { createReporter } from "./m-seismo/index.js";
+## What it does
 
-// Reuse your app's anonymous installation ID. Persist a random UUID once;
-// do not derive it from a user's email/account or a hardware fingerprint.
-const installationID = getOrCreateAnonymousInstallationID();
-const reporter = createReporter({
-  endpoint: "/api/v1/reports", // same origin, or a same-origin reverse proxy
-  appKey: "msk_YOUR_APP_KEY", // ingestion-only credential; never a Sentry API token
-  installationID,
-  environment: "production",
-  release: { version: "1.0.0", build: "123" },
-});
+- **Built-in bug report form**: opens via keyboard shortcut (`Ctrl+Enter` by default), floating launcher, or `openReportForm()`.
+- **Optional screenshot**: attach an image from the form.
+- **Automatic error capture**: uncaught errors and unhandled promise rejections (configurable).
+- **Breadcrumbs**: navigation and allow-listed interaction clicks.
+- **Failed `fetch` diagnostics**: records failed/opaque `fetch` calls; successful calls not recorded. XHR not captured.
+- **Browser/app context**: URL (sanitized), browser/platform/viewport when available, app version/environment.
+- **Unified JSON report**: processed, sanitized, sent via transport to the configured endpoint.
 
-// Example for a caught frontend error. Keep your existing Sentry.init config.
-const eventID = Sentry.captureException(error);
-const report = reporter.createReport({
-  sentryEventID: eventID,
-  trigger: "non_fatal",
-  consent: "given", // after consent, or not_required under your internal policy
-});
-await reporter.sendReport(report);
-```
-
-To attach references to uncaught errors, use the bridge at the end of the host
-app's existing Sentry `beforeSend` hook, after its filtering/scrubbing:
+## Quick start
 
 ```js
-import { createSentryBridge } from "./m-seismo/index.js";
+import { init, openReportForm, captureException, captureMessage } from '@m-seismo/web';
 
-const bridge = createSentryBridge({
-  reporter,
-  consent: () => hasReportingConsent() ? "given" : undefined,
-  onReport: report => enqueueForDelivery(report), // your existing offline queue
-  onError: error => logLocally(error),
+const ok = init({
+  endpoint: 'http://localhost:4010/api/reports',
+  appVersion: '1.0.0',
+  environment: 'dev',
+  shortcut: 'Ctrl+Enter',
+  launcher: true,
+  screenshot: true,
 });
 
-// In the existing Sentry.init options:
-// beforeSend: async (event, hint) => bridge(await scrubAndFilter(event, hint))
+openReportForm();
+captureException(err);
+captureMessage('note');
 ```
 
-The bridge returns the original event (including `null` after filtering), preserves
-its occurrence timestamp, and isolates m-Seismo queue/delivery failures from Sentry.
-Do not make Sentry delivery depend on m-Seismo being reachable.
-The SDK capture result is a reference, not proof of delivery: sampling, filtering
-and processing delays may produce `event_not_found` during resolution.
+`endpoint` is required (absolute http(s)). Invalid config logs a warning and leaves the SDK disabled. `destroy()` tears down DOM side effects.
 
-For a manual bug report, omit `sentryEventID`, set `title`/`description`, and send an
-optional masked JPEG/PNG Blob using `sendReport(report, { screenshot })`.
+## Run it locally
 
-The adapter deliberately does not provide a report UI or a persistent offline
-queue. Keep the original `report` object (including its UUID and timestamp) in
-your app's queue and call `sendReport` with it again on retry. Errors expose
-`status`, `retryable`, and `retryAfter`; retry 429/503 with exponential backoff and
-jitter, honoring Retry-After. Network failures also reject and may be retried.
-Drop permanent 4xx errors. Do not create a new report for a retry.
+**Prerequisites:** Node.js v20.20.0.
 
-The backend currently has no cross-origin CORS configuration. Use a same-origin
-reverse proxy for browser ingestion. App keys grant submission only; owner JWTs
-and Sentry API tokens belong in your management/backend flow.
+From `sdks/web/`:
+```bash
+npm ci
+```
 
-Run tests with `npm test` (Node 20+, no npm dependencies).
+In separate terminals:
+```bash
+node tools/mock-receiver/server.mjs  # http://localhost:4010
+npm run dev                          # http://localhost:5173
+```
 
-The bridge classifies exceptions with `mechanism.handled === false` (including
-unhandled promise rejections) as `crash`. Handled exceptions and events without
-that signal remain `non_fatal`. The original Sentry event is preserved.
+**4-step walkthrough:** (1) Check receiver up. (2) Trigger a scenario. (3) Open form (launcher or Ctrl+Enter) and send. (4) Read the report in the test app "Output" or at `http://localhost:4010/__viewer`.
+
+## Test it
+
+From `sdks/web/`:
+
+| Task | Command |
+| --- | --- |
+| Typecheck | `npm run typecheck` |
+| Unit tests | `npm test` |
+| Build | `npm run build` |
+| E2E (one project) | `npx playwright test --project=chromium` |
+| E2E (chromium+firefox) | `npm run test:e2e:local` |
+| E2E (all) | `npm run test:e2e` |
+
+Open Playwright report with `npx playwright show-report`.  
+**CI:** `.github/workflows/web-sdk-ci.yml` runs typecheck, test, build on Node 20 for `sdks/web/**`.
+
+## Main components
+
+| Folder | Responsibility |
+| --- | --- |
+| `src/core` | Config/validation, lifecycle/init/destroy, types/version/events |
+| `src/form`, `src/theme` | Shadow-DOM form, launcher, theme |
+| `src/errors` | Error normalization |
+| `src/context` | Context collection and URL/query sanitization |
+| `src/network` | Fetch instrumentation |
+| `src/privacy` | Sanitization boundary |
+| `src/transport` | HTTP send |
+| `src/diagnostics`, `src/collectors` | Diagnostics buffer and collectors |
+| `src/reporting` | Processor, fingerprinting, dedup/limits, runtime |
+| `tools/mock-receiver` | Local mock ingest (dev/e2e) |
+| `test-app` | Test app/lab |
+| `tests` | Unit and e2e tests |
+
+**Flow:** `form / collectors -> context + diagnostics -> report processor -> sanitize -> transport -> backend`
+
+## Report format
+
+```json
+{
+  "schemaVersion": 2,
+  "sdkVersion": "0.0.0",
+  "reportId": "6f1c2b9e-3a4d-4c1f-9b2e-2f0a7d5c8e11",
+  "type": "manual",
+  "trigger": "form",
+  "description": "Button does nothing",
+  "error": null,
+  "context": {"url": "http://localhost:5173/", "timestamp": "2026-10-27T00:00:00.000Z", "application": {}},
+  "breadcrumbs": [],
+  "networkFailures": [],
+  "screenshot": null
+}
+```
+
+See `docs/report.schema.json` and `docs/backend-contract.md` (assumed/draft).
+
+## Configuration
+
+| Option | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `endpoint` | `string` (http(s)) | — | Required. |
+| `appVersion`/`environment` | `string` | — | Copied to context.application. |
+| `projectKey` | `string` | — | Sent as `X-MSeismo-Key` only if set. |
+| `timeoutMs` | `number` | `10000` | Request timeout. |
+| `shortcut` | `string \| false` | `'Ctrl+Enter'` | Invalid disables with warning. |
+| `launcher` | `boolean \| {label?,position?}` | `false` | Floating button. |
+| `screenshot` | `boolean` | `true` | Offer screenshot in form. |
+| `privacy.sensitiveQueryParams` | `string[]` | — | Extra params to redact. |
+| `diagnostics` | `object` | see code | Errors/rej/nav/interactions/network true by default; element text false; include true; maxEvents 50; maxAgeMs 600000. |
+| `reporting` | `object` | see code | `autoReport` 'off' by default; `sendCapturedExceptions` true; limits as configured. |
+| `onEvent` | `function` | — | Event listener. |
+
+## Limitations / roadmap
+
+- **Privacy:** baseline scrubber only (Phase 6 pending).
+- **Reliability:** no retries or offline queue (Phase 8 pending).
+- **Backend:** Go backend does not exist; contract is a draft verified only against the mock receiver.
+- **Capture gaps:** no XHR, no `console.error`; CSS/layout problems not auto-detected.
+- **Other:** no source-map resolution; weak fingerprints possible for cross-origin script errors.
+
+## Project status
+
+- **Package:** `@m-seismo/web` v0.0.0 (private, **not published yet**)
+- **Location:** `sdks/web/`

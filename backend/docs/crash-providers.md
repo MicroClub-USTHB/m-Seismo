@@ -139,7 +139,7 @@ Sentry event too. For `crash`/`non_fatal`, either inline `crash` details or a va
 Send the complete report as the `report` part of `multipart/form-data` to
 `POST /api/v1/reports` with `Authorization: Bearer msk_...`. See
 [the shared contract](../../spec/ingestion.md) and
-[the web example](../../sdks/web/README.md). Keep the same report UUID on retries.
+[the web example](../../sdks/web-sentry/README.md). Keep the same report UUID on retries.
 On native platforms, persist the event ID and original session/timestamp so a
 crash reported on the next launch retains its original context. Do not replace an
 app's existing Sentry initialization or install a second crash handler.
@@ -191,7 +191,7 @@ and HTTP suite, including a real web-adapter upload. See
 
 `go test ./...` covers app isolation, owner authorization, token rotation,
 encryption integrity, HTTP routing, credential redaction, upstream failures and
-schema references. `cd sdks/web && npm test` covers multipart delivery, the
+schema references. `cd sdks/web-sentry && npm test` covers multipart delivery, the
 Sentry beforeSend bridge, consent and retries. To exercise real persistence after
 applying migrations to an isolated test database:
 

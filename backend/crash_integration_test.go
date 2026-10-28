@@ -352,7 +352,7 @@ func TestCrashProviderHTTPIntegration(t *testing.T) {
 		// Test credentials are passed through the environment, never argv.
 		//nolint:gosec // Node is resolved from PATH; the script and arguments are fixed test code.
 		command := exec.CommandContext(ctx, node, "--input-type=module", "-e", `
-import { createReporter } from '../sdks/web/index.js';
+import { createReporter } from '../sdks/web-sentry/index.js';
 const reporter = createReporter({
   endpoint: process.env.MSEISMO_TEST_ENDPOINT,
   appKey: process.env.MSEISMO_TEST_KEY,

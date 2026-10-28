@@ -151,7 +151,7 @@ def main():
             # run serially so one test's consumer cannot steal another's work.
             run([args.go, "test", "-p", "1", "-count=1", "-race", "-tags", "integration", "./..."], env=env)
             run([args.go, "vet", "-tags", "integration", "./..."], env=env)
-            run(["node", "--test"], env=env, cwd=ROOT / "sdks/web")
+            run(["node", "--test"], env=env, cwd=ROOT / "sdks/web-sentry")
 
             print("Running existing HTTP API regression scripts against fake GitHub", flush=True)
             run([args.go, "build", "-o", str(temporary / "seismo"), "."], env=env)

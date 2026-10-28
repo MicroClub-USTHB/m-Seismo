@@ -4,4 +4,5 @@ iOS and Android SDK folders are added with their first implementation. Flutter a
 
 - `ios/`: Swift Package (`MSeismo`) + example app. See `ios/README.md`.
 
-- `web/`: dependency-free browser reporting adapter with optional Sentry event references. See `web/README.md`.
+- `web/`: Web SDK (bug-reporting form and automatic diagnostics). See `web/README.md`.
+- `web-sentry/`: dependency-free browser reporting adapter with optional Sentry event references. See `web-sentry/README.md`.

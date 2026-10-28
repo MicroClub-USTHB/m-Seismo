@@ -7,7 +7,7 @@ the repeatable suite that uses a TLS Sentry stub.
 ## Environment
 
 - Chromium 147.0.7727.101, launched through Playwright in a fresh browser context.
-- Official Sentry browser SDK 10.22.0 and the repository's `sdks/web/index.js`.
+- Official Sentry browser SDK 10.22.0 and the repository's `sdks/web-sentry/index.js`.
 - The production Go dependency graph with disposable PostgreSQL 17, Redis 7 and
   NATS 2.10 services, fresh migrations and a temporary owner/app.
 - Local HTTPS Sentry origin with a dedicated test certificate. Go and Node trusted
