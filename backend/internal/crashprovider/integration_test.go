@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/testenv"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,13 +23,11 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 )
 
-// Uses an isolated, migrated PostgreSQL database when explicitly configured.
+// Uses an isolated, migrated PostgreSQL database (a container, or the one in
+// SEISMO_TEST_DATABASE_URL).
 // External Sentry calls still go to a local TLS server, never a real account.
 func TestPostgresReportCrashIntegration(t *testing.T) {
-	databaseURL := os.Getenv("SEISMO_TEST_DATABASE_URL")
-	if databaseURL == "" {
-		t.Skip("set SEISMO_TEST_DATABASE_URL to an isolated migrated test database")
-	}
+	databaseURL := testenv.DatabaseURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, databaseURL)

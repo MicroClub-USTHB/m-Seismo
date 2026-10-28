@@ -14,44 +14,13 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GOLANGCI_LINT_VERSION: v2.14.0
-      # The tests that need Postgres, Redis or NATS skip without these.
-      SEISMO_TEST_DATABASE_URL: postgres://seismo:seismo@localhost:5432/seismo?sslmode=disable
-      SEISMO_TEST_REDIS_URL: redis://localhost:6379/0
-      SEISMO_TEST_NATS_URL: nats://localhost:4222
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: seismo
-          POSTGRES_PASSWORD: seismo
-          POSTGRES_DB: seismo
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U seismo"
-          --health-interval 2s
-          --health-timeout 5s
-          --health-retries 15
-      redis:
-        image: redis:7-alpine
-        ports: ["6379:6379"]
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 2s
-          --health-timeout 5s
-          --health-retries 15
+      # The tests that need Postgres, Redis or NATS start them with
+      # testcontainers (backend/internal/testenv); the runner has Docker.
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod
-      # Services can't take arguments, and NATS needs -js for JetStream.
-      - name: Start NATS
-        run: docker run -d --name nats -p 4222:4222 nats:2-alpine -js
-      - name: Migrate the database
-        run: >-
-          docker run --rm --network host -v "$PWD/backend/db:/db"
-          ghcr.io/amacneil/dbmate:2 --url "$SEISMO_TEST_DATABASE_URL"
-          --no-dump-schema --migrations-dir /db/migrations up
       - name: Install golangci-lint
         run: |
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}

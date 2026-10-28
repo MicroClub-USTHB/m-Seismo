@@ -57,17 +57,23 @@ The iOS suite requires a macOS/Xcode host and is separate from this runner. The
 Rust agent has its own checks (`make agent-check`); its optional Docker integration
 tests are run with `make agent-integration`.
 
-To use existing **isolated test services**, apply migrations and supply
-`SEISMO_TEST_DATABASE_URL`, `SEISMO_TEST_REDIS_URL` and `SEISMO_TEST_NATS_URL`:
+The integration tests start their own Postgres, Redis and NATS (JetStream) with
+[testcontainers](https://golang.testcontainers.org/), through
+`internal/testenv`: one container per service and per test package, with every
+migration applied, removed when the package's tests end. They need a running
+Docker; without it they skip. Nothing has to be started or migrated by hand.
 
 ```sh
 cd backend
-go test -p 1 -count=1 -race -tags integration ./...
+go test -count=1 -race -tags integration ./...
 ```
 
-Run packages serially (`-p 1`): the integration tests share a JetStream work-queue
-stream, and concurrent consumers would interfere. The HTTP test's optional web
-subtest needs Node 20+; the full runner verifies this prerequisite up front.
+To use existing **isolated test services** instead, apply the migrations and set
+`SEISMO_TEST_DATABASE_URL`, `SEISMO_TEST_REDIS_URL` and `SEISMO_TEST_NATS_URL`;
+a variable that is set wins over a container. Run packages serially (`-p 1`)
+then: the integration tests share a JetStream work-queue stream, and concurrent
+consumers would interfere. The HTTP test's optional web subtest needs Node 20+;
+the full runner verifies this prerequisite up front.
 
 ## Running
 

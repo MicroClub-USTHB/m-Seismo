@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/testenv"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -33,17 +34,10 @@ import (
 // isolated Postgres, Redis and NATS. Only the external Sentry API is simulated.
 // It deliberately uses owner/SDK HTTP APIs rather than calling domain services.
 func TestCrashProviderHTTPIntegration(t *testing.T) {
-	for setting, target := range map[string]string{
-		"SEISMO_TEST_DATABASE_URL": "SEISMO_DATABASE_URL",
-		"SEISMO_TEST_REDIS_URL":    "SEISMO_REDIS_URL",
-		"SEISMO_TEST_NATS_URL":     "SEISMO_NATS_URL",
-	} {
-		value := os.Getenv(setting)
-		if value == "" {
-			t.Skip(setting + " must point to an isolated test service")
-		}
-		t.Setenv(target, value)
-	}
+	databaseURL := testenv.DatabaseURL(t)
+	t.Setenv("SEISMO_DATABASE_URL", databaseURL)
+	t.Setenv("SEISMO_REDIS_URL", testenv.RedisURL(t))
+	t.Setenv("SEISMO_NATS_URL", testenv.NATSURL(t))
 	t.Setenv("SEISMO_ENV", "development")
 	t.Setenv("SEISMO_AUTH_JWT_SECRET", "http-integration-test-secret")
 	t.Setenv("SEISMO_GITHUB_APP_ID", "0")
@@ -161,7 +155,7 @@ func TestCrashProviderHTTPIntegration(t *testing.T) {
 			defer cancel()
 			// fxtest lifecycle defers run before t.Cleanup. Use a separate
 			// short-lived pool so fixtures are removed after shutdown too.
-			cleanup, err := pgxpool.New(ctx, os.Getenv("SEISMO_TEST_DATABASE_URL"))
+			cleanup, err := pgxpool.New(ctx, databaseURL)
 			if err != nil {
 				t.Error(err)
 				return
