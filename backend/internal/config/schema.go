@@ -120,19 +120,19 @@ type CrashProvidersConfig struct {
 }
 
 type Config struct {
-	Env       string
-	LogLevel  string
-	Server    ServerConfig
-	Database  DatabaseConfig
-	Redis     RedisConfig
-	NATS      NATSConfig
-	Auth      AuthConfig
-	GitHub    GitHubConfig
-	GitLab    OAuthTrackerConfig
-	Bitbucket OAuthTrackerConfig
-	Secrets   SecretsConfig
-	Limits    LimitsConfig
-	Ingest    IngestConfig
-	Worker    WorkerConfig
+	Env            string
+	LogLevel       string
+	Server         ServerConfig
+	Database       DatabaseConfig
+	Redis          RedisConfig
+	NATS           NATSConfig
+	Auth           AuthConfig
+	GitHub         GitHubConfig
+	GitLab         OAuthTrackerConfig
+	Bitbucket      OAuthTrackerConfig
+	Secrets        SecretsConfig
+	Limits         LimitsConfig
+	Ingest         IngestConfig
+	Worker         WorkerConfig
 	CrashProviders CrashProvidersConfig
 }
