@@ -48,7 +48,7 @@ func TestPGStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Deleting the owner deletes its projects and their connections.
-	t.Cleanup(func() { pool.Exec(ctx, "DELETE FROM owners WHERE id = $1", o.ID) })
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, "DELETE FROM owners WHERE id = $1", o.ID) })
 	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerID: o.ID, Name: "test", Slug: "crashlytics-test"})
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +123,7 @@ func TestRedisStates(t *testing.T) {
 		t.Fatal(err)
 	}
 	rdb := redis.NewClient(opts)
-	t.Cleanup(func() { rdb.Close() })
+	t.Cleanup(func() { _ = rdb.Close() })
 	states := NewRedisStates(rdb)
 
 	if err := states.Put(ctx, "state-1", project, time.Minute); err != nil {

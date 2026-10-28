@@ -43,7 +43,7 @@ func fakeGoogle(t *testing.T, refreshToken string) *httptest.Server {
 				http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"access_token":  "access",
 				"token_type":    "Bearer",
 				"expires_in":    3600,
@@ -54,7 +54,7 @@ func fakeGoogle(t *testing.T, refreshToken string) *httptest.Server {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]string{"email": "bot@example.com"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"email": "bot@example.com"})
 		default:
 			http.NotFound(w, r)
 		}
@@ -115,7 +115,9 @@ func TestConnectFlow(t *testing.T) {
 		t.Fatalf("connect: status %d: %s", rec.Code, rec.Body)
 	}
 	var resp struct{ URL string }
-	json.NewDecoder(rec.Body).Decode(&resp)
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
 	consent, err := url.Parse(resp.URL)
 	if err != nil {
 		t.Fatal(err)
@@ -220,7 +222,9 @@ func TestStatusAndApps(t *testing.T) {
 		t.Errorf("set apps before connecting: status %d, want 409", rec.Code)
 	}
 
-	ot.store.Save(context.Background(), project, "bot@example.com", "refresh")
+	if err := ot.store.Save(context.Background(), project, "bot@example.com", "refresh"); err != nil {
+		t.Fatal(err)
+	}
 
 	rec = ot.do("PUT", "/v1/projects/"+project+"/crashlytics/apps", `{"apps":["not-an-app"]}`)
 	if rec.Code != http.StatusBadRequest {

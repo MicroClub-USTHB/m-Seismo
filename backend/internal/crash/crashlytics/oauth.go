@@ -7,7 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"html"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"time"
@@ -167,7 +168,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 
 	tok, err := h.oauth.Exchange(ctx, q.Get("code"))
 	if err != nil {
-		log.Printf("crashlytics: oauth exchange for project %s: %v", projectID, err)
+		slog.WarnContext(ctx, "crashlytics: oauth exchange failed", "project", projectID, "err", err)
 		http.Error(w, "Could not get access from Google. Start the connection again.", http.StatusBadGateway)
 		return
 	}
@@ -178,7 +179,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 
 	email, err := h.email(ctx, tok)
 	if err != nil {
-		log.Printf("crashlytics: read google account of project %s: %v", projectID, err)
+		slog.WarnContext(ctx, "crashlytics: reading the google account failed", "project", projectID, "err", err)
 		http.Error(w, "Could not read the Google account. Start the connection again.", http.StatusBadGateway)
 		return
 	}
@@ -189,7 +190,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	fmt.Fprintf(w, "Crashlytics is connected with %s. If not done yet, set the project's Firebase apps. You can close this page.\n", email)
+	_, _ = fmt.Fprintf(w, "Crashlytics is connected with %s. If not done yet, set the project's Firebase apps. You can close this page.\n", html.EscapeString(email))
 }
 
 // email returns the address of the Google account that granted tok.
@@ -202,7 +203,7 @@ func (h *Handler) email(ctx context.Context, tok *oauth2.Token) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("userinfo: %s", resp.Status)
 	}
@@ -286,6 +287,6 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 }
 
 func internalError(w http.ResponseWriter, err error) {
-	log.Printf("crashlytics: %v", err)
+	slog.Error("crashlytics: request failed", "err", err)
 	writeError(w, http.StatusInternalServerError, "internal error")
 }
