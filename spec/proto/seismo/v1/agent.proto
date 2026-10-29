@@ -16,6 +16,10 @@ message AgentMessage {
     Register register = 1;
     QueryResult result = 2;
     QueryError error = 3;
+    // Added after v1, older coordinators never get a MetricsQuery.
+    MetricsResult metrics_result = 4;
+    // Added after v1, older coordinators never get a StatusQuery.
+    StatusResult status_result = 5;
   }
 }
 
@@ -23,6 +27,10 @@ message CoordinatorMessage {
   oneof message {
     Query query = 1;
     Cancel cancel = 2;
+    // Added after v1, older agents ignore it and never answer.
+    MetricsQuery metrics_query = 3;
+    // Added after v1, older agents ignore it and never answer.
+    StatusQuery status_query = 4;
   }
 }
 

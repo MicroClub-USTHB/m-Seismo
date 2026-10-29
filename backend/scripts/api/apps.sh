@@ -68,6 +68,26 @@ done
 expect_match "$key1_revoked" '^[0-9]{4}-' "first key has a revoked_at timestamp"
 expect_eq "$key2_revoked" null "second key is still active"
 
+section "coordinator keys"
+api GET "/apps/$app_id/coordinator-keys"
+expect_status 200 "list coordinator keys"
+expect_eq "$(jlen .)" 0 "SDK keys are not listed as coordinator keys"
+
+api POST "/apps/$app_id/coordinator-keys"
+expect_status 201 "create coordinator key"
+co_id=$(jget .id)
+expect_match "$(jget .secret)" '^mco_[A-Za-z0-9_-]{43}$' "secret has the mco_ format"
+expect_eq "$(jget .secret | cut -c1-12)" "$(jget .prefix)" "prefix is the start of the secret"
+
+api GET "/apps/$app_id/keys"
+expect_eq "$(jlen .)" 2 "coordinator keys are not listed as SDK keys"
+api DELETE "/apps/$app_id/keys/$co_id"
+expect_status 404 "a coordinator key can't be revoked as an SDK key"
+api DELETE "/apps/$app_id/coordinator-keys/$key2_id"
+expect_status 404 "an SDK key can't be revoked as a coordinator key"
+api DELETE "/apps/$app_id/coordinator-keys/$co_id"
+expect_status 204 "revoke the coordinator key"
+
 section "project links"
 create_project "Linked $run"
 project_id=$CREATED_ID

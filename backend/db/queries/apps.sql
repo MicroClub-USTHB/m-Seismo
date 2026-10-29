@@ -26,23 +26,23 @@ DELETE FROM apps
 WHERE id = $1 AND owner_id = $2;
 
 -- name: CreateAppKey :one
-INSERT INTO app_keys (app_id, key_hash, key_prefix)
-VALUES ($1, $2, $3)
+INSERT INTO app_keys (app_id, kind, key_hash, key_prefix)
+VALUES ($1, $2, $3, $4)
 RETURNING *;
 
 -- name: ListAppKeys :many
 SELECT * FROM app_keys
-WHERE app_id = $1
+WHERE app_id = $1 AND kind = $2
 ORDER BY created_at DESC;
 
 -- name: RevokeAppKey :execrows
 UPDATE app_keys
 SET revoked_at = now()
-WHERE id = $1 AND app_id = $2 AND revoked_at IS NULL;
+WHERE id = $1 AND app_id = $2 AND kind = $3 AND revoked_at IS NULL;
 
 -- name: GetActiveAppKeyByHash :one
 SELECT * FROM app_keys
-WHERE key_hash = $1 AND revoked_at IS NULL;
+WHERE key_hash = $1 AND kind = $2 AND revoked_at IS NULL;
 
 -- name: LinkAppProject :exec
 INSERT INTO app_projects (app_id, project_id)

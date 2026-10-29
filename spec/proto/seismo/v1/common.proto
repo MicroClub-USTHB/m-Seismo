@@ -1,7 +1,7 @@
 // Types shared by the agent hop and the backend hop.
 //
-// These mirror agent/src/model.rs on purpose, so the agent can turn its
-// own types into these without any reshaping.
+// Source-neutral on purpose: every agent source (loki, file, journal...)
+// fills these without reshaping.
 syntax = "proto3";
 
 package seismo.v1;
@@ -13,6 +13,8 @@ enum AgentSource {
   AGENT_SOURCE_DOCKER = 1;
   AGENT_SOURCE_KUBERNETES = 2;
   AGENT_SOURCE_LOKI = 3;
+  AGENT_SOURCE_FILE = 4;
+  AGENT_SOURCE_JOURNAL = 5;
 }
 
 message TimeWindow {
@@ -166,4 +168,52 @@ message QueryResult {
   repeated WorkloadResult workloads = 6;
   bool truncated = 7;
   uint64 dropped_line_count = 8;
+}
+
+// What the coordinator asks of an agent, and what the backend asks of the
+// coordinator: counts over a window, no log lines. Added after v1, old
+// peers ignore the oneof variants that carry it.
+message MetricsQuery {
+  string query_id = 1;
+  TimeWindow window = 2;
+  google.protobuf.Timestamp deadline = 3;
+}
+
+message ServiceMetrics {
+  string service = 1;
+  uint64 lines = 2;
+  // Lines that look like errors (level token in the text, best effort).
+  uint64 error_lines = 3;
+  // The source hit its line cap, so both counts are lower bounds.
+  bool truncated = 4;
+  // Set when the service could not be read, counts are then 0.
+  optional SourceError error = 5;
+}
+
+message MetricsResult {
+  string query_id = 1;
+  repeated ServiceMetrics services = 2;
+}
+
+// Asks for the current state of each service's workload. No logs, no window.
+// Added after v1, older agents never get one.
+message StatusQuery {
+  string query_id = 1;
+  // Absolute, same rule as Query.deadline.
+  google.protobuf.Timestamp deadline = 2;
+}
+
+// One service's container or pod state. The logs-free half of WorkloadResult.
+message ServiceStatus {
+  string service = 1;
+  // COMPLETE when diagnostics were read, UNAVAILABLE when error is set.
+  WorkloadStatus status = 2;
+  Workload workload = 3;
+  WorkloadDiagnostics diagnostics = 4;
+  optional SourceError error = 5;
+}
+
+message StatusResult {
+  string query_id = 1;
+  repeated ServiceStatus services = 2;
 }

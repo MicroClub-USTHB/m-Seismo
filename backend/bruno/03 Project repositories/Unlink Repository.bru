@@ -11,6 +11,8 @@ delete {
 }
 
 docs {
-  204. If this was the default, the project has no default until another
-  one is set, and issues from linked apps skip this project.
+  204. 409 if routing rules send to this repository (change or delete
+  them first), or if it is the default and other repositories are linked
+  (make another one the default first). Unlinking the last repository
+  leaves the project without one, and issues from linked apps skip it.
 }

@@ -64,7 +64,12 @@ services:
       target: backend
     ports:
       - "${BACKEND_PORT:-8080}:8080"
+      # Coordinator.Attach (plain gRPC in development)
+      - "${COORDINATOR_PORT:-9443}:9443"
     environment:
+      SEISMO_CRASH_PROVIDERS_ENCRYPTION_KEY: ${SEISMO_CRASH_PROVIDERS_ENCRYPTION_KEY:-}
+      SEISMO_CRASH_PROVIDERS_PREVIOUS_ENCRYPTION_KEYS: ${SEISMO_CRASH_PROVIDERS_PREVIOUS_ENCRYPTION_KEYS:-}
+      SEISMO_CRASH_PROVIDERS_SENTRY_ORIGINS: ${SEISMO_CRASH_PROVIDERS_SENTRY_ORIGINS:-https://sentry.io https://us.sentry.io https://de.sentry.io}
       SEISMO_ENV: development
       SEISMO_LOG_LEVEL: debug
       SEISMO_SERVER_HOST: 0.0.0.0
@@ -89,6 +94,7 @@ services:
       SEISMO_GITHUB_PRIVATE_KEY_PATH: ${SEISMO_GITHUB_PRIVATE_KEY_PATH:-}
       SEISMO_GITHUB_API_URL: ${SEISMO_GITHUB_API_URL:-}
       SEISMO_GITHUB_WEB_URL: ${SEISMO_GITHUB_WEB_URL:-}
+      SEISMO_GITHUB_WEBHOOK_SECRET: ${SEISMO_GITHUB_WEBHOOK_SECRET:-}
       # GitHub rate-limit handling (see backend/docs/github.md#rate-limits)
       SEISMO_GITHUB_MIN_WRITE_INTERVAL: ${SEISMO_GITHUB_MIN_WRITE_INTERVAL:-1s}
       SEISMO_GITHUB_MAX_RATE_LIMIT_WAIT: ${SEISMO_GITHUB_MAX_RATE_LIMIT_WAIT:-30s}
@@ -106,6 +112,9 @@ services:
       SEISMO_BITBUCKET_API_URL: ${SEISMO_BITBUCKET_API_URL:-}
       SEISMO_BITBUCKET_MAX_RATE_LIMIT_WAIT: ${SEISMO_BITBUCKET_MAX_RATE_LIMIT_WAIT:-30s}
       SEISMO_LIMITS_TEST_ISSUES_PER_MINUTE: ${SEISMO_LIMITS_TEST_ISSUES_PER_MINUTE:-10}
+      # Log coordinator (see backend/docs/coordinator.md)
+      SEISMO_COORDINATOR_ENABLED: "true"
+      SEISMO_COORDINATOR_ADDR: ":9443"
     depends_on:
       migrate:
         condition: service_completed_successfully

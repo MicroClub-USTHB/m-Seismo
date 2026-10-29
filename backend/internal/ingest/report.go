@@ -46,6 +46,7 @@ type Report struct {
 	Crash           *Crash             `json:"crash,omitempty"`
 	NetworkRequests []NetworkRequest   `json:"network_requests,omitempty"`
 	BodiesCaptured  bool               `json:"bodies_captured"`
+	Sentry          *SentryFields      `json:"sentry,omitempty"`
 	Crashlytics     *CrashlyticsFields `json:"crashlytics,omitempty"`
 }
 
@@ -105,15 +106,20 @@ type NetworkRequest struct {
 	ResponseBody string `json:"response_body,omitempty"`
 }
 
+type SentryFields struct {
+	EventID string `json:"event_id"`
+}
+
 type CrashlyticsFields struct {
 	InstallationID string `json:"installation_id,omitempty"`
 }
 
 var (
-	uuidPattern      = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-	timestampPattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`)
+	uuidPattern        = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	sentryEventPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
+	timestampPattern   = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`)
 
-	platforms    = set("ios", "android", "flutter", "react_native")
+	platforms    = set("ios", "android", "flutter", "react_native", "web")
 	modes        = set("internal", "qa", "production")
 	triggers     = set("shake", "screenshot", "long_press", "manual", "crash", "non_fatal")
 	consents     = set("given", "not_required")
@@ -158,6 +164,9 @@ func (r *Report) OccurredTime() time.Time {
 // report, and request and response bodies are dropped unless
 // bodies_captured is true. Call it after Validate.
 func (r *Report) Normalize() {
+	if r.Sentry != nil {
+		r.Sentry.EventID = strings.ToLower(r.Sentry.EventID)
+	}
 	r.ID = strings.ToLower(r.ID)
 	r.InstallationID = strings.ToLower(r.InstallationID)
 	if r.BodiesCaptured {
@@ -271,7 +280,7 @@ func (r *Report) Validate() error {
 		for i, frame := range c.StackTrace {
 			v.text(fmt.Sprintf("crash.stack_trace[%d]", i), frame, 0, 1000)
 		}
-	} else if r.Trigger == "crash" || r.Trigger == "non_fatal" {
+	} else if (r.Trigger == "crash" || r.Trigger == "non_fatal") && r.Sentry == nil {
 		v.fail("crash", "is required when trigger is "+r.Trigger)
 	}
 
@@ -293,6 +302,9 @@ func (r *Report) Validate() error {
 		v.text(p+".response_body", n.ResponseBody, 0, 16000)
 	}
 
+	if r.Sentry != nil && !sentryEventPattern.MatchString(r.Sentry.EventID) {
+		v.fail("sentry.event_id", "must be a 32-character hexadecimal event ID")
+	}
 	if c := r.Crashlytics; c != nil {
 		v.text("crashlytics.installation_id", c.InstallationID, 0, 128)
 	}

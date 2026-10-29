@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:," />
+    <title>m-Seismo Web SDK — test app</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="app-header">
+      <h1 class="brand">m-Seismo Web SDK <small data-testid="sdk-version"></small></h1>
+      <div class="status-chips" aria-label="SDK status">
+        <span class="chip" data-testid="status-sdk" data-state="ok"><span class="dot"></span><span data-role="text">initialized</span></span>
+        <span class="chip" data-testid="status-receiver" data-state="ok"><span class="dot"></span><span data-role="text">receiver ok</span></span>
+        <span class="chip" data-testid="status-mode"><span data-role="text">mode: ok</span></span>
+        <span class="chip" data-testid="status-theme"><span data-role="text">theme: light</span></span>
+      </div>
+      <button type="button" class="btn small" data-testid="theme-toggle">Toggle theme</button>
+    </header>
+
+    <div class="shell">
+      <nav class="side-nav" aria-label="Sections">
+        <h2>Navigate</h2>
+        <ul>
+          <li><a href="#quick-start">Quick start</a></li>
+          <li><a href="#scenarios">Scenarios</a></li>
+          <li><a href="#report-processor">Report processor</a></li>
+          <li><a href="#breadcrumbs">Breadcrumbs &amp; network</a></li>
+          <li><a href="#diagnostics">Diagnostics</a></li>
+          <li><a href="#context">Context</a></li>
+          <li><a href="#theme">Theme &amp; appearance</a></li>
+          <li><a href="#sdk-controls">SDK controls</a></li>
+          <li><a href="#output">Output (report viewer)</a></li>
+          <li><a href="/lab.html">Error laboratory</a></li>
+        </ul>
+      </nav>
+
+      <main class="content" id="main">
+        <section class="section" id="quick-start" aria-labelledby="quick-start-h">
+          <h2 id="quick-start-h">Quick start</h2>
+          <p class="lede">
+            Follow these five steps to see the whole loop end to end. The checklist
+            ticks as you go, or run the whole thing at once.
+          </p>
+          <ol class="qs-steps" data-testid="quickstart-steps">
+            <li data-step="receiver" data-done="false">
+              <span class="qs-box" aria-hidden="true">✓</span>
+              <span><span class="qs-label">Check the receiver is up</span> — the status chip in the header shows <em>receiver ok</em>.</span>
+            </li>
+            <li data-step="bug" data-done="false">
+              <span class="qs-box" aria-hidden="true">✓</span>
+              <span><span class="qs-label">Trigger a bug</span> — use a scenario card below, or the golden-path button.</span>
+            </li>
+            <li data-step="open" data-done="false">
+              <span class="qs-box" aria-hidden="true">✓</span>
+              <span><span class="qs-label">Open the form</span> — the launcher bottom-right, or <kbd>Ctrl</kbd> + <kbd>Enter</kbd>.</span>
+            </li>
+            <li data-step="send" data-done="false">
+              <span class="qs-box" aria-hidden="true">✓</span>
+              <span><span class="qs-label">Send the report</span> — describe the problem and press Send.</span>
+            </li>
+            <li data-step="read" data-done="false">
+              <span class="qs-box" aria-hidden="true">✓</span>
+              <span><span class="qs-label">Read the report</span> — it appears in <a href="#output">Output</a> below.</span>
+            </li>
+          </ol>
+          <div class="card-actions">
+            <button type="button" class="btn primary" data-testid="golden-path">Run the golden path demo</button>
+            <button type="button" class="btn" data-testid="quickstart-reset">Reset checklist</button>
+          </div>
+        </section>
+
+        <section class="section" id="scenarios" aria-labelledby="scenarios-h">
+          <h2 id="scenarios-h">Scenarios</h2>
+          <p class="lede">
+            Every trigger from the earlier phases, grouped by what it exercises. Each
+            card says what to expect. Noisy or destructive actions are marked.
+          </p>
+
+          <h3>Errors &amp; rejections</h3>
+          <div class="card-grid">
+            <div class="card">
+              <h4 class="card-title">Uncaught exception</h4>
+              <p class="card-desc">Throws synchronously on the next tick.</p>
+              <p class="card-expected">Expected: appears in diagnostics as an error.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="throw-sync">Throw</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Unhandled rejection</h4>
+              <p class="card-desc">Rejects a promise with no handler.</p>
+              <p class="card-expected">Expected: appears in diagnostics as a rejection.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="unhandled-rejection">Reject</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Uncaught TypeError</h4>
+              <p class="card-desc">The diagnostics-lab TypeError.</p>
+              <p class="card-expected">Expected: captured as <code>error</code>.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="diag-uncaught-typeerror">Throw TypeError</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Call undefined function</h4>
+              <p class="card-desc">TypeError from calling <code>undefined</code>.</p>
+              <p class="card-expected">Expected: captured as <code>error</code>.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="diag-uncaught-undefined-fn">Call it</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Throw a string</h4>
+              <p class="card-desc">A non-Error throw.</p>
+              <p class="card-expected">Expected: normalized to an error event.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="diag-throw-string">Throw string</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Throw an object</h4>
+              <p class="card-desc">A throw with an object value.</p>
+              <p class="card-expected">Expected: normalized to an error event.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="diag-throw-object">Throw object</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Reject with Error</h4>
+              <p class="card-desc">Promise rejection carrying an Error.</p>
+              <p class="card-expected">Expected: captured as a rejection.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="diag-reject-error">Reject</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Reject with string</h4>
+              <p class="card-desc">Promise rejection carrying a string.</p>
+              <p class="card-expected">Expected: captured and flagged.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="diag-reject-string">Reject string</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Reject with object</h4>
+              <p class="card-desc">Promise rejection carrying an object.</p>
+              <p class="card-expected">Expected: captured and flagged.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="diag-reject-object">Reject object</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Reject with undefined</h4>
+              <p class="card-desc">Promise rejection with no value.</p>
+              <p class="card-expected">Expected: captured and flagged.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="diag-reject-undefined">Reject undefined</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">captureException with context</h4>
+              <p class="card-desc">Manual capture plus a context bag.</p>
+              <p class="card-expected">Expected: a captured event with context.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="diag-capture-exception">Capture</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">captureException without context</h4>
+              <p class="card-desc">Manual capture, error only.</p>
+              <p class="card-expected">Expected: a captured event, no context.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="diag-capture-exception-no-context">Capture</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">captureException(string)</h4>
+              <p class="card-desc">Capturing a non-Error value.</p>
+              <p class="card-expected">Expected: normalized to an error event.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="diag-capture-non-error">Capture string</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Broken image</h4>
+              <p class="card-desc">A missing image resource.</p>
+              <p class="card-expected">Expected: NOT captured (resource errors are ignored).</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="diag-broken-image">Break image</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Broken script</h4>
+              <p class="card-desc">A missing script resource.</p>
+              <p class="card-expected">Expected: NOT captured.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="diag-broken-script">Break script</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Cross-origin script throw</h4>
+              <p class="card-desc">A cross-origin script that throws.</p>
+              <p class="card-expected">Expected: captured with a weak fingerprint.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="diag-cross-origin">Load script</button></div>
+            </div>
+            <div class="card noisy">
+              <h4 class="card-title">Flood 100 errors</h4>
+              <p class="card-desc">Throws 100 uncaught errors at once.</p>
+              <p class="card-expected">Expected: buffer stays bounded at the configured size.</p>
+              <span class="card-flag">Noisy</span>
+              <div class="card-actions"><button type="button" class="btn small danger" data-testid="diag-flood">Flood</button></div>
+            </div>
+          </div>
+
+          <h3>Network &amp; requests</h3>
+          <div class="card-grid">
+            <div class="card">
+              <h4 class="card-title">Request → HTTP 500</h4>
+              <p class="card-desc">A failing request (test-app mock route).</p>
+              <p class="card-expected">Expected: logged as HTTP 500.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="fetch-500">Request</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Request → HTTP 200</h4>
+              <p class="card-desc">A successful request (test-app mock route).</p>
+              <p class="card-expected">Expected: logged as HTTP 200.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="fetch-200">Request</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Save (silent logical bug)</h4>
+              <p class="card-desc">Clicks a Save button that does nothing.</p>
+              <p class="card-expected">Expected: no error; a manual report shows the click trail.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="silent-save">Save</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Fetch success (/api/echo)</h4>
+              <p class="card-desc">A successful cross-origin call.</p>
+              <p class="card-expected">Expected: NOT recorded as a network failure.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="bc-network-success">Fetch</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Fetch HTTP 500</h4>
+              <p class="card-desc">A failing cross-origin call.</p>
+              <p class="card-expected">Expected: recorded as a network failure.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="bc-network-http-error">Fetch</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Fetch network error (/api/drop)</h4>
+              <p class="card-desc">The socket is dropped with no response.</p>
+              <p class="card-expected">Expected: recorded as a network error.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="bc-network-network-error">Fetch</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Fetch opaque (/api/no-cors)</h4>
+              <p class="card-desc">A <code>no-cors</code> opaque response.</p>
+              <p class="card-expected">Expected: recorded as an opaque response (info).</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="bc-network-opaque">Fetch</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Fetch slow (/api/slow)</h4>
+              <p class="card-desc">A 1.5 s delayed call.</p>
+              <p class="card-expected">Expected: success, not recorded.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="bc-network-slow">Fetch</button></div>
+            </div>
+          </div>
+
+          <h3>Navigation &amp; interactions</h3>
+          <div class="card-grid">
+            <div class="card">
+              <h4 class="card-title">Navigate (pushState + fake secret)</h4>
+              <p class="card-desc">Pushes a URL containing a fake secret.</p>
+              <p class="card-expected">Expected: a navigation breadcrumb with a sanitized URL.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="bc-nav-push">Navigate</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">history.back()</h4>
+              <p class="card-desc">Go back in history.</p>
+              <p class="card-expected">Expected: a navigation breadcrumb.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="bc-nav-back">Back</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Boop the button</h4>
+              <p class="card-desc">A plain button click (interaction breadcrumb target).</p>
+              <p class="card-expected">Expected: an interaction breadcrumb with this test id.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="bc-click" data-feature="checkout">Boop</button></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="report-processor" aria-labelledby="rp-h">
+          <h2 id="rp-h">Report processor</h2>
+          <p class="lede">
+            Every report type flows through one processor. Automatic reporting is
+            <strong>off by default</strong>; the re-init buttons turn it on.
+          </p>
+          <div class="card-grid">
+            <div class="card">
+              <h4 class="card-title">Open form (manual)</h4>
+              <p class="card-expected">Expected: a <code>manual</code> report.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="rp-open-form">Open form</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Seed error, then open form</h4>
+              <p class="card-expected">Expected: a <code>manual_with_error</code> report.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="rp-seed-error-then-form">Seed &amp; open</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Throw uncaught error</h4>
+              <p class="card-expected">Expected: automatic error only when autoReport is on.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="rp-uncaught">Throw</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">captureException()</h4>
+              <p class="card-expected">Expected: a <code>captured_exception</code> when enabled.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="rp-capture-exception">Capture</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">captureMessage()</h4>
+              <p class="card-expected">Expected: a <code>captured_message</code> when enabled.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="rp-capture-message">Capture</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Same message, two code paths</h4>
+              <p class="card-expected">Expected: two distinct fingerprints.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="rp-two-paths">Run</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Different messages in a loop</h4>
+              <p class="card-expected">Expected: five reports.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="rp-different-messages">Run</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Weak fingerprint (no stack)</h4>
+              <p class="card-expected">Expected: a weak-fingerprint flag.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="rp-weak-no-stack">Run</button></div>
+            </div>
+            <div class="card">
+              <h4 class="card-title">Cross-origin script (weak)</h4>
+              <p class="card-expected">Expected: auto-reported with a weak fingerprint.</p>
+              <div class="card-actions"><button type="button" class="btn small" data-testid="rp-cross-origin">Load</button></div>
+            </div>
+            <div class="card noisy">
+              <h4 class="card-title">Repeat error ×1 / ×10 / ×100 / ×500</h4>
+              <p class="card-desc">Repeats the same error to exercise dedup and caps.</p>
+              <p class="card-expected">Expected: first sent, rest counted.</p>
+              <span class="card-flag">Noisy</span>
+              <div class="card-actions">
+                <button type="button" class="btn small" data-testid="rp-repeat-1">×1</button>
+                <button type="button" class="btn small" data-testid="rp-repeat-10">×10</button>
+                <button type="button" class="btn small danger" data-testid="rp-repeat-100">×100</button>
+                <button type="button" class="btn small danger" data-testid="rp-repeat-500">×500</button>
+              </div>
+            </div>
+          </div>
+
+          <h3>Re-initialise with different reporting options</h3>
+          <div class="card-actions">
+            <button type="button" class="btn small" data-testid="rp-reinit-auto-errors">autoReport = errors</button>
+            <button type="button" class="btn small" data-testid="rp-reinit-auto-off">autoReport = off</button>
+            <button type="button" class="btn small" data-testid="rp-reinit-small-limits">tiny window + caps</button>
+            <button type="button" class="btn small" data-testid="rp-reinit-no-capture">sendCapturedExceptions = false</button>
+            <button type="button" class="btn small" data-testid="rp-reinit-beforesend-drop">beforeSend drops automatic</button>
+            <button type="button" class="btn small" data-testid="rp-reinit-beforesend-throw">beforeSend throws</button>
+          </div>
+
+          <h3>Inspect</h3>
+          <div class="card-actions">
+            <button type="button" class="btn small" data-testid="rp-show-stats">Show processor stats</button>
+            <button type="button" class="btn small" data-testid="rp-show-last">Show last stored report</button>
+            <button type="button" class="btn small" data-testid="rp-stats-link">Open /__stats</button>
+          </div>
+          <pre data-testid="processor-stats" class="code">null</pre>
+          <pre data-testid="processor-last" class="code">null</pre>
+        </section>
+
+        <section class="section" id="breadcrumbs" aria-labelledby="bc-h">
+          <h2 id="bc-h">Breadcrumbs &amp; network</h2>
+          <p class="lede">
+            Inspect what would be attached to a report right now. Successful calls are
+            never recorded; only failures and (as info) opaque responses are.
+          </p>
+          <div class="card-actions">
+            <button type="button" class="btn small" data-testid="bc-show-selection">Show report selection</button>
+          </div>
+          <pre data-testid="selection-buffer" class="code">null</pre>
+        </section>
+
+        <section class="section" id="diagnostics" data-mseismo-form aria-labelledby="diag-h">
+          <h2 id="diag-h">Diagnostics</h2>
+          <p class="lede">
+            The bounded in-memory diagnostics buffer. Use the re-init buttons to change
+            its size or disable capture.
+          </p>
+          <div class="card-actions">
+            <button type="button" class="btn small" data-testid="diag-show-buffer">Show buffer</button>
+            <button type="button" class="btn small" data-testid="diag-clear-buffer">Clear buffer</button>
+            <button type="button" class="btn small" data-testid="diag-reinit-small">Re-init (maxEvents = 5)</button>
+            <button type="button" class="btn small" data-testid="diag-reinit-disabled">Re-init (capture disabled)</button>
+          </div>
+          <pre data-testid="diagnostics-buffer" class="code">[]</pre>
+        </section>
+
+        <section class="section" id="theme" aria-labelledby="theme-h">
+          <h2 id="theme-h">Theme &amp; appearance</h2>
+          <p class="lede">
+            The page follows your system preference and the header toggle. The SDK form
+            follows the system preference only — the host theme cannot restyle it.
+          </p>
+          <div class="card-actions">
+            <button type="button" class="btn small" data-testid="theme-toggle-2">Toggle theme</button>
+          </div>
+          <h3>Hostile host CSS (isolation proof)</h3>
+          <p class="subtle">
+            This box applies an aggressive host stylesheet. The SDK form is unaffected
+            because it lives in a shadow root.
+          </p>
+          <div class="hostile card">
+            <p>Host styles deliberately set every element here to red Comic Sans.</p>
+            <button type="button" class="btn small" data-testid="theme-hostile-open">Open the form from here</button>
+          </div>
+        </section>
+
+        <section class="section" id="context" aria-labelledby="ctx-h">
+          <h2 id="ctx-h">Context</h2>
+          <p class="lede">
+            Exercise automatic context collection. Resize the viewport in DevTools to see
+            the viewport change, and switch device emulation to see platform/browser move.
+          </p>
+          <div class="card-actions">
+            <button type="button" class="btn small" data-testid="context-lab-navigate">Set URL with fake secrets</button>
+            <button type="button" class="btn small" data-testid="context-lab-reset-url">Reset URL</button>
+            <button type="button" class="btn small" data-testid="context-lab-reinit">Re-init with app metadata</button>
+            <button type="button" class="btn small" data-testid="context-lab-reinit-no-meta">Re-init without app metadata</button>
+            <button type="button" class="btn small" data-testid="show-context">Show last stored context</button>
+          </div>
+          <p class="subtle">Reports go to <code data-testid="receiver-endpoint">?</code> (configurable via <code>VITE_MSEISMO_ENDPOINT</code>).</p>
+        </section>
+
+        <section class="section" id="sdk-controls" aria-labelledby="sdk-h">
+          <h2 id="sdk-h">SDK controls</h2>
+          <p class="lede">Lifecycle and transport controls. <kbd>Ctrl</kbd> + <kbd>Enter</kbd> opens the form outside a text field.</p>
+          <div class="card-actions">
+            <button type="button" class="btn small primary" data-testid="open-form">Open bug-report form</button>
+            <button type="button" class="btn small" data-testid="send-report">Send test report</button>
+            <button type="button" class="btn small" data-testid="init-twice">init() again (same config)</button>
+            <button type="button" class="btn small" data-testid="init-no-shortcut">init() without shortcut</button>
+            <button type="button" class="btn small danger" data-testid="destroy">destroy()</button>
+          </div>
+          <textarea data-testid="ctrl-enter-input" rows="3" placeholder="Type here, then press Ctrl + Enter…" aria-label="Ctrl+Enter typing test"></textarea>
+          <p data-testid="ctrl-enter-indicator" class="indicator subtle">No Ctrl+Enter yet.</p>
+        </section>
+
+        <section class="section" id="receiver" aria-labelledby="recv-h">
+          <h2 id="recv-h">Receiver</h2>
+          <p class="lede">The local mock receiver that stands in for the backend.</p>
+          <div class="receiver-row">
+            <span class="chip" data-testid="receiver-state" data-state="ok"><span class="dot"></span><span data-role="text">reachable</span></span>
+            <span class="chip" data-testid="receiver-count">0 stored</span>
+          </div>
+          <p class="subtle">Active mode:</p>
+          <div class="segmented" role="group" aria-label="Receiver mode" data-testid="receiver-modes">
+            <button type="button" data-testid="mode-ok" data-mode="ok" aria-pressed="true">ok</button>
+            <button type="button" data-testid="mode-fail500" data-mode="fail500" aria-pressed="false">fail500</button>
+            <button type="button" data-testid="mode-slow" data-mode="slow" aria-pressed="false">slow</button>
+            <button type="button" data-testid="mode-drop" data-mode="offline" aria-pressed="false">drop</button>
+          </div>
+          <div class="card-actions" style="margin-top: var(--space-3)">
+            <button type="button" class="btn small danger" data-testid="receiver-reset">Reset stored reports</button>
+          </div>
+          <p class="subtle" role="status" data-testid="receiver-note"></p>
+        </section>
+
+        <section class="section" id="output" aria-labelledby="out-h">
+          <h2 id="out-h">Output</h2>
+          <p class="lede">
+            A readable view of what the SDK sent and what the receiver stored. Read-only:
+            nothing here edits a report.
+          </p>
+          <div class="card-actions">
+            <button type="button" class="btn small primary" data-testid="viewer-load-latest">Load latest from receiver</button>
+            <button type="button" class="btn small" data-testid="viewer-refresh">Refresh</button>
+            <span class="badge" data-testid="viewer-count">0 reports</span>
+          </div>
+          <div id="viewer-root" data-testid="viewer-root" style="margin-top: var(--space-3)"></div>
+        </section>
+      </main>
+    </div>
+
+    <section class="event-log-panel" aria-label="Event log" data-testid="event-log-panel" data-collapsed="false">
+      <div class="event-log-head">
+        <strong>Event log</strong>
+        <span class="badge" data-testid="event-log-count">0</span>
+        <span class="spacer"></span>
+        <button type="button" class="btn small" data-testid="event-log-toggle" aria-expanded="true">Collapse</button>
+      </div>
+      <div data-testid="event-log-body-wrap">
+        <ol data-testid="event-log" class="event-log-body" aria-live="polite" aria-relevant="additions"></ol>
+        <div class="event-log-tools">
+          <p>
+            <label>Level
+              <select data-testid="event-log-level-filter">
+                <option value="all">all</option>
+                <option value="info">info</option>
+                <option value="warn">warn</option>
+                <option value="error">error</option>
+              </select>
+            </label>
+            <label>Source
+              <select data-testid="event-log-source-filter"><option value="all">all</option></select>
+            </label>
+            <label>Search <input type="search" data-testid="event-log-search" placeholder="text…" /></label>
+          </p>
+          <p>
+            <button type="button" class="btn small" data-testid="event-log-pause" aria-pressed="false">Pause auto-scroll</button>
+            <button type="button" class="btn small" data-testid="event-log-copy">Copy</button>
+            <button type="button" class="btn small danger" data-testid="event-log-clear">Clear</button>
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <div class="toast-region" data-testid="toast-region" role="status" aria-live="polite"></div>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

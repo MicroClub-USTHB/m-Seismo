@@ -40,3 +40,11 @@ ON CONFLICT (report_id, project_repository_id) DO NOTHING;
 SELECT name FROM report_attachments
 WHERE report_id = $1
 ORDER BY name;
+
+-- name: ListReportDeliveryProjects :many
+-- The projects that already got the report's issue, whichever of their
+-- repositories it went to.
+SELECT DISTINCT pr.project_id
+FROM report_deliveries d
+JOIN project_repositories pr ON pr.id = d.project_repository_id
+WHERE d.report_id = $1;

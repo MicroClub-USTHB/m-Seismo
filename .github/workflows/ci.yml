@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GOLANGCI_LINT_VERSION: v2.14.0
+      # The tests that need Postgres, Redis or NATS start them with
+      # testcontainers (backend/internal/testenv); the runner has Docker.
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -30,4 +32,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: make agent-check
