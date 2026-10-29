@@ -32,14 +32,12 @@ export const Route = createFileRoute('/projects/$projectId/')({
   component: ProjectDetailPage,
 })
 
-const PLATFORMS: Platform[] = ['web', 'ios', 'android', 'flutter', 'react_native']
+const PLATFORMS: Platform[] = ['web', 'ios', 'android']
 
 const PLATFORM_LABEL: Record<Platform, string> = {
   web: 'Web',
   ios: 'iOS',
   android: 'Android',
-  flutter: 'Flutter',
-  react_native: 'React Native',
 }
 
 const columns: McDataTableColumnDef<ProjectApp>[] = [

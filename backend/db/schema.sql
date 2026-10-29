@@ -1,4 +1,6 @@
--- Dumped from database version 17.11
+\restrict dbmate
+
+-- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6
 
 SET statement_timeout = 0;
@@ -56,11 +58,9 @@ CREATE TYPE public.app_key_kind AS ENUM (
 --
 
 CREATE TYPE public.app_platform AS ENUM (
+    'web',
     'ios',
-    'android',
-    'flutter',
-    'react_native',
-    'web'
+    'android'
 );
 
 
@@ -556,6 +556,13 @@ CREATE INDEX apps_owner_id_idx ON public.apps USING btree (owner_id);
 
 
 --
+-- Name: issues_lower_external_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issues_lower_external_id_idx ON public.issues USING btree (lower(external_id));
+
+
+--
 -- Name: issues_project_repository_id_fingerprint_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -827,6 +834,7 @@ ALTER TABLE ONLY public.routing_rules
 -- PostgreSQL database dump complete
 --
 
+\unrestrict dbmate
 
 
 --
@@ -845,4 +853,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022120000'),
     ('20261022200000'),
     ('20261022210000'),
-    ('20261023090000');
+    ('20261023090000'),
+    ('20261026090000'),
+    ('20261029090000');

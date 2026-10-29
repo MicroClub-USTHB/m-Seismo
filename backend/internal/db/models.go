@@ -57,11 +57,9 @@ func (ns NullAppKeyKind) Value() (driver.Value, error) {
 type AppPlatform string
 
 const (
-	AppPlatformIos         AppPlatform = "ios"
-	AppPlatformAndroid     AppPlatform = "android"
-	AppPlatformFlutter     AppPlatform = "flutter"
-	AppPlatformReactNative AppPlatform = "react_native"
-	AppPlatformWeb         AppPlatform = "web"
+	AppPlatformWeb     AppPlatform = "web"
+	AppPlatformIos     AppPlatform = "ios"
+	AppPlatformAndroid AppPlatform = "android"
 )
 
 func (e *AppPlatform) Scan(src interface{}) error {

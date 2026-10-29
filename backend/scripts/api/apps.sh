@@ -115,7 +115,7 @@ http POST "/apps/$app_id/keys" "" "$NEW_TOKEN"
 expect_status 404 "another owner cannot create keys"
 http DELETE "/apps/$app_id/keys/$key2_id" "" "$NEW_TOKEN"
 expect_status 404 "another owner cannot revoke keys"
-http POST /apps "{\"name\":\"Theirs\",\"platform\":\"flutter\",\"bundle_id\":\"com.other\"}" "$NEW_TOKEN"
+http POST /apps "{\"name\":\"Theirs\",\"platform\":\"android\",\"bundle_id\":\"com.other\"}" "$NEW_TOKEN"
 their_app=$(jget .id)
 http PUT "/apps/$their_app/projects/$project_id" "" "$NEW_TOKEN"
 expect_status 404 "another owner cannot link our project to their app"

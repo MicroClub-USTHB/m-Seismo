@@ -360,10 +360,10 @@ func validateName(raw string) (string, error) {
 
 func validatePlatform(p db.AppPlatform) error {
 	switch p {
-	case db.AppPlatformIos, db.AppPlatformAndroid, db.AppPlatformFlutter, db.AppPlatformReactNative, db.AppPlatformWeb:
+	case db.AppPlatformWeb, db.AppPlatformIos, db.AppPlatformAndroid:
 		return nil
 	}
-	return apperr.Invalid("platform must be one of ios, android, flutter, react_native, web")
+	return apperr.Invalid("platform must be one of web, ios, android")
 }
 
 func validateBundleID(raw string) (string, error) {
