@@ -4,6 +4,7 @@ package project
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 	"time"
@@ -265,6 +266,32 @@ func (s *Service) UnlinkRepository(ctx context.Context, ownerID, projectID, repo
 	if _, err := s.get(ctx, ownerID, projectID); err != nil {
 		return err
 	}
+	repo, err := s.q.GetProjectRepository(ctx, db.GetProjectRepositoryParams{ID: repositoryID, ProjectID: projectID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return apperr.NotFound("repository not found")
+	}
+	if err != nil {
+		return err
+	}
+	// Reports that match no rule go to the default repository, so a project
+	// with repositories always keeps one.
+	if repo.IsDefault {
+		repos, err := s.q.ListProjectRepositories(ctx, projectID)
+		if err != nil {
+			return err
+		}
+		if len(repos) > 1 {
+			return apperr.Conflict("this is the project's default repository; make another one the default first")
+		}
+	}
+	rules, err := s.q.CountRoutingRulesForRepository(ctx, repositoryID)
+	if err != nil {
+		return err
+	}
+	if rules > 0 {
+		return apperr.Conflict("routing rules send issues to this repository; change or delete them first")
+	}
+
 	n, err := s.q.UnlinkProjectRepository(ctx, db.UnlinkProjectRepositoryParams{ID: repositoryID, ProjectID: projectID})
 	if err != nil {
 		return err

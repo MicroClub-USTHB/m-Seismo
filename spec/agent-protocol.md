@@ -105,6 +105,18 @@ from the registry, which lives in memory only. Queries in flight to a
 dropped agent end as `DISCONNECTED`. The agent reconnects with backoff
 and registers again.
 
+### 3.5 Status
+
+- The coordinator sends `StatusQuery{query_id, deadline}`. It has no
+  window and returns no log lines.
+- The agent answers with one `StatusResult`: one `ServiceStatus` per
+  configured service, in the same order as `Register.services`.
+- Each `ServiceStatus` carries the same `WorkloadDiagnostics` as a log
+  result. A service whose container cannot be read is `UNAVAILABLE` with
+  an `error`.
+- Sources without a container concept (`loki`, `file`, `journal`) answer
+  every service `UNAVAILABLE` with `DRIVER_UNSUPPORTED`.
+
 ## 4. Backend hop
 
 ### 4.1 Attach
@@ -119,8 +131,13 @@ one.
 
 ### 4.2 Queries
 
-- The backend sends `QueryLogs{query_id, window, trace_id?, deadline}`
-  when the pipeline needs backend logs.
+- The backend sends `QueryLogs{query_id, window, trace_id?, deadline,
+  limits}` when the pipeline needs backend logs.
+- `limits` is the backend's budget. `max_bytes_total` is for the whole
+  aggregate, and the coordinator splits it across agents (§3.3). A zero
+  field, or no `limits`, means the coordinator's default; a value above the
+  coordinator's ceiling (§6) is lowered to it. The backend keeps the
+  aggregate small enough for an issue and for its own transport.
 - The coordinator fans out to every connected agent under that deadline
   (minus a margin to aggregate) and replies with **one**
   `AggregateResult`, or an `AggregateError` for a coordinator fault.
@@ -128,6 +145,10 @@ one.
   status.
 - No agent connected is not an error: it's an `AggregateResult` with
   zero sections.
+- The backend sends `StatusQuery{query_id, deadline}` to ask for
+  container state. The coordinator answers with one `AggregateStatus`:
+  one `AgentStatusReport` per agent, same `AgentStatus` rules as
+  section 5, and each report carries that agent's `ServiceStatus` list.
 
 ## 5. Aggregate
 

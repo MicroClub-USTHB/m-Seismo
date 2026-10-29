@@ -194,3 +194,26 @@ message MetricsResult {
   string query_id = 1;
   repeated ServiceMetrics services = 2;
 }
+
+// Asks for the current state of each service's workload. No logs, no window.
+// Added after v1, older agents never get one.
+message StatusQuery {
+  string query_id = 1;
+  // Absolute, same rule as Query.deadline.
+  google.protobuf.Timestamp deadline = 2;
+}
+
+// One service's container or pod state. The logs-free half of WorkloadResult.
+message ServiceStatus {
+  string service = 1;
+  // COMPLETE when diagnostics were read, UNAVAILABLE when error is set.
+  WorkloadStatus status = 2;
+  Workload workload = 3;
+  WorkloadDiagnostics diagnostics = 4;
+  optional SourceError error = 5;
+}
+
+message StatusResult {
+  string query_id = 1;
+  repeated ServiceStatus services = 2;
+}

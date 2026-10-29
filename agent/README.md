@@ -162,8 +162,37 @@ postgres = "myproj-postgres-1"
 The agent's user needs access to the Docker socket. The `trace_id` filter is
 a plain substring match.
 
+### `kubernetes`
+
+Pod logs, through `kubectl logs --timestamps`. Each service maps to a
+`namespace/pod/container`. Every service needs an entry, there is no default.
+
+```toml
+[source]
+type = "kubernetes"
+# command = ["sudo", "kubectl"]     # default ["kubectl"]
+
+[source.pods]
+postgres = "shop/postgres-0/postgres"
+```
+
+Uses whatever `kubectl` finds in the environment (`KUBECONFIG`, or the pod's
+service account in-cluster). The agent's identity needs `get` on pods and
+`get` on `pods/log` in each namespace. The `trace_id` filter is a plain
+substring match.
+
+## Container status
+
+A `StatusQuery` asks for each service's container state, with no logs:
+runtime state, restart count, OOM kill, image and configured CPU and memory
+limits. `docker` reads `docker inspect`, `kubernetes` reads `kubectl get pod`.
+The logs-only sources answer every service `UNAVAILABLE` with
+`DRIVER_UNSUPPORTED`. The coordinator fans it out like a log query, and the
+backend asks for it with `QueryStatus`.
+
 ## Status
 
-Agent: sources `loki`, `file`, `journal`, `docker`. Coordinator: registry,
-fan-out and backend attach. TLS on the agent hop is opt-in, the backend hop is plaintext.
+Agent: sources `loki`, `file`, `journal`, `docker`, `kubernetes`, and container
+status for `docker` and `kubernetes`. Coordinator: registry, fan-out and
+backend attach. TLS on the agent hop is opt-in, the backend hop is plaintext.
 No Tempo or Mimir.

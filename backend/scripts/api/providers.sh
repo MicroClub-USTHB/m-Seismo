@@ -186,6 +186,10 @@ if require_fake "default switching between two repositories"; then
   expect_eq "$(jcount . is_default true)" 1 "failed default switch rolled back"
 
   api DELETE "/projects/$project_id/repositories/$repo2"
+  expect_status 409 "the default can't be unlinked while another repository is linked"
+  api PUT "/projects/$project_id/repositories/$repo1/default"
+  expect_status 204 "make the first repository the default again"
+  api DELETE "/projects/$project_id/repositories/$repo2"
   expect_status 204 "unlink the second repository"
 fi
 

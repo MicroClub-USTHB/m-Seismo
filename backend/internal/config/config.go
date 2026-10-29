@@ -41,6 +41,11 @@ func Load(configPath string) (*Config, error) {
 	}
 
 	cfg := &Config{
+		CrashProviders: CrashProvidersConfig{
+			EncryptionKey:          v.GetString("crash_providers.encryption_key"),
+			PreviousEncryptionKeys: v.GetStringSlice("crash_providers.previous_encryption_keys"),
+			SentryOrigins:          v.GetStringSlice("crash_providers.sentry_origins"),
+		},
 		Env:      v.GetString("env"),
 		LogLevel: v.GetString("log_level"),
 		Server: ServerConfig{
@@ -82,6 +87,16 @@ func Load(configPath string) (*Config, error) {
 		Limits: LimitsConfig{
 			TestIssuesPerMinute: v.GetInt("limits.test_issues_per_minute"),
 		},
+		Crash: CrashConfig{
+			Source: v.GetString("crash.source"),
+			Window: v.GetDuration("crash.window"),
+			Crashlytics: CrashlyticsConfig{
+				ClientID:     v.GetString("crash.crashlytics.client_id"),
+				ClientSecret: v.GetString("crash.crashlytics.client_secret"),
+				RedirectURL:  v.GetString("crash.crashlytics.redirect_url"),
+				QuotaProject: v.GetString("crash.crashlytics.quota_project"),
+			},
+		},
 		Ingest: IngestConfig{
 			AppPerMinute:          v.GetFloat64("ingest.app_per_minute"),
 			AppBurst:              v.GetInt("ingest.app_burst"),
@@ -92,6 +107,17 @@ func Load(configPath string) (*Config, error) {
 			Enabled:     v.GetBool("worker.enabled"),
 			Concurrency: v.GetInt("worker.concurrency"),
 			MaxAttempts: v.GetInt("worker.max_attempts"),
+		},
+		Coordinator: CoordinatorConfig{
+			Enabled:             v.GetBool("coordinator.enabled"),
+			Addr:                v.GetString("coordinator.addr"),
+			TLSCertFile:         v.GetString("coordinator.tls_cert_file"),
+			TLSKeyFile:          v.GetString("coordinator.tls_key_file"),
+			Plaintext:           v.GetBool("coordinator.plaintext"),
+			Window:              v.GetDuration("coordinator.window"),
+			Timeout:             v.GetDuration("coordinator.timeout"),
+			MaxBytes:            v.GetInt("coordinator.max_bytes"),
+			MaxLinesPerWorkload: v.GetInt("coordinator.max_lines_per_workload"),
 		},
 	}
 
@@ -151,6 +177,22 @@ func (c *Config) validate() error {
 	}
 	if c.Worker.Concurrency < 1 || c.Worker.MaxAttempts < 1 {
 		return fmt.Errorf("worker.concurrency and worker.max_attempts must be at least 1")
+	}
+	if err := c.Coordinator.validate(c.Env); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c CoordinatorConfig) validate(env string) error {
+	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
+		return fmt.Errorf("coordinator.tls_cert_file and coordinator.tls_key_file go together")
+	}
+	if c.Enabled && c.TLSCertFile == "" && !c.Plaintext && env != "development" {
+		return fmt.Errorf("coordinator needs coordinator.tls_cert_file and tls_key_file, or coordinator.plaintext when TLS ends in front of the backend")
+	}
+	if c.Window <= 0 || c.Timeout <= 0 || c.MaxBytes < 1024 || c.MaxLinesPerWorkload < 1 {
+		return fmt.Errorf("coordinator.window, timeout, max_bytes (at least 1024) and max_lines_per_workload must be positive")
 	}
 	return nil
 }

@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 use prost_types::Timestamp;
 use seismo_proto::{
-    BackendRequest, CoordinatorEvent, QueryLogs, TimeWindow,
+    BackendRequest, CoordinatorEvent, QueryLogs, StatusQuery, TimeWindow,
     backend_request::Request as Req,
     coordinator_event::Event,
     coordinator_server::{Coordinator, CoordinatorServer},
@@ -100,6 +100,20 @@ impl Backend {
         };
         self.to_coordinator.send(Ok(req)).await.unwrap();
     }
+
+    pub async fn ask_status(&self, query_id: &str) {
+        let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap() + Duration::from_secs(10);
+        let req = BackendRequest {
+            request: Some(Req::QueryStatus(StatusQuery {
+                query_id: query_id.into(),
+                deadline: Some(Timestamp {
+                    seconds: t.as_secs() as i64,
+                    nanos: 0,
+                }),
+            })),
+        };
+        self.to_coordinator.send(Ok(req)).await.unwrap();
+    }
 }
 
 /// Window 100s..200s, deadline `secs` from now.
@@ -122,6 +136,7 @@ pub fn logs_within(id: &str, secs: u64) -> QueryLogs {
             seconds: t.as_secs() as i64,
             nanos: 0,
         }),
+        limits: None,
     }
 }
 

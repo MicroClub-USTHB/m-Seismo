@@ -1,8 +1,10 @@
 //! Where log lines come from. Every source answers the same question: the
 //! lines of one service inside a time window, newest kept when it has to cut.
+mod cli;
 pub mod docker;
 pub mod file;
 pub mod journal;
+pub mod kubernetes;
 pub mod loki;
 
 use crate::config;
@@ -35,6 +37,7 @@ pub struct Fetched {
 pub enum Source {
     Loki(loki::Loki),
     Docker(docker::Docker),
+    Kubernetes(kubernetes::Kubernetes),
     File(file::File),
     Journal(journal::Journal),
 }
@@ -44,6 +47,7 @@ impl Source {
         match cfg {
             config::Source::Loki(c) => Ok(Self::Loki(loki::Loki::new(c.clone())?)),
             config::Source::Docker(c) => Ok(Self::Docker(docker::Docker::new(c))),
+            config::Source::Kubernetes(c) => Ok(Self::Kubernetes(kubernetes::Kubernetes::new(c)?)),
             config::Source::File(c) => Ok(Self::File(file::File::new(c))),
             config::Source::Journal(c) => Ok(Self::Journal(journal::Journal::new(c))),
         }
@@ -54,6 +58,7 @@ impl Source {
         match self {
             Self::Loki(_) => AgentSource::Loki,
             Self::Docker(_) => AgentSource::Docker,
+            Self::Kubernetes(_) => AgentSource::Kubernetes,
             Self::File(_) => AgentSource::File,
             Self::Journal(_) => AgentSource::Journal,
         }
@@ -63,9 +68,58 @@ impl Source {
         match self {
             Self::Loki(s) => s.fetch(p).await,
             Self::Docker(s) => s.fetch(p).await,
+            Self::Kubernetes(s) => s.fetch(p).await,
             Self::File(s) => s.fetch(p).await,
             Self::Journal(s) => s.fetch(p).await,
         }
+    }
+
+    pub async fn status(&self, service: &str) -> Result<StatusInfo, SourceError> {
+        match self {
+            Self::Docker(s) => s.status(service).await,
+            Self::Kubernetes(s) => s.status(service).await,
+            // NOTE: logs-only sources have no container to ask about
+            _ => Err(err(
+                SourceErrorKind::DriverUnsupported,
+                "this log source has no container state",
+            )),
+        }
+    }
+}
+
+/// What a source knows about one service's container, without logs.
+pub struct StatusInfo {
+    pub workload: pb::Workload,
+    pub diagnostics: pb::WorkloadDiagnostics,
+}
+
+pub(crate) const NOT_REPORTED: &str = "not reported by the runtime";
+
+// A diagnostic is either there or says why not, see DiagnosticValue in the proto.
+pub(crate) fn str_diag(value: Option<String>) -> pb::StringDiagnostic {
+    pb::StringDiagnostic {
+        value: Some(match value {
+            Some(v) => pb::string_diagnostic::Value::Available(v),
+            None => pb::string_diagnostic::Value::UnavailableReason(NOT_REPORTED.into()),
+        }),
+    }
+}
+
+pub(crate) fn uint_diag(value: Option<u64>) -> pb::UintDiagnostic {
+    pb::UintDiagnostic {
+        value: Some(match value {
+            Some(v) => pb::uint_diagnostic::Value::Available(v),
+            None => pb::uint_diagnostic::Value::UnavailableReason(NOT_REPORTED.into()),
+        }),
+    }
+}
+
+pub(crate) fn bool_diag(value: Option<bool>) -> pb::BoolDiagnostic {
+    pb::BoolDiagnostic {
+        value: Some(match value {
+            Some(v) => pb::bool_diagnostic::Value::Available(v),
+            None => pb::bool_diagnostic::Value::UnavailableReason(NOT_REPORTED.into()),
+        }),
     }
 }
 

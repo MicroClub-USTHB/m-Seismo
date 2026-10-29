@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/testenv"
 	"os"
 	"testing"
 	"time"
@@ -14,13 +15,10 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 )
 
-// This test needs a migrated database. It is skipped unless
-// SEISMO_TEST_DATABASE_URL is set.
+// This test needs a migrated database: a container, or the one in
+// SEISMO_TEST_DATABASE_URL.
 func TestPGStore(t *testing.T) {
-	url := os.Getenv("SEISMO_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("SEISMO_TEST_DATABASE_URL not set")
-	}
+	url := testenv.DatabaseURL(t)
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, url)
 	if err != nil {
