@@ -77,6 +77,7 @@ func Load(configPath string) (*Config, error) {
 			WebURL:           v.GetString("github.web_url"),
 			MinWriteInterval: v.GetDuration("github.min_write_interval"),
 			MaxRateLimitWait: v.GetDuration("github.max_rate_limit_wait"),
+			WebhookSecret:    v.GetString("github.webhook_secret"),
 		},
 		GitLab:    oauthTracker(v, "gitlab"),
 		Bitbucket: oauthTracker(v, "bitbucket"),

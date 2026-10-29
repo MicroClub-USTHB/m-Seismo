@@ -61,7 +61,7 @@ GitHub App and/or GitLab application or Bitbucket consumer (see
 | FR-01 / FR-04: project keys, create, rotate, revoke | done, as **app keys** (`/apps/{id}/keys`) |
 | FR-46: issue opened automatically | done: the worker opens the issue of every accepted report |
 | FR-49: labels, assignees, milestone | set by routing rules, carried by `Draft`; GitHub resolves milestones by title |
-| FR-51: two-way status | schema and `Opener.IsOpen` ready; no sync job yet |
+| FR-51: two-way status | done for GitHub: the App webhook records issues closed or reopened (`issues.state`); GitLab and Bitbucket not yet |
 | FR-55: comment on a duplicate | schema, fingerprint and `Opener.Comment` ready; logic not built |
 | FR-58 / FR-59: routing, default repository | done: routing rules by app, severity and category, else the default repository; no issue templates yet |
 | Per-app tracker credentials | done: connections belong to apps; `GET /apps/{id}/targets` previews the routing |
