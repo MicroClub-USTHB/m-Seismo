@@ -83,6 +83,14 @@ struct ReportPayload: Encodable {
         }
     }
 
+    struct Crashlytics: Encodable {
+        var installationID: String
+
+        enum CodingKeys: String, CodingKey {
+            case installationID = "installation_id"
+        }
+    }
+
     var schemaVersion = 1
     var id: String
     var installationID: String
@@ -96,6 +104,9 @@ struct ReportPayload: Encodable {
     var autoSubmitted: Bool
     var userInput: UserInput?
     var device: Device
+    var featureFlags: [String: FlagValue]?
+    var experiments: [String: String]?
+    var crashlytics: Crashlytics?
     var logs: [Log]?
     var breadcrumbs: [Breadcrumb]?
     var crash: Crash?
@@ -111,7 +122,10 @@ struct ReportPayload: Encodable {
         case platform, sdk, environment, release, trigger
         case autoSubmitted = "auto_submitted"
         case userInput = "user_input"
-        case device, logs, breadcrumbs, crash
+        case device
+        case featureFlags = "feature_flags"
+        case experiments, crashlytics
+        case logs, breadcrumbs, crash
         case networkRequests = "network_requests"
         case bodiesCaptured = "bodies_captured"
     }
@@ -163,6 +177,24 @@ struct ReportPayload: Encodable {
             networkType: Self.networkType(context?.networkType),
             orientation: Self.orientation(context?.orientation)
         )
+
+        // The schema caps flags at 200 and experiments at 100; keep the
+        // first ones by name so the cut is the same on every retry. A
+        // number the JSON can't hold (NaN, infinity) is left out.
+        featureFlags = report.featureFlags.flatMap { (flags: [String: FlagValue]) -> [String: FlagValue]? in
+            let usable = flags.filter { key, value in
+                if case .number(let number) = value { return number.isFinite && !key.isEmpty }
+                return !key.isEmpty
+            }
+            let kept = usable.keys.sorted().prefix(200)
+            return kept.isEmpty ? nil : Dictionary(uniqueKeysWithValues: kept.map { ($0, clampFlag(usable[$0]!)) })
+        }
+        experiments = report.experiments.flatMap { (entries: [String: String]) -> [String: String]? in
+            let usable = entries.filter { !$0.key.isEmpty }
+            let kept = usable.keys.sorted().prefix(100)
+            return kept.isEmpty ? nil : Dictionary(uniqueKeysWithValues: kept.map { ($0, clamp(usable[$0]!, 128)) })
+        }
+        crashlytics = nonEmpty(report.crashlyticsInstallationID).map { Crashlytics(installationID: clamp($0, 128)) }
 
         logs = report.recentLogs.map { lines in
             lines.suffix(500).map {
@@ -235,6 +267,13 @@ struct ReportPayload: Encodable {
         default: return "unknown"
         }
     }
+}
+
+/// Flag strings are not capped by the schema, but keep one from making
+/// the report too large.
+private func clampFlag(_ value: FlagValue) -> FlagValue {
+    if case .string(let text) = value { return .string(clamp(text, 1000)) }
+    return value
 }
 
 private func nonEmpty(_ value: String?) -> String? {
