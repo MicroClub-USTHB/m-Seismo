@@ -84,6 +84,11 @@ func Load(configPath string) (*Config, error) {
 		Secrets: SecretsConfig{
 			EncryptionKey: v.GetString("secrets.encryption_key"),
 		},
+		Superadmin: SuperadminConfig{
+			Email:    v.GetString("superadmin.email"),
+			Password: v.GetString("superadmin.password"),
+			Name:     v.GetString("superadmin.name"),
+		},
 		Limits: LimitsConfig{
 			TestIssuesPerMinute: v.GetInt("limits.test_issues_per_minute"),
 		},

@@ -49,6 +49,11 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("secrets.encryption_key", "")
 
+	// Seeds one owner at startup when both are set; see SuperadminConfig.
+	v.SetDefault("superadmin.email", "")
+	v.SetDefault("superadmin.password", "")
+	v.SetDefault("superadmin.name", "Super Admin")
+
 	v.SetDefault("limits.test_issues_per_minute", 10)
 
 	v.SetDefault("ingest.app_per_minute", 600)

@@ -62,6 +62,8 @@ type Querier interface {
 	// The default repository of every project linked to the app.
 	ListIssueTargetsForApp(ctx context.Context, appID uuid.UUID) ([]ListIssueTargetsForAppRow, error)
 	ListOwnerConnections(ctx context.Context, ownerID uuid.UUID) ([]ProviderConnection, error)
+	ListOwners(ctx context.Context) ([]Owner, error)
+	ListProjectApps(ctx context.Context, projectID uuid.UUID) ([]App, error)
 	ListProjectRepositories(ctx context.Context, projectID uuid.UUID) ([]ProjectRepository, error)
 	ListProjects(ctx context.Context, ownerID uuid.UUID) ([]Project, error)
 	ListReportAttachmentNames(ctx context.Context, reportID uuid.UUID) ([]string, error)

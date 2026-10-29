@@ -88,6 +88,38 @@ func (q *Queries) GetOwnerByID(ctx context.Context, id uuid.UUID) (Owner, error)
 	return i, err
 }
 
+const listOwners = `-- name: ListOwners :many
+SELECT id, email, password_hash, name, created_at, updated_at FROM owners
+ORDER BY created_at DESC
+`
+
+func (q *Queries) ListOwners(ctx context.Context) ([]Owner, error) {
+	rows, err := q.db.Query(ctx, listOwners)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Owner
+	for rows.Next() {
+		var i Owner
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.PasswordHash,
+			&i.Name,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateOwner = `-- name: UpdateOwner :one
 UPDATE owners
 SET email = $2,

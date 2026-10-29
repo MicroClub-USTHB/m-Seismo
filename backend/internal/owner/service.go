@@ -14,6 +14,7 @@ import (
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/auth"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 )
 
@@ -43,14 +44,43 @@ type Service struct {
 	// dummyHash is compared against when an email is unknown, so login takes
 	// the same time whether or not the account exists.
 	dummyHash string
+	// superadminEmail gates ListAll: there is no role column, so the one
+	// owner allowed to list every owner is identified by matching this
+	// configured email, the same account EnsureSuperadmin seeds.
+	superadminEmail string
 }
 
-func NewService(q db.Querier, issuer *auth.Issuer) (*Service, error) {
+func NewService(q db.Querier, issuer *auth.Issuer, cfg *config.Config) (*Service, error) {
 	h, err := auth.HashPassword("m-seismo-timing-equaliser")
 	if err != nil {
 		return nil, err
 	}
-	return &Service{q: q, issuer: issuer, dummyHash: h}, nil
+	return &Service{q: q, issuer: issuer, dummyHash: h, superadminEmail: strings.ToLower(strings.TrimSpace(cfg.Superadmin.Email))}, nil
+}
+
+// ListAll lists every owner, newest first. Only the configured superadmin
+// may call it; anyone else gets apperr.Unauthorized, same as a wrong
+// password would, so the existence of the endpoint isn't revealed either.
+func (s *Service) ListAll(ctx context.Context, requesterID uuid.UUID) ([]Owner, error) {
+	if s.superadminEmail == "" {
+		return nil, apperr.Unauthorized("not allowed")
+	}
+	requester, err := s.q.GetOwnerByID(ctx, requesterID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.ToLower(requester.Email) != s.superadminEmail {
+		return nil, apperr.Unauthorized("not allowed")
+	}
+	rows, err := s.q.ListOwners(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Owner, len(rows))
+	for i, o := range rows {
+		out[i] = toOwner(o)
+	}
+	return out, nil
 }
 
 type RegisterInput struct {
@@ -170,6 +200,25 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (Own
 		return Owner{}, err
 	}
 	return toOwner(updated), nil
+}
+
+// EnsureSuperadmin seeds one owner from config.SuperadminConfig, so a fresh
+// deployment has someone able to log in and create other owners. It is a
+// no-op when email or password is empty, and when an owner with that email
+// already exists — it never overwrites an existing password, so changing
+// it after the first boot (or rotating SEISMO_SUPERADMIN_PASSWORD) does not
+// reset it back on the next restart.
+func (s *Service) EnsureSuperadmin(ctx context.Context, email, password, name string) error {
+	if email == "" || password == "" {
+		return nil
+	}
+	if _, _, err := s.Register(ctx, RegisterInput{Email: email, Password: password, Name: name}); err != nil {
+		if kind, _ := apperr.Classify(err); kind == apperr.KindConflict {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // Delete removes the owner and, by cascade, everything they own.
