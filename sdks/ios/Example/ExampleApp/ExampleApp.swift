@@ -9,8 +9,8 @@ struct ExampleApp: App {
                 // 127.0.0.1, not "localhost": the device-literal loopback
                 // address, reachable from the Simulator without any
                 // networking setup. See fake_server.py.
-                endpoint: URL(string: "http://127.0.0.1:8787/reports")!,
-                projectKey: "example-project-key",
+                baseURL: URL(string: "http://127.0.0.1:8787")!,
+                sdkKey: "example-project-key",
                 environment: "staging",
                 screenshotEnabled: true
             )
