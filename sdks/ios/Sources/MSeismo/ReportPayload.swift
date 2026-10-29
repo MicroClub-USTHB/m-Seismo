@@ -205,7 +205,10 @@ struct ReportPayload: Encodable {
     }
 
     func encoded() throws -> Data {
-        try JSONEncoder().encode(self)
+        // Sorted, so a retry sends the same bytes as the first attempt.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return try encoder.encode(self)
     }
 
     /// RFC 3339 in UTC with milliseconds, e.g. `2026-10-18T14:03:12.123Z`.

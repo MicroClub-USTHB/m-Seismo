@@ -90,7 +90,7 @@ final class URLSessionTransportTests: XCTestCase {
 
     func testReportPartIsTheSameForEveryRetry() throws {
         let transport = URLSessionTransport(session: makeSession(), installation: makeInstallation())
-        var report = Report(title: "Same report")
+        var report = Report(title: "Same report", sessionID: "session-1")
         report.id = "0192a5f0-7c3e-7d4a-9b1e-3f6a2c8d4e51"
         report.occurredAt = Date(timeIntervalSince1970: 1_000)
 
