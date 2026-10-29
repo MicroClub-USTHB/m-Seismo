@@ -1,29 +1,12 @@
 import { createFileRoute, Link, redirect } from '@tanstack/react-router'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { api, ApiError, type Platform, type Project, type ProjectApp } from '../../../lib/api'
 import { getStoredOwner } from '../../../lib/auth'
 import { Shell } from '../../../lib/Shell'
-import { McButton } from '../../../components/mc-button'
-import { McInput } from '../../../components/mc-input'
+import { CreateAppForm, PLATFORM_LABEL } from '../../../features/create-app'
 import { McCard, McCardHeader } from '../../../components/mc-card'
 import { McBadge } from '../../../components/mc-badge'
 import { McDataTable, type McDataTableColumnDef } from '../../../components/mc-data-table'
-import {
-  McDialog,
-  McDialogContent,
-  McDialogFooter,
-  McDialogHeader,
-  McDialogTitle,
-  McDialogTrigger,
-} from '../../../components/mc-dialog'
-import {
-  McSelect,
-  McSelectContent,
-  McSelectItem,
-  McSelectTrigger,
-  McSelectValue,
-} from '../../../components/mc-select'
 
 export const Route = createFileRoute('/projects/$projectId/')({
   beforeLoad: () => {
@@ -31,14 +14,6 @@ export const Route = createFileRoute('/projects/$projectId/')({
   },
   component: ProjectDetailPage,
 })
-
-const PLATFORMS: Platform[] = ['web', 'ios', 'android']
-
-const PLATFORM_LABEL: Record<Platform, string> = {
-  web: 'Web',
-  ios: 'iOS',
-  android: 'Android',
-}
 
 const columns: McDataTableColumnDef<ProjectApp>[] = [
   {
@@ -89,7 +64,17 @@ function ProjectDetailPage() {
           title="Apps"
           description="The web, iOS and Android builds that share this project's repositories."
         />
-        <CreateAppForm projectId={projectId} />
+        <div className="flex items-center gap-2">
+          <Link
+            to="/projects/$projectId/setup"
+            params={{ projectId }}
+            search={{ step: 'apps' }}
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            Project setup
+          </Link>
+          <CreateAppForm projectId={projectId} />
+        </div>
       </McCard>
 
       {apps.isError && (
@@ -109,85 +94,5 @@ function ProjectDetailPage() {
         }
       />
     </Shell>
-  )
-}
-
-function CreateAppForm({ projectId }: { projectId: string }) {
-  const queryClient = useQueryClient()
-  const [open, setOpen] = useState(false)
-  const [name, setName] = useState('')
-  const [platform, setPlatform] = useState<Platform>('web')
-  const [bundleId, setBundleId] = useState('')
-
-  const createApp = useMutation({
-    mutationFn: () =>
-      api.post<ProjectApp>(`/projects/${projectId}/apps`, { name, platform, bundle_id: bundleId }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'apps'] })
-      setName('')
-      setBundleId('')
-      setOpen(false)
-    },
-  })
-
-  return (
-    <McDialog open={open} onOpenChange={setOpen}>
-      <McDialogTrigger render={<McButton>Create app</McButton>} />
-      <McDialogContent>
-        <McDialogHeader>
-          <McDialogTitle>Create app</McDialogTitle>
-        </McDialogHeader>
-
-        <form
-          id="create-project-app-form"
-          onSubmit={(e) => {
-            e.preventDefault()
-            createApp.mutate()
-          }}
-          className="flex flex-col gap-3"
-        >
-          <McInput label="Name" required autoFocus value={name} onChange={(e) => setName(e.target.value)} />
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-muted-foreground">Platform</label>
-            <McSelect value={platform} onValueChange={(value) => setPlatform(value as Platform)}>
-              <McSelectTrigger className="w-full">
-                <McSelectValue />
-              </McSelectTrigger>
-              <McSelectContent>
-                {PLATFORMS.map((p) => (
-                  <McSelectItem key={p} value={p}>
-                    {PLATFORM_LABEL[p]}
-                  </McSelectItem>
-                ))}
-              </McSelectContent>
-            </McSelect>
-          </div>
-
-          <McInput
-            label="Bundle ID"
-            description="e.g. com.example.shop"
-            required
-            value={bundleId}
-            onChange={(e) => setBundleId(e.target.value)}
-          />
-
-          {createApp.isError && (
-            <p className="text-sm text-destructive">
-              {createApp.error instanceof ApiError ? createApp.error.message : 'could not create app'}
-            </p>
-          )}
-        </form>
-
-        <McDialogFooter>
-          <McButton variant="secondary" onClick={() => setOpen(false)}>
-            Cancel
-          </McButton>
-          <McButton type="submit" form="create-project-app-form" isLoading={createApp.isPending}>
-            Create
-          </McButton>
-        </McDialogFooter>
-      </McDialogContent>
-    </McDialog>
   )
 }
