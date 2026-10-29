@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
@@ -33,6 +34,7 @@ type reportInfo struct {
 	Screenshot     bool
 	// ServerLogs is the coordinator's answer, nil when there is none.
 	ServerLogs *seismov1.AggregateResult
+	CrashEvent *crashprovider.Event
 }
 
 // render turns a report into the draft of its issue.
@@ -59,19 +61,33 @@ func render(r *ingest.Report, info reportInfo) issue.Draft {
 
 	writeSteps(&b, r)
 
-	if c := r.Crash; c != nil {
+	if r.Crash != nil || r.Sentry != nil {
 		b.WriteString("### Crash\n\n")
-		fmt.Fprintf(&b, "**%s**", text(c.Type))
-		if c.Reason != "" {
-			b.WriteString(": " + text(c.Reason))
+		if c := r.Crash; c != nil {
+			fmt.Fprintf(&b, "**%s**", text(c.Type))
+			if c.Reason != "" {
+				b.WriteString(": " + text(c.Reason))
+			}
+			b.WriteString("\n\n")
+			frames := c.StackTrace
+			if len(frames) > maxStackFrames {
+				frames = append(frames[:maxStackFrames:maxStackFrames], fmt.Sprintf("... %d more frames", len(c.StackTrace)-maxStackFrames))
+			}
+			b.WriteString(code(strings.Join(frames, "\n")))
+			b.WriteString("\n")
+		} else if event := info.CrashEvent; event != nil && event.Title != "" {
+			b.WriteString("**" + text(event.Title) + "**\n\n")
+			if len(event.StackTrace) > 0 {
+				b.WriteString(code(strings.Join(event.StackTrace[:min(len(event.StackTrace), maxStackFrames)], "\n")) + "\n")
+			}
 		}
-		b.WriteString("\n\n")
-		frames := c.StackTrace
-		if len(frames) > maxStackFrames {
-			frames = append(frames[:maxStackFrames:maxStackFrames], fmt.Sprintf("... %d more frames", len(c.StackTrace)-maxStackFrames))
+		if ref := r.Sentry; ref != nil {
+			fmt.Fprintf(&b, "**Sentry event:** `%s`\n\n", text(ref.EventID))
+			if event := info.CrashEvent; event != nil && event.URL != "" {
+				// The URL comes only from the validated per-app provider configuration.
+				fmt.Fprintf(&b, "[View in Sentry](%s)\n\n", event.URL)
+			}
 		}
-		b.WriteString(code(strings.Join(frames, "\n")))
-		b.WriteString("\n")
 	}
 
 	writeEnvironment(&b, r)

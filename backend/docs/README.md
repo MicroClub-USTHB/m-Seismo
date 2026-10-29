@@ -5,6 +5,8 @@ each app's tracker connections (GitHub, GitLab, Bitbucket), and the issue
 service. For setup and a quick
 route list, start with [../README.md](../README.md).
 
+See [crash-providers.md](crash-providers.md) for per-app Sentry/Crashlytics selection, web reporting, and Sentry event resolution.
+
 ## Reading order
 
 | # | Page | Read it to… |
@@ -59,7 +61,7 @@ GitHub App and/or GitLab application or Bitbucket consumer (see
 | FR-01 / FR-04: project keys, create, rotate, revoke | done, as **app keys** (`/apps/{id}/keys`) |
 | FR-46: issue opened automatically | done: the worker opens the issue of every accepted report |
 | FR-49: labels, assignees, milestone | set by routing rules, carried by `Draft`; GitHub resolves milestones by title |
-| FR-51: two-way status | schema and `Opener.IsOpen` ready; no sync job yet |
+| FR-51: two-way status | done for GitHub: the App webhook records issues closed or reopened (`issues.state`); GitLab and Bitbucket not yet |
 | FR-54 / FR-55 / FR-56: one issue per bug | done for crashes: same fingerprint → a comment on the open issue with the reports, installations and versions so far; reports without a crash are not grouped |
 | FR-58 / FR-59: routing, default repository | done: routing rules by app, severity and category, else the default repository; no issue templates yet |
 | Per-app tracker credentials | done: connections belong to apps; `GET /apps/{id}/targets` previews the routing |

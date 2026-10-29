@@ -1,0 +1,2 @@
+# Local-only build/test artifacts (the root .gitignore must not be edited).
+coverage/

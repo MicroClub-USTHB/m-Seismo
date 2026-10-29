@@ -1,5 +1,6 @@
 // Package infra wires up connections to external systems: the database,
-// Redis, and NATS JetStream (queue management). Later: object storage, etc.
+// Redis, NATS JetStream (queue management) and the crash reporter. Later:
+// object storage, etc.
 package infra
 
 import (
@@ -10,8 +11,9 @@ import (
 )
 
 // Module provides the infra-layer dependencies: a Postgres pool and the
-// sqlc queries on top of it, a Redis client, and a NATS connection with its
-// JetStream context. Each constructor registers its own fx shutdown hook.
+// sqlc queries on top of it, a Redis client, a NATS connection with its
+// JetStream context, and a crash source. Each constructor registers its own
+// fx lifecycle hooks.
 var Module = fx.Module("infra",
 	fx.Provide(
 		NewPostgresPool,
@@ -20,6 +22,7 @@ var Module = fx.Module("infra",
 		NewRedisClient,
 		NewNATSConn,
 		NewJetStream,
+		NewCrashSource,
 	),
 )
 

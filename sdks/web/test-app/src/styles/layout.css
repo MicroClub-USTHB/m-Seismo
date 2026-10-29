@@ -1,0 +1,241 @@
+/*
+ * Layout: app shell, header, side navigation, sections, responsive behaviour.
+ * Depends on tokens.css.
+ */
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+:where(a) {
+  color: var(--accent);
+}
+
+:where(:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: var(--space-2) var(--space-3);
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-radius: var(--radius-sm);
+}
+
+.skip-link:focus {
+  left: var(--space-3);
+  top: var(--space-3);
+}
+
+/* --- Header ------------------------------------------------------------- */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header .brand {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  font-weight: 700;
+  font-size: var(--text-md);
+}
+
+.app-header .brand small {
+  color: var(--fg-muted);
+  font-weight: 500;
+}
+
+.status-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-inline-start: auto;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--neutral-bg);
+  color: var(--neutral-fg);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chip[data-state="ok"] {
+  background: var(--pass-bg);
+  color: var(--pass-fg);
+}
+
+.chip[data-state="bad"] {
+  background: var(--fail-bg);
+  color: var(--fail-fg);
+}
+
+.chip[data-state="warn"] {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+}
+
+.chip .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* --- Shell -------------------------------------------------------------- */
+.shell {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: var(--space-5);
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--space-5);
+  padding-bottom: 46vh;
+}
+
+.side-nav {
+  position: sticky;
+  top: 72px;
+  align-self: start;
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+  padding: var(--space-3);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.side-nav h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+}
+
+.side-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.side-nav a {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  text-decoration: none;
+  font-size: var(--text-base);
+}
+
+.side-nav a:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.content {
+  min-width: 0;
+  padding-bottom: var(--space-6);
+}
+
+.section {
+  scroll-margin-top: 80px;
+  margin-bottom: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.section > h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-lg);
+}
+
+.section > h3 {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--text-md);
+}
+
+.section .lede {
+  margin-top: 0;
+  color: var(--fg-muted);
+}
+
+.subtle {
+  color: var(--fg-muted);
+}
+
+/* --- Responsive: tabs instead of a sidebar on narrow screens ------------ */
+@media (max-width: 860px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--space-3);
+    padding-bottom: 46vh;
+  }
+
+  .side-nav {
+    position: static;
+    max-height: none;
+    top: auto;
+  }
+
+  .side-nav ul {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: var(--space-1);
+    overflow-x: auto;
+    padding-bottom: var(--space-1);
+  }
+
+  .side-nav a {
+    white-space: nowrap;
+  }
+
+  .app-header {
+    padding: var(--space-3);
+  }
+}
+
+@media (max-width: 480px) {
+  :root {
+    --text-base: 15px;
+  }
+
+  .section {
+    padding: var(--space-3);
+  }
+}

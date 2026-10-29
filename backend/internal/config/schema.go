@@ -53,6 +53,9 @@ type GitHubConfig struct {
 	// MaxRateLimitWait is the longest one call waits out a GitHub rate limit
 	// before failing with a retryable rate-limit error.
 	MaxRateLimitWait time.Duration
+	// WebhookSecret is the GitHub App's webhook secret. Webhooks are
+	// refused while it is empty.
+	WebhookSecret string
 }
 
 // OAuthTrackerConfig holds the deployment-wide settings of a tracker that
@@ -97,6 +100,38 @@ type IngestConfig struct {
 	InstallationBurst     int
 }
 
+// SuperadminConfig seeds one owner account at startup, so a fresh
+// deployment has someone able to log into the dashboard and create other
+// owners (there is no separate role or permission: the seeded owner is a
+// regular owner, just pre-created from configuration instead of
+// POST /auth/register). Empty Email or Password skips seeding.
+type SuperadminConfig struct {
+	Email    string
+	Password string
+	Name     string
+}
+
+// CrashConfig selects the crash reporter reports are linked to.
+type CrashConfig struct {
+	// Source is "none" or "crashlytics".
+	Source string
+	// Window is how far apart a report and a crash may be and still match.
+	Window      time.Duration
+	Crashlytics CrashlyticsConfig
+}
+
+// CrashlyticsConfig identifies m-Seismo to Google as an OAuth client. Each
+// project's own access (refresh token, Firebase apps) is stored in the
+// database by the OAuth flow, not here.
+type CrashlyticsConfig struct {
+	ClientID     string
+	ClientSecret string
+	// RedirectURL is the public URL of /api/v1/oauth/crashlytics/callback.
+	// Empty means server.public_url plus that path.
+	RedirectURL  string
+	QuotaProject string
+}
+
 // WorkerConfig controls the pipeline worker that turns accepted reports
 // into issues.
 type WorkerConfig struct {
@@ -135,20 +170,31 @@ type CoordinatorConfig struct {
 	MaxLinesPerWorkload int
 }
 
+// CrashProvidersConfig holds operator-controlled credential encryption and allowed
+// Sentry origins. API clients cannot introduce arbitrary outbound destinations.
+type CrashProvidersConfig struct {
+	EncryptionKey          string   // base64-encoded 32-byte AES key; empty disables Sentry connections
+	PreviousEncryptionKeys []string // decryption-only keys retained during rotation (at most five)
+	SentryOrigins          []string
+}
+
 type Config struct {
-	Env         string
-	LogLevel    string
-	Server      ServerConfig
-	Database    DatabaseConfig
-	Redis       RedisConfig
-	NATS        NATSConfig
-	Auth        AuthConfig
-	GitHub      GitHubConfig
-	GitLab      OAuthTrackerConfig
-	Bitbucket   OAuthTrackerConfig
-	Secrets     SecretsConfig
-	Limits      LimitsConfig
-	Ingest      IngestConfig
-	Worker      WorkerConfig
-	Coordinator CoordinatorConfig
+	Env            string
+	LogLevel       string
+	Server         ServerConfig
+	Database       DatabaseConfig
+	Redis          RedisConfig
+	NATS           NATSConfig
+	Auth           AuthConfig
+	GitHub         GitHubConfig
+	GitLab         OAuthTrackerConfig
+	Bitbucket      OAuthTrackerConfig
+	Secrets        SecretsConfig
+	Superadmin     SuperadminConfig
+	Limits         LimitsConfig
+	Ingest         IngestConfig
+	Worker         WorkerConfig
+	Coordinator    CoordinatorConfig
+	CrashProviders CrashProvidersConfig
+	Crash          CrashConfig
 }

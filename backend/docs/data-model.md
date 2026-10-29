@@ -62,7 +62,7 @@ erDiagram
         uuid id PK
         uuid owner_id FK
         text name
-        app_platform platform "ios|android|flutter|react_native"
+        app_platform platform "web|ios|android"
         text bundle_id
         timestamptz created_at
         timestamptz updated_at
@@ -118,7 +118,7 @@ Enums:
 | Type | Values | Used by |
 |---|---|---|
 | `tracker` | `github`, `gitlab`, `bitbucket` | `project_repositories.tracker`, `provider_connections.tracker` |
-| `app_platform` | `ios`, `android`, `flutter`, `react_native` | `apps.platform` |
+| `app_platform` | `web`, `ios`, `android` | `apps.platform` |
 
 All primary keys are `uuid DEFAULT gen_random_uuid()` from the `pgcrypto`
 extension, which the first migration enables. The `btree_gist` extension

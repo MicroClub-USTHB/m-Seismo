@@ -13,7 +13,9 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/coordinator"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
@@ -158,7 +160,7 @@ func newFixture(t *testing.T, projects int) (*fakeQueries, *fakeIssues, *Process
 		q.projectOf[route.ProjectRepositoryID] = route.ProjectID
 	}
 	is := &fakeIssues{q: q, fail: map[uuid.UUID]error{}, closed: map[uuid.UUID]bool{}}
-	return q, is, NewProcessor(q, is, router, &fakeLocks{}, nil, time.Minute)
+	return q, is, NewProcessor(q, is, router, &fakeLocks{}, nil, time.Minute, nil)
 }
 
 func TestProcessOpensOneIssuePerProject(t *testing.T) {
@@ -321,7 +323,7 @@ func TestProcessAddsServerLogs(t *testing.T) {
 	q, is, _ := newFixture(t, 1)
 	q.report.OccurredAt = time.Date(2026, 10, 21, 14, 0, 0, 0, time.UTC)
 	logs := &fakeLogs{}
-	p := NewProcessor(q, is, q.router, &fakeLocks{}, logs, 2*time.Minute)
+	p := NewProcessor(q, is, q.router, &fakeLocks{}, logs, 2*time.Minute, nil)
 
 	if err := p.Process(context.Background(), q.report.ID); err != nil {
 		t.Fatal(err)
@@ -345,7 +347,7 @@ func TestProcessAddsServerLogs(t *testing.T) {
 func TestProcessWithoutServerLogs(t *testing.T) {
 	for _, err := range []error{coordinator.ErrNotAttached, errors.New("NATS is down")} {
 		q, is, _ := newFixture(t, 1)
-		p := NewProcessor(q, is, q.router, &fakeLocks{}, &fakeLogs{err: err}, time.Minute)
+		p := NewProcessor(q, is, q.router, &fakeLocks{}, &fakeLogs{err: err}, time.Minute, nil)
 		if err := p.Process(context.Background(), q.report.ID); err != nil {
 			t.Fatalf("logs failing with %v failed the report: %v", err, err)
 		}
@@ -417,5 +419,47 @@ func assertPermanent(t *testing.T, err error) {
 	var perm *permanentError
 	if !errors.As(err, &perm) {
 		t.Fatalf("got %v, want a permanent error", err)
+	}
+}
+
+type fakeCrashResolver struct {
+	event *crashprovider.Event
+	err   error
+	app   uuid.UUID
+}
+
+func (f *fakeCrashResolver) ForReport(_ context.Context, app uuid.UUID, _ *ingest.Report) (*crashprovider.Event, error) {
+	f.app = app
+	return f.event, f.err
+}
+func TestProcessSentryOnlyReportIncludesCrashDetailsAndSurvivesProviderFailure(t *testing.T) {
+	for _, unavailable := range []bool{false, true} {
+		q, is, p := newFixture(t, 1)
+		id := strings.Repeat("a", 32)
+		q.report.Payload = []byte(`{"platform":"web","trigger":"crash","sentry":{"event_id":"` + id + `"}}`)
+		resolver := &fakeCrashResolver{event: &crashprovider.Event{EventID: id, URL: "https://sentry.example/organizations/club/issues/?query=" + id, Title: "Unhandled error", StackTrace: []string{"render (app.js:12)"}}}
+		if unavailable {
+			resolver.err = errors.New("provider unavailable")
+			resolver.event.Title = ""
+			resolver.event.StackTrace = nil
+		}
+		p.crashes = resolver
+		if err := p.Process(context.Background(), q.report.ID); err != nil {
+			t.Fatal(err)
+		}
+		if resolver.app != q.report.AppID {
+			t.Fatal("resolver used another app")
+		}
+		for _, text := range []string{"### Crash", id, "[View in Sentry](" + resolver.event.URL + ")"} {
+			if !strings.Contains(is.drafts[0].Body, text) {
+				t.Fatalf("missing %q in issue", text)
+			}
+		}
+		if !unavailable && !strings.Contains(is.drafts[0].Body, "render (app.js:12)") {
+			t.Fatal("resolved stack missing")
+		}
+		if q.processed != 1 {
+			t.Fatal("Sentry failure prevented issue publication")
+		}
 	}
 }

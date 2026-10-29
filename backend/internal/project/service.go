@@ -63,6 +63,21 @@ func toRepository(r db.ProjectRepository) Repository {
 	}
 }
 
+// App is the summary of an app linked to a project, returned by ListApps.
+// Projects group one product's platform builds (PRD section 4): a project
+// shares its repositories across every app linked to it, while each app
+// still brings its own tracker connection.
+type App struct {
+	ID       uuid.UUID      `json:"id"`
+	Name     string         `json:"name"`
+	Platform db.AppPlatform `json:"platform"`
+	BundleID string         `json:"bundle_id"`
+}
+
+func toApp(a db.App) App {
+	return App{ID: a.ID, Name: a.Name, Platform: a.Platform, BundleID: a.BundleID}
+}
+
 type Service struct {
 	pool      *pgxpool.Pool
 	q         *db.Queries
@@ -158,6 +173,24 @@ func (s *Service) Delete(ctx context.Context, ownerID, id uuid.UUID) error {
 		return apperr.NotFound("project not found")
 	}
 	return nil
+}
+
+// ListApps lists the apps linked to the project, oldest link first — the
+// apps sharing this project's repositories (and, through them, whichever
+// tracker connection each app resolves to for issue opening).
+func (s *Service) ListApps(ctx context.Context, ownerID, projectID uuid.UUID) ([]App, error) {
+	if _, err := s.get(ctx, ownerID, projectID); err != nil {
+		return nil, err
+	}
+	rows, err := s.q.ListProjectApps(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]App, len(rows))
+	for i, a := range rows {
+		out[i] = toApp(a)
+	}
+	return out, nil
 }
 
 func (s *Service) ListRepositories(ctx context.Context, ownerID, projectID uuid.UUID) ([]Repository, error) {

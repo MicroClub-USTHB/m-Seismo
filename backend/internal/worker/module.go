@@ -7,6 +7,7 @@ import (
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/coordinator"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
@@ -18,8 +19,9 @@ var Module = fx.Module("worker",
 		func(q db.Querier) Queries { return q },
 		func(s *issue.Service) Issues { return s },
 		func(pool *pgxpool.Pool) Locks { return pgLocks{pool: pool} },
-		func(q Queries, is Issues, r *routing.Router, l Locks, c *coordinator.Client, cfg *config.Config) *Processor {
-			return NewProcessor(q, is, r, l, c, cfg.Coordinator.Window)
+		func(s *crashprovider.Service) CrashResolver { return s },
+		func(q Queries, is Issues, r *routing.Router, l Locks, c *coordinator.Client, cr CrashResolver, cfg *config.Config) *Processor {
+			return NewProcessor(q, is, r, l, c, cfg.Coordinator.Window, cr)
 		},
 	),
 	fx.Invoke(register),

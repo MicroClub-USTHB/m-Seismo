@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
 )
 
 func TestErrorStatus(t *testing.T) {
@@ -58,7 +59,7 @@ func (m meRoutes) Mount(r chi.Router) {
 
 func TestAuthMiddleware(t *testing.T) {
 	id := uuid.New()
-	h := NewRouter(routerParams{Routes: []Routes{meRoutes{require: NewAuthMiddleware(fakeVerifier{id: id})}}})
+	h := NewRouter(routerParams{Routes: []Routes{meRoutes{require: NewAuthMiddleware(fakeVerifier{id: id})}}}, &config.Config{})
 
 	tests := []struct {
 		name   string

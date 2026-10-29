@@ -1,6 +1,6 @@
 use crate::{
     redaction::redact,
-    source::{Fetched, Params, Source},
+    source::{Fetched, Params, Source, StatusInfo},
 };
 use futures_util::future::join_all;
 use prost_types::Timestamp;
@@ -322,6 +322,55 @@ impl Engine {
             query_id: q.query_id.clone(),
             services,
         })
+    }
+
+    /// Container state per service. No logs, so no budget, just the deadline.
+    pub async fn status(&self, q: &pb::StatusQuery) -> Result<pb::StatusResult, pb::QueryError> {
+        let fail = || pb::QueryError {
+            query_id: q.query_id.clone(),
+            error: Some(source_err(
+                SourceErrorKind::Unspecified,
+                "the deadline must not have passed",
+            )),
+        };
+        let Some(timeout) = remaining(q.deadline.as_ref()) else {
+            return Err(fail());
+        };
+        let services = join_all(self.services.iter().map(|service| async move {
+            let res = tokio::time::timeout(timeout, self.source.status(service))
+                .await
+                .unwrap_or_else(|_| {
+                    Err(source_err(
+                        SourceErrorKind::Timeout,
+                        "container status timed out",
+                    ))
+                });
+            service_status(service, res)
+        }))
+        .await;
+        Ok(pb::StatusResult {
+            query_id: q.query_id.clone(),
+            services,
+        })
+    }
+}
+
+fn service_status(service: &str, res: Result<StatusInfo, SourceError>) -> pb::ServiceStatus {
+    match res {
+        Ok(info) => pb::ServiceStatus {
+            service: service.into(),
+            status: WorkloadStatus::Complete as i32,
+            workload: Some(info.workload),
+            diagnostics: Some(info.diagnostics),
+            error: None,
+        },
+        Err(e) => pb::ServiceStatus {
+            service: service.into(),
+            status: WorkloadStatus::Unavailable as i32,
+            workload: None,
+            diagnostics: None,
+            error: Some(e),
+        },
     }
 }
 

@@ -381,6 +381,7 @@ table.
 | `github.web_url` | no | default `https://github.com/`; used for the install URL and OAuth exchange |
 | `github.min_write_interval` (`SEISMO_GITHUB_MIN_WRITE_INTERVAL`) | no | default `1s`; spacing between write requests per installation |
 | `github.max_rate_limit_wait` (`SEISMO_GITHUB_MAX_RATE_LIMIT_WAIT`) | no | default `30s`; longest single wait for a rate limit before failing with a retryable error. A negative value never waits. |
+| `github.webhook_secret` (`SEISMO_GITHUB_WEBHOOK_SECRET`) | for webhooks | the App's webhook secret. Empty → `POST /api/v1/webhooks/github` answers 404. |
 | `limits.test_issues_per_minute` (`SEISMO_LIMITS_TEST_ISSUES_PER_MINUTE`) | no | default `10`; per-app throttle on `POST /apps/{id}/test-issue`. `0` turns it off. |
 | `server.public_url` | for setup | the base of the Callback URL you enter in GitHub; not used in code yet |
 | `server.frontend_url` | yes | where the callback redirects the browser |
@@ -402,9 +403,14 @@ is then configured but broken, and a startup failure makes that obvious.
    **Required.** GitHub then greys out the **Setup URL** and sends the
    browser to the Callback URL after the installation, with
    `installation_id`, `setup_action`, `code` and `state`.
-5. **Webhook**: untick *Active* for now. Webhooks aren't handled yet.
+5. **Webhook**: tick *Active*. **Webhook URL**:
+   `{SEISMO_SERVER_PUBLIC_URL}/api/v1/webhooks/github`. **Webhook secret**:
+   a long random string (`openssl rand -hex 32`), also set as
+   `SEISMO_GITHUB_WEBHOOK_SECRET`. GitHub must reach the URL: in local
+   development, relay it with [smee.io](https://smee.io) or a tunnel.
 6. **Repository permissions**: Issues → *Read and write*, Metadata →
-   *Read-only*. Leave everything else at *No access*.
+   *Read-only*. Leave everything else at *No access*. Under **Subscribe to
+   events**, tick **Issues**.
 7. **Where can this GitHub App be installed?** Choose *Any account* if
    owners will install it on organisations other than yours.
 8. Create the App, then:
@@ -430,6 +436,44 @@ is then configured but broken, and a startup failure makes that obvious.
 | App uninstalled on GitHub, connection still in m-Seismo | Repository and issue calls fail. `issue.Service` reports the error for that target; HTTP calls return 500 and log the GitHub 404. Disconnect and reconnect to fix it. |
 | GitHub down | that target's `Result.Err` is set; the other targets go ahead |
 | GitHub rate limit | waited out when short; otherwise `429` / `*issue.RateLimitError`, see [Rate limits](#rate-limits) |
+
+---
+
+## Webhook: issue closed or reopened
+
+When an issue is closed or reopened on GitHub, in any repository the App is
+installed on, GitHub sends an `issues` event to
+`POST /api/v1/webhooks/github`. m-Seismo records the new state of its own
+issue (`issues.state`): a closed issue means the bug of the reports under it
+is fixed, and a crash with the same fingerprint coming in later opens a new
+issue instead of a comment.
+
+```
+developer closes org/mobile#42 ─▶ GitHub ─▶ POST /api/v1/webhooks/github
+                                             X-GitHub-Event: issues
+                                             X-Hub-Signature-256: sha256=…
+                                             {"action":"closed", "issue":{"number":42},
+                                              "repository":{"full_name":"org/mobile"}}
+                                                   │
+                                   signature ok? ──┴─ no → 401
+                                                   │
+                                   issues.external_id = "org/mobile#42" (any case)
+                                   state open → closed                  → 204
+```
+
+- **Signature.** Every delivery carries `X-Hub-Signature-256`, the
+  HMAC-SHA256 of the body with the webhook secret. It is checked in constant
+  time; a delivery without a valid one gets 401 and changes nothing.
+- **What is used.** `issues` events with action `closed` (→ `closed`) or
+  `reopened` (→ `open`). Every other event or action, `ping` included, gets
+  204 and is ignored. An issue m-Seismo didn't open is ignored too.
+- **Repeats.** Recording a state the issue already has changes nothing, so a
+  delivery GitHub sends twice is harmless.
+- **Failures.** A database error answers 500: GitHub lists the delivery as
+  failed and it can be redelivered from the App's *Advanced* settings.
+- **Order.** Deliveries are applied as they come. A close and a reopen sent
+  within the same moment and delivered out of order would leave the older
+  state.
 
 ---
 

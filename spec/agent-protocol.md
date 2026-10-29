@@ -105,6 +105,18 @@ from the registry, which lives in memory only. Queries in flight to a
 dropped agent end as `DISCONNECTED`. The agent reconnects with backoff
 and registers again.
 
+### 3.5 Status
+
+- The coordinator sends `StatusQuery{query_id, deadline}`. It has no
+  window and returns no log lines.
+- The agent answers with one `StatusResult`: one `ServiceStatus` per
+  configured service, in the same order as `Register.services`.
+- Each `ServiceStatus` carries the same `WorkloadDiagnostics` as a log
+  result. A service whose container cannot be read is `UNAVAILABLE` with
+  an `error`.
+- Sources without a container concept (`loki`, `file`, `journal`) answer
+  every service `UNAVAILABLE` with `DRIVER_UNSUPPORTED`.
+
 ## 4. Backend hop
 
 ### 4.1 Attach
@@ -133,6 +145,10 @@ one.
   status.
 - No agent connected is not an error: it's an `AggregateResult` with
   zero sections.
+- The backend sends `StatusQuery{query_id, deadline}` to ask for
+  container state. The coordinator answers with one `AggregateStatus`:
+  one `AgentStatusReport` per agent, same `AgentStatus` rules as
+  section 5, and each report carries that agent's `ServiceStatus` list.
 
 ## 5. Aggregate
 
