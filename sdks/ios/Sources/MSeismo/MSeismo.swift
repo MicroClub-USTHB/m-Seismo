@@ -68,6 +68,11 @@ public final class MSeismo: ObservableObject {
     /// `.sheet(isPresented:)`.
     @Published public var isReportSheetPresented = false
 
+    /// What opened the report sheet and when, carried onto the report the
+    /// sheet produces (schema `trigger` and `occurred_at`).
+    private var sheetTrigger: Report.Trigger?
+    private var sheetOpenedAt: Date?
+
     /// The real screen, captured at the moment of the trigger, before the
     /// report sheet appears (FR-19). An app reads this when constructing
     /// `ReportFormView`'s initial `Report`.
@@ -77,12 +82,12 @@ public final class MSeismo: ObservableObject {
         crashReporter.start()
 
         shakeDetector.onShake = { [weak self] in
-            self?.report()
+            self?.report(trigger: .shake)
         }
 
         #if os(iOS)
         screenshotObserver.onNotify = { [weak self] in
-            self?.report()
+            self?.report(trigger: .screenshot)
         }
         // Not started here: off by default until configure(_:) says
         // otherwise (Configuration.screenshotEnabled).
@@ -134,7 +139,9 @@ public final class MSeismo: ObservableObject {
     /// Opens the report sheet. Called automatically by the shake and
     /// screenshot triggers; also public so an app can call it directly,
     /// e.g. from a "Report a bug" button or a long-press gesture (FR-07).
-    public func report() {
+    public func report(trigger: Report.Trigger = .manual) {
+        sheetTrigger = trigger
+        sheetOpenedAt = Date()
         #if os(iOS)
         capturedScreenshot = ScreenshotCapture.captureCurrentScreen()?.jpegData(compressionQuality: 0.8)
         #endif
@@ -162,6 +169,11 @@ public final class MSeismo: ObservableObject {
     /// the automatic crash path (`checkForPendingCrash`).
     public func enrich(_ report: Report) -> Report {
         var report = report
+        report.id = report.id ?? UUID().uuidString
+        report.trigger = report.trigger ?? sheetTrigger ?? .manual
+        report.occurredAt = report.occurredAt ?? sheetOpenedAt ?? Date()
+        sheetTrigger = nil
+        sheetOpenedAt = nil
         report.sessionID = session.id
         report.recentLogs = logs.recent
         report.breadcrumbs = breadcrumbs.recent

@@ -33,6 +33,17 @@ final class CrashReportTests: XCTestCase {
         XCTAssertTrue(report.description.contains("frame 1"))
     }
 
+    func testAsReportCarriesTheCrashDetailsTriggerAndTime() {
+        let when = Date(timeIntervalSince1970: 1_000)
+        let fatal = CrashReport(name: "SIGSEGV", reason: nil, callStack: ["frame"], isFatal: true, timestamp: when)
+        let nonFatal = CrashReport(name: "SomeError", reason: nil, callStack: ["frame"], isFatal: false, timestamp: when)
+
+        XCTAssertEqual(fatal.asReport().trigger, .crash)
+        XCTAssertEqual(nonFatal.asReport().trigger, .nonFatal)
+        XCTAssertEqual(fatal.asReport().crash, fatal)
+        XCTAssertEqual(fatal.asReport().occurredAt, when)
+    }
+
     func testAsReportHandlesMissingReason() {
         let crash = CrashReport(name: "SIGSEGV", reason: nil, callStack: [], isFatal: true)
 
