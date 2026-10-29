@@ -67,7 +67,7 @@ export interface SessionResponse {
 }
 
 export type Tracker = 'github' | 'gitlab' | 'bitbucket'
-export type Platform = 'web' | 'ios' | 'android' | 'flutter' | 'react_native'
+export type Platform = 'web' | 'ios' | 'android'
 
 export interface App {
   id: string
