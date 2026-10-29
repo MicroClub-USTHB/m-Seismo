@@ -28,7 +28,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 204) return undefined as T
 
   const text = await res.text()
-  const data = text ? JSON.parse(text) : null
+  // Errors can come from a proxy or the router as plain text ("404 page not
+  // found"), so a body that is not JSON must not hide the status.
+  let data: { error?: string } | null = null
+  try {
+    data = text ? JSON.parse(text) : null
+  } catch {
+    if (res.ok) throw new ApiError(res.status, 'the server sent an invalid response')
+  }
 
   if (!res.ok) {
     throw new ApiError(res.status, (data && data.error) || `request failed with status ${res.status}`)
@@ -155,3 +162,46 @@ export interface Target {
 }
 
 export const ALL_TRACKERS: Tracker[] = ['github', 'gitlab', 'bitbucket']
+
+export interface RepositoryLink {
+  id: string
+  project_id: string
+  tracker: Tracker
+  repository: string
+  is_default: boolean
+  created_at: string
+}
+
+export interface TrackerRepository {
+  full_name: string
+  private: boolean
+  url: string
+}
+
+export const SEVERITIES = ['low', 'medium', 'high', 'critical'] as const
+export const CATEGORIES = ['bug', 'crash', 'ui', 'other'] as const
+
+export interface RoutingRule {
+  id: string
+  project_id: string
+  position: number
+  app_id: string | null
+  severity: string | null
+  category: string | null
+  repository_id: string
+  labels: string[]
+  assignees: string[]
+  milestone: string | null
+}
+
+export interface CrashProviderConnection {
+  provider: 'sentry' | 'crashlytics'
+  sentry?: { base_url: string; organization: string; project: string }
+  has_credentials: boolean
+}
+
+export interface CrashlyticsStatus {
+  connected: boolean
+  google_email?: string
+  apps?: string[]
+}

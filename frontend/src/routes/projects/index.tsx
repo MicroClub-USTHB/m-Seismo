@@ -1,4 +1,4 @@
-import { createFileRoute, Link, redirect } from '@tanstack/react-router'
+import { createFileRoute, Link, redirect, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, ApiError, type Project } from '../../lib/api'
@@ -80,15 +80,18 @@ function ProjectsPage() {
 
 function CreateProjectForm() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
 
   const createProject = useMutation({
     mutationFn: () => api.post<Project>('/projects', { name }),
-    onSuccess: () => {
+    onSuccess: (project) => {
       queryClient.invalidateQueries({ queryKey: ['projects'] })
       setName('')
       setOpen(false)
+      // A new project starts in its setup.
+      navigate({ to: '/projects/$projectId/setup', params: { projectId: project.id }, search: { step: 'apps' } })
     },
   })
 
