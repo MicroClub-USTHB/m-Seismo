@@ -277,3 +277,97 @@ func TestSilentCoordinatorTimesOut(t *testing.T) {
 		t.Errorf("took %s to give up", took)
 	}
 }
+
+// attachForMetricsAndStatus is attach, but it also answers MetricsQuery and
+// StatusQuery (service health, FR: service health in issues), which share
+// the stream with QueryLogs but aren't shaped the same.
+func attachForMetricsAndStatus(t *testing.T, in *instance, key, agentID string) *fakeCoordinator {
+	t.Helper()
+	cc, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return in.lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cc.Close() })
+
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "authorization", "Bearer "+key)
+	stream, err := seismov1.NewCoordinatorClient(cc).Attach(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&seismov1.CoordinatorEvent{Event: &seismov1.CoordinatorEvent_Hello{Hello: hello()}}); err != nil {
+		t.Fatal(err)
+	}
+
+	f := &fakeCoordinator{stream: stream, ended: make(chan error, 1)}
+	go func() {
+		for {
+			req, err := stream.Recv()
+			if err != nil {
+				f.ended <- err
+				return
+			}
+			switch {
+			case req.GetQueryMetrics() != nil:
+				q := req.GetQueryMetrics()
+				_ = stream.Send(&seismov1.CoordinatorEvent{Event: &seismov1.CoordinatorEvent_Metrics{Metrics: &seismov1.AggregateMetrics{
+					SchemaVersion: 1,
+					QueryId:       q.GetQueryId(),
+					Agents: []*seismov1.AgentMetrics{{
+						AgentId: agentID, Status: seismov1.AgentStatus_AGENT_STATUS_OK,
+						Services: []*seismov1.ServiceMetrics{{Service: "api", Lines: 100, ErrorLines: 3}},
+					}},
+				}}})
+			case req.GetQueryStatus() != nil:
+				q := req.GetQueryStatus()
+				_ = stream.Send(&seismov1.CoordinatorEvent{Event: &seismov1.CoordinatorEvent_Status{Status: &seismov1.AggregateStatus{
+					SchemaVersion: 1,
+					QueryId:       q.GetQueryId(),
+					Agents: []*seismov1.AgentStatusReport{{
+						AgentId: agentID, Status: seismov1.AgentStatus_AGENT_STATUS_OK,
+						Services: []*seismov1.ServiceStatus{{Service: "api", Status: seismov1.WorkloadStatus_WORKLOAD_STATUS_COMPLETE}},
+					}},
+				}}})
+			}
+		}
+	}()
+	return f
+}
+
+func TestQueryMetricsAndStatusReachTheAttachedCoordinator(t *testing.T) {
+	nc := natsConn(t)
+	appID := uuid.New()
+	in := newInstance(t, nc, fakeAuth{"mco_good": appID})
+	client := NewClient(nc, 2*time.Second, Limits{MaxBytes: 256 << 10, MaxLinesPerWorkload: 100})
+
+	if _, err := client.QueryMetrics(context.Background(), appID, time.Now().Add(-time.Minute), time.Now()); !errors.Is(err, ErrNotAttached) {
+		t.Fatalf("QueryMetrics before attach: err = %v, want ErrNotAttached", err)
+	}
+	if _, err := client.QueryStatus(context.Background(), appID); !errors.Is(err, ErrNotAttached) {
+		t.Fatalf("QueryStatus before attach: err = %v, want ErrNotAttached", err)
+	}
+
+	attachForMetricsAndStatus(t, in, "mco_good", "agent-1")
+
+	var metrics *seismov1.AggregateMetrics
+	var err error
+	for i := 0; i < 50; i++ {
+		metrics, err = client.QueryMetrics(context.Background(), appID, time.Now().Add(-time.Minute), time.Now())
+		if err == nil && len(metrics.GetAgents()) == 1 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil || len(metrics.GetAgents()) != 1 || metrics.GetAgents()[0].GetAgentId() != "agent-1" {
+		t.Fatalf("QueryMetrics = %v, %v", metrics, err)
+	}
+	if got := metrics.GetAgents()[0].GetServices()[0]; got.GetLines() != 100 || got.GetErrorLines() != 3 {
+		t.Errorf("service metrics = %+v", got)
+	}
+
+	status, err := client.QueryStatus(context.Background(), appID)
+	if err != nil || len(status.GetAgents()) != 1 || status.GetAgents()[0].GetAgentId() != "agent-1" {
+		t.Fatalf("QueryStatus = %v, %v", status, err)
+	}
+}

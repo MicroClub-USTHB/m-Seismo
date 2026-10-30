@@ -1512,6 +1512,191 @@ func (x *MetricsResult) GetServices() []*ServiceMetrics {
 	return nil
 }
 
+// Asks for the current state of each service's workload. No logs, no window.
+// Added after v1, older agents never get one.
+type StatusQuery struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	QueryId string                 `protobuf:"bytes,1,opt,name=query_id,json=queryId,proto3" json:"query_id,omitempty"`
+	// Absolute, same rule as Query.deadline.
+	Deadline      *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=deadline,proto3" json:"deadline,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StatusQuery) Reset() {
+	*x = StatusQuery{}
+	mi := &file_seismo_v1_common_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StatusQuery) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StatusQuery) ProtoMessage() {}
+
+func (x *StatusQuery) ProtoReflect() protoreflect.Message {
+	mi := &file_seismo_v1_common_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StatusQuery.ProtoReflect.Descriptor instead.
+func (*StatusQuery) Descriptor() ([]byte, []int) {
+	return file_seismo_v1_common_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *StatusQuery) GetQueryId() string {
+	if x != nil {
+		return x.QueryId
+	}
+	return ""
+}
+
+func (x *StatusQuery) GetDeadline() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Deadline
+	}
+	return nil
+}
+
+// One service's container or pod state. The logs-free half of WorkloadResult.
+type ServiceStatus struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Service string                 `protobuf:"bytes,1,opt,name=service,proto3" json:"service,omitempty"`
+	// COMPLETE when diagnostics were read, UNAVAILABLE when error is set.
+	Status        WorkloadStatus       `protobuf:"varint,2,opt,name=status,proto3,enum=seismo.v1.WorkloadStatus" json:"status,omitempty"`
+	Workload      *Workload            `protobuf:"bytes,3,opt,name=workload,proto3" json:"workload,omitempty"`
+	Diagnostics   *WorkloadDiagnostics `protobuf:"bytes,4,opt,name=diagnostics,proto3" json:"diagnostics,omitempty"`
+	Error         *SourceError         `protobuf:"bytes,5,opt,name=error,proto3,oneof" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ServiceStatus) Reset() {
+	*x = ServiceStatus{}
+	mi := &file_seismo_v1_common_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ServiceStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ServiceStatus) ProtoMessage() {}
+
+func (x *ServiceStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_seismo_v1_common_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ServiceStatus.ProtoReflect.Descriptor instead.
+func (*ServiceStatus) Descriptor() ([]byte, []int) {
+	return file_seismo_v1_common_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ServiceStatus) GetService() string {
+	if x != nil {
+		return x.Service
+	}
+	return ""
+}
+
+func (x *ServiceStatus) GetStatus() WorkloadStatus {
+	if x != nil {
+		return x.Status
+	}
+	return WorkloadStatus_WORKLOAD_STATUS_UNSPECIFIED
+}
+
+func (x *ServiceStatus) GetWorkload() *Workload {
+	if x != nil {
+		return x.Workload
+	}
+	return nil
+}
+
+func (x *ServiceStatus) GetDiagnostics() *WorkloadDiagnostics {
+	if x != nil {
+		return x.Diagnostics
+	}
+	return nil
+}
+
+func (x *ServiceStatus) GetError() *SourceError {
+	if x != nil {
+		return x.Error
+	}
+	return nil
+}
+
+type StatusResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	QueryId       string                 `protobuf:"bytes,1,opt,name=query_id,json=queryId,proto3" json:"query_id,omitempty"`
+	Services      []*ServiceStatus       `protobuf:"bytes,2,rep,name=services,proto3" json:"services,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StatusResult) Reset() {
+	*x = StatusResult{}
+	mi := &file_seismo_v1_common_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StatusResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StatusResult) ProtoMessage() {}
+
+func (x *StatusResult) ProtoReflect() protoreflect.Message {
+	mi := &file_seismo_v1_common_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StatusResult.ProtoReflect.Descriptor instead.
+func (*StatusResult) Descriptor() ([]byte, []int) {
+	return file_seismo_v1_common_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *StatusResult) GetQueryId() string {
+	if x != nil {
+		return x.QueryId
+	}
+	return ""
+}
+
+func (x *StatusResult) GetServices() []*ServiceStatus {
+	if x != nil {
+		return x.Services
+	}
+	return nil
+}
+
 var File_seismo_v1_common_proto protoreflect.FileDescriptor
 
 const file_seismo_v1_common_proto_rawDesc = "" +
@@ -1602,7 +1787,20 @@ const file_seismo_v1_common_proto_rawDesc = "" +
 	"\x06_error\"a\n" +
 	"\rMetricsResult\x12\x19\n" +
 	"\bquery_id\x18\x01 \x01(\tR\aqueryId\x125\n" +
-	"\bservices\x18\x02 \x03(\v2\x19.seismo.v1.ServiceMetricsR\bservices*\xa9\x01\n" +
+	"\bservices\x18\x02 \x03(\v2\x19.seismo.v1.ServiceMetricsR\bservices\"`\n" +
+	"\vStatusQuery\x12\x19\n" +
+	"\bquery_id\x18\x01 \x01(\tR\aqueryId\x126\n" +
+	"\bdeadline\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\"\x8c\x02\n" +
+	"\rServiceStatus\x12\x18\n" +
+	"\aservice\x18\x01 \x01(\tR\aservice\x121\n" +
+	"\x06status\x18\x02 \x01(\x0e2\x19.seismo.v1.WorkloadStatusR\x06status\x12/\n" +
+	"\bworkload\x18\x03 \x01(\v2\x13.seismo.v1.WorkloadR\bworkload\x12@\n" +
+	"\vdiagnostics\x18\x04 \x01(\v2\x1e.seismo.v1.WorkloadDiagnosticsR\vdiagnostics\x121\n" +
+	"\x05error\x18\x05 \x01(\v2\x16.seismo.v1.SourceErrorH\x00R\x05error\x88\x01\x01B\b\n" +
+	"\x06_error\"_\n" +
+	"\fStatusResult\x12\x19\n" +
+	"\bquery_id\x18\x01 \x01(\tR\aqueryId\x124\n" +
+	"\bservices\x18\x02 \x03(\v2\x18.seismo.v1.ServiceStatusR\bservices*\xa9\x01\n" +
 	"\vAgentSource\x12\x1c\n" +
 	"\x18AGENT_SOURCE_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13AGENT_SOURCE_DOCKER\x10\x01\x12\x1b\n" +
@@ -1658,7 +1856,7 @@ func file_seismo_v1_common_proto_rawDescGZIP() []byte {
 }
 
 var file_seismo_v1_common_proto_enumTypes = make([]protoimpl.EnumInfo, 7)
-var file_seismo_v1_common_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_seismo_v1_common_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_seismo_v1_common_proto_goTypes = []any{
 	(AgentSource)(0),              // 0: seismo.v1.AgentSource
 	(LogStream)(0),                // 1: seismo.v1.LogStream
@@ -1682,14 +1880,17 @@ var file_seismo_v1_common_proto_goTypes = []any{
 	(*MetricsQuery)(nil),          // 19: seismo.v1.MetricsQuery
 	(*ServiceMetrics)(nil),        // 20: seismo.v1.ServiceMetrics
 	(*MetricsResult)(nil),         // 21: seismo.v1.MetricsResult
-	(*timestamppb.Timestamp)(nil), // 22: google.protobuf.Timestamp
+	(*StatusQuery)(nil),           // 22: seismo.v1.StatusQuery
+	(*ServiceStatus)(nil),         // 23: seismo.v1.ServiceStatus
+	(*StatusResult)(nil),          // 24: seismo.v1.StatusResult
+	(*timestamppb.Timestamp)(nil), // 25: google.protobuf.Timestamp
 }
 var file_seismo_v1_common_proto_depIdxs = []int32{
-	22, // 0: seismo.v1.TimeWindow.from:type_name -> google.protobuf.Timestamp
-	22, // 1: seismo.v1.TimeWindow.to:type_name -> google.protobuf.Timestamp
+	25, // 0: seismo.v1.TimeWindow.from:type_name -> google.protobuf.Timestamp
+	25, // 1: seismo.v1.TimeWindow.to:type_name -> google.protobuf.Timestamp
 	7,  // 2: seismo.v1.Query.window:type_name -> seismo.v1.TimeWindow
 	8,  // 3: seismo.v1.Query.limits:type_name -> seismo.v1.QueryLimits
-	22, // 4: seismo.v1.Query.deadline:type_name -> google.protobuf.Timestamp
+	25, // 4: seismo.v1.Query.deadline:type_name -> google.protobuf.Timestamp
 	6,  // 5: seismo.v1.SourceError.kind:type_name -> seismo.v1.SourceErrorKind
 	12, // 6: seismo.v1.WorkloadDiagnostics.runtime_state:type_name -> seismo.v1.StringDiagnostic
 	13, // 7: seismo.v1.WorkloadDiagnostics.restart_count:type_name -> seismo.v1.UintDiagnostic
@@ -1697,7 +1898,7 @@ var file_seismo_v1_common_proto_depIdxs = []int32{
 	12, // 9: seismo.v1.WorkloadDiagnostics.image:type_name -> seismo.v1.StringDiagnostic
 	13, // 10: seismo.v1.WorkloadDiagnostics.configured_cpu_nanocpus:type_name -> seismo.v1.UintDiagnostic
 	13, // 11: seismo.v1.WorkloadDiagnostics.configured_memory_bytes:type_name -> seismo.v1.UintDiagnostic
-	22, // 12: seismo.v1.LogEntry.timestamp:type_name -> google.protobuf.Timestamp
+	25, // 12: seismo.v1.LogEntry.timestamp:type_name -> google.protobuf.Timestamp
 	1,  // 13: seismo.v1.LogEntry.stream:type_name -> seismo.v1.LogStream
 	2,  // 14: seismo.v1.LogEntry.match_kind:type_name -> seismo.v1.MatchKind
 	11, // 15: seismo.v1.WorkloadResult.workload:type_name -> seismo.v1.Workload
@@ -1708,18 +1909,24 @@ var file_seismo_v1_common_proto_depIdxs = []int32{
 	10, // 20: seismo.v1.WorkloadResult.error:type_name -> seismo.v1.SourceError
 	5,  // 21: seismo.v1.QueryResult.status:type_name -> seismo.v1.QueryStatus
 	7,  // 22: seismo.v1.QueryResult.requested_window:type_name -> seismo.v1.TimeWindow
-	22, // 23: seismo.v1.QueryResult.oldest_available:type_name -> google.protobuf.Timestamp
+	25, // 23: seismo.v1.QueryResult.oldest_available:type_name -> google.protobuf.Timestamp
 	10, // 24: seismo.v1.QueryResult.source_error:type_name -> seismo.v1.SourceError
 	17, // 25: seismo.v1.QueryResult.workloads:type_name -> seismo.v1.WorkloadResult
 	7,  // 26: seismo.v1.MetricsQuery.window:type_name -> seismo.v1.TimeWindow
-	22, // 27: seismo.v1.MetricsQuery.deadline:type_name -> google.protobuf.Timestamp
+	25, // 27: seismo.v1.MetricsQuery.deadline:type_name -> google.protobuf.Timestamp
 	10, // 28: seismo.v1.ServiceMetrics.error:type_name -> seismo.v1.SourceError
 	20, // 29: seismo.v1.MetricsResult.services:type_name -> seismo.v1.ServiceMetrics
-	30, // [30:30] is the sub-list for method output_type
-	30, // [30:30] is the sub-list for method input_type
-	30, // [30:30] is the sub-list for extension type_name
-	30, // [30:30] is the sub-list for extension extendee
-	0,  // [0:30] is the sub-list for field type_name
+	25, // 30: seismo.v1.StatusQuery.deadline:type_name -> google.protobuf.Timestamp
+	3,  // 31: seismo.v1.ServiceStatus.status:type_name -> seismo.v1.WorkloadStatus
+	11, // 32: seismo.v1.ServiceStatus.workload:type_name -> seismo.v1.Workload
+	15, // 33: seismo.v1.ServiceStatus.diagnostics:type_name -> seismo.v1.WorkloadDiagnostics
+	10, // 34: seismo.v1.ServiceStatus.error:type_name -> seismo.v1.SourceError
+	23, // 35: seismo.v1.StatusResult.services:type_name -> seismo.v1.ServiceStatus
+	36, // [36:36] is the sub-list for method output_type
+	36, // [36:36] is the sub-list for method input_type
+	36, // [36:36] is the sub-list for extension type_name
+	36, // [36:36] is the sub-list for extension extendee
+	0,  // [0:36] is the sub-list for field type_name
 }
 
 func init() { file_seismo_v1_common_proto_init() }
@@ -1744,13 +1951,14 @@ func file_seismo_v1_common_proto_init() {
 	file_seismo_v1_common_proto_msgTypes[10].OneofWrappers = []any{}
 	file_seismo_v1_common_proto_msgTypes[11].OneofWrappers = []any{}
 	file_seismo_v1_common_proto_msgTypes[13].OneofWrappers = []any{}
+	file_seismo_v1_common_proto_msgTypes[16].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_seismo_v1_common_proto_rawDesc), len(file_seismo_v1_common_proto_rawDesc)),
 			NumEnums:      7,
-			NumMessages:   15,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

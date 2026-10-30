@@ -31,6 +31,7 @@ type AgentMessage struct {
 	//	*AgentMessage_Result
 	//	*AgentMessage_Error
 	//	*AgentMessage_MetricsResult
+	//	*AgentMessage_StatusResult
 	Message       isAgentMessage_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -109,6 +110,15 @@ func (x *AgentMessage) GetMetricsResult() *MetricsResult {
 	return nil
 }
 
+func (x *AgentMessage) GetStatusResult() *StatusResult {
+	if x != nil {
+		if x, ok := x.Message.(*AgentMessage_StatusResult); ok {
+			return x.StatusResult
+		}
+	}
+	return nil
+}
+
 type isAgentMessage_Message interface {
 	isAgentMessage_Message()
 }
@@ -130,6 +140,11 @@ type AgentMessage_MetricsResult struct {
 	MetricsResult *MetricsResult `protobuf:"bytes,4,opt,name=metrics_result,json=metricsResult,proto3,oneof"`
 }
 
+type AgentMessage_StatusResult struct {
+	// Added after v1, older coordinators never get a StatusQuery.
+	StatusResult *StatusResult `protobuf:"bytes,5,opt,name=status_result,json=statusResult,proto3,oneof"`
+}
+
 func (*AgentMessage_Register) isAgentMessage_Message() {}
 
 func (*AgentMessage_Result) isAgentMessage_Message() {}
@@ -138,6 +153,8 @@ func (*AgentMessage_Error) isAgentMessage_Message() {}
 
 func (*AgentMessage_MetricsResult) isAgentMessage_Message() {}
 
+func (*AgentMessage_StatusResult) isAgentMessage_Message() {}
+
 type CoordinatorMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Message:
@@ -145,6 +162,7 @@ type CoordinatorMessage struct {
 	//	*CoordinatorMessage_Query
 	//	*CoordinatorMessage_Cancel
 	//	*CoordinatorMessage_MetricsQuery
+	//	*CoordinatorMessage_StatusQuery
 	Message       isCoordinatorMessage_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -214,6 +232,15 @@ func (x *CoordinatorMessage) GetMetricsQuery() *MetricsQuery {
 	return nil
 }
 
+func (x *CoordinatorMessage) GetStatusQuery() *StatusQuery {
+	if x != nil {
+		if x, ok := x.Message.(*CoordinatorMessage_StatusQuery); ok {
+			return x.StatusQuery
+		}
+	}
+	return nil
+}
+
 type isCoordinatorMessage_Message interface {
 	isCoordinatorMessage_Message()
 }
@@ -231,11 +258,18 @@ type CoordinatorMessage_MetricsQuery struct {
 	MetricsQuery *MetricsQuery `protobuf:"bytes,3,opt,name=metrics_query,json=metricsQuery,proto3,oneof"`
 }
 
+type CoordinatorMessage_StatusQuery struct {
+	// Added after v1, older agents ignore it and never answer.
+	StatusQuery *StatusQuery `protobuf:"bytes,4,opt,name=status_query,json=statusQuery,proto3,oneof"`
+}
+
 func (*CoordinatorMessage_Query) isCoordinatorMessage_Message() {}
 
 func (*CoordinatorMessage_Cancel) isCoordinatorMessage_Message() {}
 
 func (*CoordinatorMessage_MetricsQuery) isCoordinatorMessage_Message() {}
+
+func (*CoordinatorMessage_StatusQuery) isCoordinatorMessage_Message() {}
 
 // Must be the first message. Rejections come as a gRPC status on the
 // stream, there is no ack message:
@@ -419,17 +453,19 @@ var File_seismo_v1_agent_proto protoreflect.FileDescriptor
 
 const file_seismo_v1_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x15seismo/v1/agent.proto\x12\tseismo.v1\x1a\x16seismo/v1/common.proto\"\xf0\x01\n" +
+	"\x15seismo/v1/agent.proto\x12\tseismo.v1\x1a\x16seismo/v1/common.proto\"\xb0\x02\n" +
 	"\fAgentMessage\x121\n" +
 	"\bregister\x18\x01 \x01(\v2\x13.seismo.v1.RegisterH\x00R\bregister\x120\n" +
 	"\x06result\x18\x02 \x01(\v2\x16.seismo.v1.QueryResultH\x00R\x06result\x12-\n" +
 	"\x05error\x18\x03 \x01(\v2\x15.seismo.v1.QueryErrorH\x00R\x05error\x12A\n" +
-	"\x0emetrics_result\x18\x04 \x01(\v2\x18.seismo.v1.MetricsResultH\x00R\rmetricsResultB\t\n" +
-	"\amessage\"\xb6\x01\n" +
+	"\x0emetrics_result\x18\x04 \x01(\v2\x18.seismo.v1.MetricsResultH\x00R\rmetricsResult\x12>\n" +
+	"\rstatus_result\x18\x05 \x01(\v2\x17.seismo.v1.StatusResultH\x00R\fstatusResultB\t\n" +
+	"\amessage\"\xf3\x01\n" +
 	"\x12CoordinatorMessage\x12(\n" +
 	"\x05query\x18\x01 \x01(\v2\x10.seismo.v1.QueryH\x00R\x05query\x12+\n" +
 	"\x06cancel\x18\x02 \x01(\v2\x11.seismo.v1.CancelH\x00R\x06cancel\x12>\n" +
-	"\rmetrics_query\x18\x03 \x01(\v2\x17.seismo.v1.MetricsQueryH\x00R\fmetricsQueryB\t\n" +
+	"\rmetrics_query\x18\x03 \x01(\v2\x17.seismo.v1.MetricsQueryH\x00R\fmetricsQuery\x12;\n" +
+	"\fstatus_query\x18\x04 \x01(\v2\x16.seismo.v1.StatusQueryH\x00R\vstatusQueryB\t\n" +
 	"\amessage\"\x9c\x01\n" +
 	"\bRegister\x12)\n" +
 	"\x10protocol_version\x18\x01 \x01(\rR\x0fprotocolVersion\x12\x19\n" +
@@ -466,28 +502,32 @@ var file_seismo_v1_agent_proto_goTypes = []any{
 	(*Cancel)(nil),             // 4: seismo.v1.Cancel
 	(*QueryResult)(nil),        // 5: seismo.v1.QueryResult
 	(*MetricsResult)(nil),      // 6: seismo.v1.MetricsResult
-	(*Query)(nil),              // 7: seismo.v1.Query
-	(*MetricsQuery)(nil),       // 8: seismo.v1.MetricsQuery
-	(AgentSource)(0),           // 9: seismo.v1.AgentSource
-	(*SourceError)(nil),        // 10: seismo.v1.SourceError
+	(*StatusResult)(nil),       // 7: seismo.v1.StatusResult
+	(*Query)(nil),              // 8: seismo.v1.Query
+	(*MetricsQuery)(nil),       // 9: seismo.v1.MetricsQuery
+	(*StatusQuery)(nil),        // 10: seismo.v1.StatusQuery
+	(AgentSource)(0),           // 11: seismo.v1.AgentSource
+	(*SourceError)(nil),        // 12: seismo.v1.SourceError
 }
 var file_seismo_v1_agent_proto_depIdxs = []int32{
 	2,  // 0: seismo.v1.AgentMessage.register:type_name -> seismo.v1.Register
 	5,  // 1: seismo.v1.AgentMessage.result:type_name -> seismo.v1.QueryResult
 	3,  // 2: seismo.v1.AgentMessage.error:type_name -> seismo.v1.QueryError
 	6,  // 3: seismo.v1.AgentMessage.metrics_result:type_name -> seismo.v1.MetricsResult
-	7,  // 4: seismo.v1.CoordinatorMessage.query:type_name -> seismo.v1.Query
-	4,  // 5: seismo.v1.CoordinatorMessage.cancel:type_name -> seismo.v1.Cancel
-	8,  // 6: seismo.v1.CoordinatorMessage.metrics_query:type_name -> seismo.v1.MetricsQuery
-	9,  // 7: seismo.v1.Register.source:type_name -> seismo.v1.AgentSource
-	10, // 8: seismo.v1.QueryError.error:type_name -> seismo.v1.SourceError
-	0,  // 9: seismo.v1.Agent.Connect:input_type -> seismo.v1.AgentMessage
-	1,  // 10: seismo.v1.Agent.Connect:output_type -> seismo.v1.CoordinatorMessage
-	10, // [10:11] is the sub-list for method output_type
-	9,  // [9:10] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	7,  // 4: seismo.v1.AgentMessage.status_result:type_name -> seismo.v1.StatusResult
+	8,  // 5: seismo.v1.CoordinatorMessage.query:type_name -> seismo.v1.Query
+	4,  // 6: seismo.v1.CoordinatorMessage.cancel:type_name -> seismo.v1.Cancel
+	9,  // 7: seismo.v1.CoordinatorMessage.metrics_query:type_name -> seismo.v1.MetricsQuery
+	10, // 8: seismo.v1.CoordinatorMessage.status_query:type_name -> seismo.v1.StatusQuery
+	11, // 9: seismo.v1.Register.source:type_name -> seismo.v1.AgentSource
+	12, // 10: seismo.v1.QueryError.error:type_name -> seismo.v1.SourceError
+	0,  // 11: seismo.v1.Agent.Connect:input_type -> seismo.v1.AgentMessage
+	1,  // 12: seismo.v1.Agent.Connect:output_type -> seismo.v1.CoordinatorMessage
+	12, // [12:13] is the sub-list for method output_type
+	11, // [11:12] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_seismo_v1_agent_proto_init() }
@@ -501,11 +541,13 @@ func file_seismo_v1_agent_proto_init() {
 		(*AgentMessage_Result)(nil),
 		(*AgentMessage_Error)(nil),
 		(*AgentMessage_MetricsResult)(nil),
+		(*AgentMessage_StatusResult)(nil),
 	}
 	file_seismo_v1_agent_proto_msgTypes[1].OneofWrappers = []any{
 		(*CoordinatorMessage_Query)(nil),
 		(*CoordinatorMessage_Cancel)(nil),
 		(*CoordinatorMessage_MetricsQuery)(nil),
+		(*CoordinatorMessage_StatusQuery)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

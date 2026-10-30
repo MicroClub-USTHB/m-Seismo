@@ -45,8 +45,14 @@ type Registry struct {
 }
 
 type entry struct {
-	c   *conn
-	sub *nats.Subscription
+	c    *conn
+	subs []*nats.Subscription
+}
+
+func (e *entry) unsubscribe() {
+	for _, sub := range e.subs {
+		_ = sub.Unsubscribe()
+	}
 }
 
 func NewRegistry(nc *nats.Conn) *Registry {
@@ -71,7 +77,7 @@ func (r *Registry) Stop() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for app, e := range r.attached {
-		_ = e.sub.Unsubscribe()
+		e.unsubscribe()
 		e.c.evict(errShutdown)
 		delete(r.attached, app)
 	}
@@ -81,21 +87,17 @@ func (r *Registry) Stop() {
 // queries for the app are relayed to c, and other instances are told to
 // close theirs.
 func (r *Registry) add(c *conn) error {
-	sub, err := r.nc.Subscribe(querySubject(c.appID), func(msg *nats.Msg) {
-		// Callbacks of one subscription run one at a time; queries don't
-		// wait for each other.
-		go r.relay(c, msg)
-	})
+	subs, err := subscribeQueries(r.nc, c, r)
 	if err != nil {
-		return fmt.Errorf("coordinator: subscribe %s: %w", querySubject(c.appID), err)
+		return err
 	}
 
 	r.mu.Lock()
 	if old, ok := r.attached[c.appID]; ok {
-		_ = old.sub.Unsubscribe()
+		old.unsubscribe()
 		old.c.evict(errReplaced)
 	}
-	r.attached[c.appID] = &entry{c: c, sub: sub}
+	r.attached[c.appID] = &entry{c: c, subs: subs}
 	r.mu.Unlock()
 
 	data, _ := json.Marshal(announcement{StreamID: c.id, Since: c.since})
@@ -105,12 +107,39 @@ func (r *Registry) add(c *conn) error {
 	return nil
 }
 
+// subscribeQueries subscribes to every query subject of c's app, relaying
+// each kind to c. Callbacks of one subscription run one at a time; queries
+// don't wait for each other.
+func subscribeQueries(nc *nats.Conn, c *conn, r *Registry) ([]*nats.Subscription, error) {
+	kinds := []struct {
+		subject string
+		relay   func(*conn, *nats.Msg)
+	}{
+		{querySubject(c.appID), r.relay},
+		{metricsQuerySubject(c.appID), r.relayMetrics},
+		{statusQuerySubject(c.appID), r.relayStatus},
+	}
+	subs := make([]*nats.Subscription, 0, len(kinds))
+	for _, k := range kinds {
+		relay := k.relay
+		sub, err := nc.Subscribe(k.subject, func(msg *nats.Msg) { go relay(c, msg) })
+		if err != nil {
+			for _, s := range subs {
+				_ = s.Unsubscribe()
+			}
+			return nil, fmt.Errorf("coordinator: subscribe %s: %w", k.subject, err)
+		}
+		subs = append(subs, sub)
+	}
+	return subs, nil
+}
+
 // remove forgets c, unless a newer stream already took its place.
 func (r *Registry) remove(c *conn) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if e, ok := r.attached[c.appID]; ok && e.c == c {
-		_ = e.sub.Unsubscribe()
+		e.unsubscribe()
 		delete(r.attached, c.appID)
 	}
 }
@@ -133,7 +162,7 @@ func (r *Registry) onAnnouncement(msg *nats.Msg) {
 	if !ok || e.c.id == a.StreamID || !e.c.since.Before(a.Since) {
 		return
 	}
-	_ = e.sub.Unsubscribe()
+	e.unsubscribe()
 	e.c.evict(errReplaced)
 	delete(r.attached, appID)
 }
@@ -145,18 +174,45 @@ func (r *Registry) relay(c *conn, msg *nats.Msg) {
 		slog.Warn("coordinator: dropping unreadable query", "app", c.appID, "err", err)
 		return
 	}
+	req := &seismov1.BackendRequest{Request: &seismov1.BackendRequest_QueryLogs{QueryLogs: &q}}
+	r.answer(c, msg, q.GetQueryId(), q.GetDeadline().AsTime(), req)
+}
 
-	deadline := q.GetDeadline().AsTime()
+// relayMetrics is relay for a MetricsQuery.
+func (r *Registry) relayMetrics(c *conn, msg *nats.Msg) {
+	var q seismov1.MetricsQuery
+	if err := proto.Unmarshal(msg.Data, &q); err != nil {
+		slog.Warn("coordinator: dropping unreadable metrics query", "app", c.appID, "err", err)
+		return
+	}
+	req := &seismov1.BackendRequest{Request: &seismov1.BackendRequest_QueryMetrics{QueryMetrics: &q}}
+	r.answer(c, msg, q.GetQueryId(), q.GetDeadline().AsTime(), req)
+}
+
+// relayStatus is relay for a StatusQuery.
+func (r *Registry) relayStatus(c *conn, msg *nats.Msg) {
+	var q seismov1.StatusQuery
+	if err := proto.Unmarshal(msg.Data, &q); err != nil {
+		slog.Warn("coordinator: dropping unreadable status query", "app", c.appID, "err", err)
+		return
+	}
+	req := &seismov1.BackendRequest{Request: &seismov1.BackendRequest_QueryStatus{QueryStatus: &q}}
+	r.answer(c, msg, q.GetQueryId(), q.GetDeadline().AsTime(), req)
+}
+
+// answer sends req on c's stream and replies to msg with the coordinator's
+// answer, or a synthesized AggregateError when it couldn't get one.
+func (r *Registry) answer(c *conn, msg *nats.Msg, queryID string, deadline time.Time, req *seismov1.BackendRequest) {
 	ctx, cancel := context.WithDeadline(context.Background(), deadline.Add(relayMargin))
 	defer cancel()
 
-	ev, err := c.query(ctx, &q)
+	ev, err := c.query(ctx, queryID, req)
 	if err != nil {
 		kind := seismov1.SourceErrorKind_SOURCE_ERROR_KIND_SOURCE_UNREACHABLE
 		if errors.Is(err, context.DeadlineExceeded) {
 			kind = seismov1.SourceErrorKind_SOURCE_ERROR_KIND_TIMEOUT
 		}
-		ev = errorEvent(q.GetQueryId(), kind, err.Error())
+		ev = errorEvent(queryID, kind, err.Error())
 	}
 
 	data, err := proto.Marshal(ev)
@@ -164,10 +220,10 @@ func (r *Registry) relay(c *conn, msg *nats.Msg) {
 		err = fmt.Errorf("answer is %d bytes, over the %d bytes NATS carries", len(data), r.nc.MaxPayload())
 	}
 	if err != nil {
-		data, _ = proto.Marshal(errorEvent(q.GetQueryId(), seismov1.SourceErrorKind_SOURCE_ERROR_KIND_INVALID_RESPONSE, err.Error()))
+		data, _ = proto.Marshal(errorEvent(queryID, seismov1.SourceErrorKind_SOURCE_ERROR_KIND_INVALID_RESPONSE, err.Error()))
 	}
 	if err := msg.Respond(data); err != nil {
-		slog.Warn("coordinator: answer query", "app", c.appID, "query", q.GetQueryId(), "err", err)
+		slog.Warn("coordinator: answer query", "app", c.appID, "query", queryID, "err", err)
 	}
 }
 

@@ -48,6 +48,15 @@ type ServerLogs interface {
 	QueryLogs(ctx context.Context, appID uuid.UUID, from, to time.Time) (*seismov1.AggregateResult, error)
 }
 
+// ServiceHealth asks an app's log coordinator for a snapshot of its
+// services' health (error rate, restarts, configured CPU and memory,
+// deployed version), for the "Service health" table. Implemented by
+// *coordinator.Client.
+type ServiceHealth interface {
+	QueryMetrics(ctx context.Context, appID uuid.UUID, from, to time.Time) (*seismov1.AggregateMetrics, error)
+	QueryStatus(ctx context.Context, appID uuid.UUID) (*seismov1.AggregateStatus, error)
+}
+
 // permanentError marks a failure that trying again won't fix.
 type permanentError struct{ err error }
 
@@ -72,15 +81,17 @@ type Processor struct {
 	q      Queries
 	issues Issues
 	router Router
-	// logs is optional; window is how far around the report it looks.
+	// logs and health are optional; window is how far around the report
+	// they look.
 	logs    ServerLogs
+	health  ServiceHealth
 	window  time.Duration
 	crashes CrashResolver
 	links   AttachmentLinker
 }
 
-func NewProcessor(q Queries, issues Issues, router Router, logs ServerLogs, window time.Duration, crashes CrashResolver, links AttachmentLinker) *Processor {
-	return &Processor{q: q, issues: issues, router: router, logs: logs, window: window, crashes: crashes, links: links}
+func NewProcessor(q Queries, issues Issues, router Router, logs ServerLogs, window time.Duration, crashes CrashResolver, links AttachmentLinker, health ServiceHealth) *Processor {
+	return &Processor{q: q, issues: issues, router: router, logs: logs, window: window, crashes: crashes, links: links, health: health}
 }
 
 // Process opens the report's issue in every project its app is linked to,
@@ -157,6 +168,7 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 		InstallationID: row.InstallationID,
 		ScreenshotURL:  p.screenshotURL(attachments),
 		ServerLogs:     p.serverLogs(ctx, row),
+		Health:         p.serviceHealth(ctx, row),
 	}
 	base := render(&r, info)
 
@@ -225,6 +237,27 @@ func (p *Processor) screenshotURL(attachments []db.ListReportAttachmentsRow) str
 		}
 	}
 	return ""
+}
+
+// serviceHealth asks the app's coordinator for a snapshot of its services'
+// health around the report. The issue is opened without it when there is
+// none, or the coordinator can't fully answer.
+func (p *Processor) serviceHealth(ctx context.Context, row db.Report) []healthRow {
+	if p.health == nil {
+		return nil
+	}
+	metrics, err := p.health.QueryMetrics(ctx, row.AppID, row.OccurredAt.Add(-p.window), row.OccurredAt.Add(p.window))
+	switch {
+	case errors.Is(err, coordinator.ErrNotAttached):
+		return nil
+	case err != nil:
+		slog.WarnContext(ctx, "service metrics unavailable, opening the issue without them", "report", row.ID, "err", err)
+	}
+	status, err := p.health.QueryStatus(ctx, row.AppID)
+	if err != nil && !errors.Is(err, coordinator.ErrNotAttached) {
+		slog.WarnContext(ctx, "service status unavailable, opening the issue without it", "report", row.ID, "err", err)
+	}
+	return mergeHealth(metrics, status)
 }
 
 // serverLogs asks the app's coordinator for the server logs around the

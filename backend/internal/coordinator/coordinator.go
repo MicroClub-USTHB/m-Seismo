@@ -29,6 +29,14 @@ const maxMessageBytes = 10 << 20
 
 func querySubject(appID uuid.UUID) string { return "seismo.coordinator.query." + appID.String() }
 
+func metricsQuerySubject(appID uuid.UUID) string {
+	return "seismo.coordinator.query.metrics." + appID.String()
+}
+
+func statusQuerySubject(appID uuid.UUID) string {
+	return "seismo.coordinator.query.status." + appID.String()
+}
+
 func attachedSubject(appID uuid.UUID) string {
 	return "seismo.coordinator.attached." + appID.String()
 }
