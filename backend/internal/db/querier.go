@@ -26,6 +26,10 @@ type Querier interface {
 	DeleteAppTrackerCredentials(ctx context.Context, arg DeleteAppTrackerCredentialsParams) (int64, error)
 	DeleteOwner(ctx context.Context, id uuid.UUID) (int64, error)
 	DeleteProject(ctx context.Context, arg DeleteProjectParams) (int64, error)
+	// Attachments cascade; report_deliveries and the issues they point to are
+	// left as they are.
+	DeleteReportByReportID(ctx context.Context, arg DeleteReportByReportIDParams) (int64, error)
+	DeleteReportsByInstallation(ctx context.Context, arg DeleteReportsByInstallationParams) (int64, error)
 	DeleteRoutingRule(ctx context.Context, arg DeleteRoutingRuleParams) (int64, error)
 	GetActiveAppKeyByHash(ctx context.Context, arg GetActiveAppKeyByHashParams) (AppKey, error)
 	GetApp(ctx context.Context, arg GetAppParams) (App, error)

@@ -40,7 +40,7 @@ sdks/web/test-results/
 sdks/web/playwright-report/
 sdks/web/.vite/
 
-report/
+/report/
 
 # Nix
 .direnv/

@@ -48,3 +48,13 @@ SELECT DISTINCT pr.project_id
 FROM report_deliveries d
 JOIN project_repositories pr ON pr.id = d.project_repository_id
 WHERE d.report_id = $1;
+
+-- name: DeleteReportByReportID :execrows
+-- Attachments cascade; report_deliveries and the issues they point to are
+-- left as they are.
+DELETE FROM reports
+WHERE app_id = $1 AND report_id = $2;
+
+-- name: DeleteReportsByInstallation :execrows
+DELETE FROM reports
+WHERE app_id = $1 AND installation_id = $2;
