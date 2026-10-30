@@ -179,6 +179,21 @@ CREATE TABLE public.crashlytics_connections (
 
 
 --
+-- Name: issue_templates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_templates (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    project_id uuid NOT NULL,
+    name text NOT NULL,
+    title_template text NOT NULL,
+    body_template text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: issues; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -321,6 +336,7 @@ CREATE TABLE public.routing_rules (
     milestone text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    issue_template_id uuid,
     CONSTRAINT routing_rules_category_check CHECK ((category = ANY (ARRAY['bug'::text, 'crash'::text, 'ui'::text, 'other'::text]))),
     CONSTRAINT routing_rules_position_check CHECK (("position" >= 0)),
     CONSTRAINT routing_rules_severity_check CHECK ((severity = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))
@@ -414,6 +430,14 @@ ALTER TABLE ONLY public.connection_secrets
 
 ALTER TABLE ONLY public.crashlytics_connections
     ADD CONSTRAINT crashlytics_connections_pkey PRIMARY KEY (project_id);
+
+
+--
+-- Name: issue_templates issue_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_templates
+    ADD CONSTRAINT issue_templates_pkey PRIMARY KEY (id);
 
 
 --
@@ -563,6 +587,13 @@ CREATE INDEX app_projects_project_id_idx ON public.app_projects USING btree (pro
 --
 
 CREATE INDEX apps_owner_id_idx ON public.apps USING btree (owner_id);
+
+
+--
+-- Name: issue_templates_project_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_templates_project_id_idx ON public.issue_templates USING btree (project_id);
 
 
 --
@@ -721,6 +752,14 @@ ALTER TABLE ONLY public.crashlytics_connections
 
 
 --
+-- Name: issue_templates issue_templates_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_templates
+    ADD CONSTRAINT issue_templates_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
 -- Name: issues issues_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -825,6 +864,14 @@ ALTER TABLE ONLY public.routing_rules
 
 
 --
+-- Name: routing_rules routing_rules_issue_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.routing_rules
+    ADD CONSTRAINT routing_rules_issue_template_id_fkey FOREIGN KEY (issue_template_id) REFERENCES public.issue_templates(id) ON DELETE SET NULL;
+
+
+--
 -- Name: routing_rules routing_rules_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -866,4 +913,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261026090000'),
     ('20261029090000'),
     ('20261030160000'),
-    ('20261030170000');
+    ('20261030170000'),
+    ('20261030180000');

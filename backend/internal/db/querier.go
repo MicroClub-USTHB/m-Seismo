@@ -16,6 +16,7 @@ type Querier interface {
 	CreateApp(ctx context.Context, arg CreateAppParams) (App, error)
 	CreateAppKey(ctx context.Context, arg CreateAppKeyParams) (AppKey, error)
 	CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue, error)
+	CreateIssueTemplate(ctx context.Context, arg CreateIssueTemplateParams) (IssueTemplate, error)
 	CreateOwner(ctx context.Context, arg CreateOwnerParams) (Owner, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateReportDelivery(ctx context.Context, arg CreateReportDeliveryParams) error
@@ -28,6 +29,7 @@ type Querier interface {
 	// the operator's default (sqlc.arg(default_days)) for apps that don't set
 	// their own.
 	DeleteExpiredReports(ctx context.Context, defaultDays int32) (int64, error)
+	DeleteIssueTemplate(ctx context.Context, arg DeleteIssueTemplateParams) (int64, error)
 	DeleteOwner(ctx context.Context, id uuid.UUID) (int64, error)
 	DeleteProject(ctx context.Context, arg DeleteProjectParams) (int64, error)
 	// Attachments cascade; report_deliveries and the issues they point to are
@@ -45,6 +47,7 @@ type Querier interface {
 	// One project repository, provided the app is linked to its project. The
 	// credentials come from the app's connections, resolved by the caller.
 	GetIssueTarget(ctx context.Context, arg GetIssueTargetParams) (GetIssueTargetRow, error)
+	GetIssueTemplate(ctx context.Context, arg GetIssueTemplateParams) (IssueTemplate, error)
 	GetOpenIssueByFingerprint(ctx context.Context, arg GetOpenIssueByFingerprintParams) (Issue, error)
 	GetOwnerByEmail(ctx context.Context, email string) (Owner, error)
 	GetOwnerByID(ctx context.Context, id uuid.UUID) (Owner, error)
@@ -70,6 +73,7 @@ type Querier interface {
 	ListCrashlyticsConnections(ctx context.Context) ([]CrashlyticsConnection, error)
 	// The default repository of every project linked to the app.
 	ListIssueTargetsForApp(ctx context.Context, appID uuid.UUID) ([]ListIssueTargetsForAppRow, error)
+	ListIssueTemplates(ctx context.Context, projectID uuid.UUID) ([]IssueTemplate, error)
 	ListOwnerConnections(ctx context.Context, ownerID uuid.UUID) ([]ProviderConnection, error)
 	ListOwners(ctx context.Context) ([]Owner, error)
 	ListProjectApps(ctx context.Context, projectID uuid.UUID) ([]App, error)
@@ -82,7 +86,8 @@ type Querier interface {
 	ListReportDeliveryProjects(ctx context.Context, reportID uuid.UUID) ([]uuid.UUID, error)
 	ListRoutingRules(ctx context.Context, projectID uuid.UUID) ([]RoutingRule, error)
 	// The rules of every project the app reports into, in the order they are
-	// tried, with the repository each one sends to.
+	// tried, with the repository each one sends to and its template's content,
+	// when it has one.
 	ListRoutingRulesForApp(ctx context.Context, appID uuid.UUID) ([]ListRoutingRulesForAppRow, error)
 	MarkReportProcessed(ctx context.Context, id uuid.UUID) error
 	MarkReportQueued(ctx context.Context, id uuid.UUID) error
@@ -99,6 +104,7 @@ type Querier interface {
 	UnlinkAppProject(ctx context.Context, arg UnlinkAppProjectParams) (int64, error)
 	UnlinkProjectRepository(ctx context.Context, arg UnlinkProjectRepositoryParams) (int64, error)
 	UpdateApp(ctx context.Context, arg UpdateAppParams) (App, error)
+	UpdateIssueTemplate(ctx context.Context, arg UpdateIssueTemplateParams) (IssueTemplate, error)
 	UpdateOwner(ctx context.Context, arg UpdateOwnerParams) (Owner, error)
 	UpdateProject(ctx context.Context, arg UpdateProjectParams) (Project, error)
 	UpdateRoutingRule(ctx context.Context, arg UpdateRoutingRuleParams) (RoutingRule, error)

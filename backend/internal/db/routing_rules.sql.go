@@ -25,9 +25,9 @@ func (q *Queries) CountRoutingRulesForRepository(ctx context.Context, projectRep
 }
 
 const createRoutingRule = `-- name: CreateRoutingRule :one
-INSERT INTO routing_rules (project_id, position, app_id, severity, category, project_repository_id, labels, assignees, milestone)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, project_id, position, app_id, severity, category, project_repository_id, labels, assignees, milestone, created_at, updated_at
+INSERT INTO routing_rules (project_id, position, app_id, severity, category, project_repository_id, labels, assignees, milestone, issue_template_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+RETURNING id, project_id, position, app_id, severity, category, project_repository_id, labels, assignees, milestone, created_at, updated_at, issue_template_id
 `
 
 type CreateRoutingRuleParams struct {
@@ -40,6 +40,7 @@ type CreateRoutingRuleParams struct {
 	Labels              []string   `json:"labels"`
 	Assignees           []string   `json:"assignees"`
 	Milestone           *string    `json:"milestone"`
+	IssueTemplateID     *uuid.UUID `json:"issue_template_id"`
 }
 
 func (q *Queries) CreateRoutingRule(ctx context.Context, arg CreateRoutingRuleParams) (RoutingRule, error) {
@@ -53,6 +54,7 @@ func (q *Queries) CreateRoutingRule(ctx context.Context, arg CreateRoutingRulePa
 		arg.Labels,
 		arg.Assignees,
 		arg.Milestone,
+		arg.IssueTemplateID,
 	)
 	var i RoutingRule
 	err := row.Scan(
@@ -68,6 +70,7 @@ func (q *Queries) CreateRoutingRule(ctx context.Context, arg CreateRoutingRulePa
 		&i.Milestone,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IssueTemplateID,
 	)
 	return i, err
 }
@@ -91,7 +94,7 @@ func (q *Queries) DeleteRoutingRule(ctx context.Context, arg DeleteRoutingRulePa
 }
 
 const getRoutingRule = `-- name: GetRoutingRule :one
-SELECT id, project_id, position, app_id, severity, category, project_repository_id, labels, assignees, milestone, created_at, updated_at FROM routing_rules
+SELECT id, project_id, position, app_id, severity, category, project_repository_id, labels, assignees, milestone, created_at, updated_at, issue_template_id FROM routing_rules
 WHERE id = $1 AND project_id = $2
 `
 
@@ -116,12 +119,13 @@ func (q *Queries) GetRoutingRule(ctx context.Context, arg GetRoutingRuleParams) 
 		&i.Milestone,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IssueTemplateID,
 	)
 	return i, err
 }
 
 const listRoutingRules = `-- name: ListRoutingRules :many
-SELECT id, project_id, position, app_id, severity, category, project_repository_id, labels, assignees, milestone, created_at, updated_at FROM routing_rules
+SELECT id, project_id, position, app_id, severity, category, project_repository_id, labels, assignees, milestone, created_at, updated_at, issue_template_id FROM routing_rules
 WHERE project_id = $1
 ORDER BY position, created_at
 `
@@ -148,6 +152,7 @@ func (q *Queries) ListRoutingRules(ctx context.Context, projectID uuid.UUID) ([]
 			&i.Milestone,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IssueTemplateID,
 		); err != nil {
 			return nil, err
 		}
@@ -160,10 +165,11 @@ func (q *Queries) ListRoutingRules(ctx context.Context, projectID uuid.UUID) ([]
 }
 
 const listRoutingRulesForApp = `-- name: ListRoutingRulesForApp :many
-SELECT rr.id, rr.project_id, rr.position, rr.app_id, rr.severity, rr.category, rr.project_repository_id, rr.labels, rr.assignees, rr.milestone, rr.created_at, rr.updated_at, pr.repository
+SELECT rr.id, rr.project_id, rr.position, rr.app_id, rr.severity, rr.category, rr.project_repository_id, rr.labels, rr.assignees, rr.milestone, rr.created_at, rr.updated_at, rr.issue_template_id, pr.repository, it.title_template, it.body_template
 FROM routing_rules rr
 JOIN app_projects ap ON ap.project_id = rr.project_id
 JOIN project_repositories pr ON pr.id = rr.project_repository_id
+LEFT JOIN issue_templates it ON it.id = rr.issue_template_id
 WHERE ap.app_id = $1
 ORDER BY rr.project_id, rr.position, rr.created_at
 `
@@ -181,11 +187,15 @@ type ListRoutingRulesForAppRow struct {
 	Milestone           *string    `json:"milestone"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
+	IssueTemplateID     *uuid.UUID `json:"issue_template_id"`
 	Repository          string     `json:"repository"`
+	TitleTemplate       *string    `json:"title_template"`
+	BodyTemplate        *string    `json:"body_template"`
 }
 
 // The rules of every project the app reports into, in the order they are
-// tried, with the repository each one sends to.
+// tried, with the repository each one sends to and its template's content,
+// when it has one.
 func (q *Queries) ListRoutingRulesForApp(ctx context.Context, appID uuid.UUID) ([]ListRoutingRulesForAppRow, error) {
 	rows, err := q.db.Query(ctx, listRoutingRulesForApp, appID)
 	if err != nil {
@@ -208,7 +218,10 @@ func (q *Queries) ListRoutingRulesForApp(ctx context.Context, appID uuid.UUID) (
 			&i.Milestone,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IssueTemplateID,
 			&i.Repository,
+			&i.TitleTemplate,
+			&i.BodyTemplate,
 		); err != nil {
 			return nil, err
 		}
@@ -230,9 +243,10 @@ SET position = $3,
     labels = $8,
     assignees = $9,
     milestone = $10,
+    issue_template_id = $11,
     updated_at = now()
 WHERE id = $1 AND project_id = $2
-RETURNING id, project_id, position, app_id, severity, category, project_repository_id, labels, assignees, milestone, created_at, updated_at
+RETURNING id, project_id, position, app_id, severity, category, project_repository_id, labels, assignees, milestone, created_at, updated_at, issue_template_id
 `
 
 type UpdateRoutingRuleParams struct {
@@ -246,6 +260,7 @@ type UpdateRoutingRuleParams struct {
 	Labels              []string   `json:"labels"`
 	Assignees           []string   `json:"assignees"`
 	Milestone           *string    `json:"milestone"`
+	IssueTemplateID     *uuid.UUID `json:"issue_template_id"`
 }
 
 func (q *Queries) UpdateRoutingRule(ctx context.Context, arg UpdateRoutingRuleParams) (RoutingRule, error) {
@@ -260,6 +275,7 @@ func (q *Queries) UpdateRoutingRule(ctx context.Context, arg UpdateRoutingRulePa
 		arg.Labels,
 		arg.Assignees,
 		arg.Milestone,
+		arg.IssueTemplateID,
 	)
 	var i RoutingRule
 	err := row.Scan(
@@ -275,6 +291,7 @@ func (q *Queries) UpdateRoutingRule(ctx context.Context, arg UpdateRoutingRulePa
 		&i.Milestone,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IssueTemplateID,
 	)
 	return i, err
 }

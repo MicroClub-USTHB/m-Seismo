@@ -13,6 +13,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/infra"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issuetemplate"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/owner"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/project"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider"
@@ -48,6 +49,7 @@ func Options() fx.Option {
 		gitlab.Module,
 		bitbucket.Module,
 		issue.Module,
+		issuetemplate.Module,
 		ratelimit.Module,
 		ingest.Module,
 		report.Module,

@@ -43,8 +43,11 @@ type Rule struct {
 	Labels       []string   `json:"labels"`
 	Assignees    []string   `json:"assignees"`
 	Milestone    *string    `json:"milestone"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	// TemplateID picks one of the project's issue templates; nil means
+	// the default layout.
+	TemplateID *uuid.UUID `json:"template_id"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
 func toRule(r db.RoutingRule) Rule {
@@ -59,6 +62,7 @@ func toRule(r db.RoutingRule) Rule {
 		Labels:       r.Labels,
 		Assignees:    r.Assignees,
 		Milestone:    r.Milestone,
+		TemplateID:   r.IssueTemplateID,
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 	}
@@ -76,6 +80,7 @@ type RuleInput struct {
 	Labels       []string   `json:"labels"`
 	Assignees    []string   `json:"assignees"`
 	Milestone    *string    `json:"milestone"`
+	TemplateID   *uuid.UUID `json:"template_id"`
 }
 
 // Service manages the routing rules of an owner's projects.
@@ -134,6 +139,7 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, in R
 		Labels:              v.labels,
 		Assignees:           v.assignees,
 		Milestone:           v.milestone,
+		IssueTemplateID:     in.TemplateID,
 	})
 	if err != nil {
 		return Rule{}, err
@@ -170,6 +176,7 @@ func (s *Service) Replace(ctx context.Context, ownerID, projectID, ruleID uuid.U
 		Labels:              v.labels,
 		Assignees:           v.assignees,
 		Milestone:           v.milestone,
+		IssueTemplateID:     in.TemplateID,
 	})
 	if err != nil {
 		return Rule{}, notFound(err, "routing rule not found")
@@ -252,6 +259,11 @@ func (s *Service) validate(ctx context.Context, ownerID, projectID uuid.UUID, in
 	if in.AppID != nil {
 		if _, err := s.q.GetApp(ctx, db.GetAppParams{ID: *in.AppID, OwnerID: ownerID}); err != nil {
 			return v, notFound(err, "app not found")
+		}
+	}
+	if in.TemplateID != nil {
+		if _, err := s.q.GetIssueTemplate(ctx, db.GetIssueTemplateParams{ID: *in.TemplateID, ProjectID: projectID}); err != nil {
+			return v, notFound(err, "issue template not found")
 		}
 	}
 	return v, nil

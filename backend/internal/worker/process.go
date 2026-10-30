@@ -151,17 +151,25 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 			slog.WarnContext(ctx, "Sentry details unavailable; retaining crash reference", "report", id)
 		}
 	}
-	base := render(&r, reportInfo{
+	info := reportInfo{
 		CrashEvent:     crashEvent,
 		ID:             row.ReportID,
 		InstallationID: row.InstallationID,
 		ScreenshotURL:  p.screenshotURL(attachments),
 		ServerLogs:     p.serverLogs(ctx, row),
-	})
+	}
+	base := render(&r, info)
 
 	var errs []error
 	for _, t := range todo {
 		draft := base
+		if t.TitleTemplate != nil && t.BodyTemplate != nil {
+			if d, err := renderWithTemplate(*t.TitleTemplate, *t.BodyTemplate, &r, info); err == nil {
+				draft = d
+			} else {
+				slog.WarnContext(ctx, "issue template failed, opening with the default layout", "report", id, "rule", t.RuleID, "err", err)
+			}
+		}
 		draft.Labels, draft.Assignees, draft.Milestone = t.Labels, t.Assignees, t.Milestone
 		res, err := p.issues.OpenInRepository(ctx, row.AppID, t.ProjectRepositoryID, draft)
 		if err != nil {
