@@ -23,9 +23,9 @@ class ButtonRowTest {
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) = setMeasuredDimension(100, 40)
     }
 
-    private fun row(count: Int, width: Int, rtl: Boolean = false): List<View> {
+    private fun row(count: Int, width: Int, rtl: Boolean = false, gap: Int = 0): List<View> {
         val buttons = List(count) { button() }
-        ButtonRow(context).apply {
+        ButtonRow(context, gap).apply {
             layoutDirection = if (rtl) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
             buttons.forEach { addView(it) }
             measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
@@ -35,9 +35,9 @@ class ButtonRowTest {
     }
 
     @Test
-    fun buttonsThatFitStayOnOneLineAtTheEnd() {
+    fun buttonsThatFitStayOnOneLineFromTheStart() {
         val (a, b) = row(count = 2, width = 300)
-        assertEquals(listOf(100, 200), listOf(a.left, b.left)) // pushed right, in order
+        assertEquals(listOf(0, 100), listOf(a.left, b.left))
         assertEquals(listOf(0, 0), listOf(a.top, b.top))
     }
 
@@ -46,12 +46,19 @@ class ButtonRowTest {
         val (a, b, c) = row(count = 3, width = 250)
         assertEquals(listOf(100, 100, 100), listOf(a.width, b.width, c.width)) // full size, never squeezed
         assertEquals(listOf(0, 0, 40), listOf(a.top, b.top, c.top)) // the third goes to the next line
-        assertEquals(150, c.left)
+        assertEquals(0, c.left)
     }
 
     @Test
-    fun rightToLeftLanguagesStartFromTheRightAtTheLeftEnd() {
+    fun theGapSeparatesButtonsAndLines() {
+        val (a, b, c) = row(count = 3, width = 250, gap = 10)
+        assertEquals(listOf(0, 110, 0), listOf(a.left, b.left, c.left))
+        assertEquals(50, c.top)
+    }
+
+    @Test
+    fun rightToLeftLanguagesStartFromTheRight() {
         val (a, b) = row(count = 2, width = 300, rtl = true)
-        assertEquals(listOf(100, 0), listOf(a.left, b.left)) // the end is the left; reading order goes right to left
+        assertEquals(listOf(200, 100), listOf(a.left, b.left)) // reading order goes right to left
     }
 }

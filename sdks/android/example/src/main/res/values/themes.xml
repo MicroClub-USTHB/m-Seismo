@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Picked up by the report screen. -->
+    <style name="ExampleTheme" parent="android:Theme.Material.Light">
+        <item name="android:colorPrimary">#5B3CC4</item>
+        <item name="android:colorPrimaryDark">#3C2899</item>
+        <item name="android:colorAccent">#5B3CC4</item>
+    </style>
+</resources>

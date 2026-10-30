@@ -97,6 +97,25 @@ public object MSeismo {
         safely { breadcrumbs.add(Breadcrumb(System.currentTimeMillis(), kind, message.limit(MaxChars.BREADCRUMB))) }
     }
 
+    // For Compose screens. Repeats are ignored, so it can run on every recomposition. Never throws.
+    @JvmStatic
+    public fun screen(name: String) {
+        safely {
+            synchronized(screenLock) {
+                if (name == lastScreen) return@safely
+                lastScreen = name
+            }
+            breadcrumb(BreadcrumbKind.NAVIGATION, name)
+        }
+    }
+
+    private val screenLock = Any()
+    private var lastScreen: String? = null
+
+    @JvmStatic
+    @Volatile
+    public var accentColor: Int? = null
+
     // Call it from your HTTP client, e.g. an OkHttp interceptor. Bodies are dropped unless captureNetworkBodies. Never throws.
     @JvmStatic
     @JvmOverloads
@@ -169,7 +188,10 @@ public object MSeismo {
                 try {
                     drafts.clear()
                     drafts[draft.id] = draft.copy(screenshot = screenshot)
-                    activity.startActivity(Intent(activity, ReportActivity::class.java).putExtra(ReportActivity.DRAFT_ID, draft.id))
+                    val intent = Intent(activity, ReportActivity::class.java)
+                        .putExtra(ReportActivity.DRAFT_ID, draft.id)
+                        .putExtra(ReportActivity.APP_COLORS, Accent.candidates(activity))
+                    activity.startActivity(intent)
                 } catch (t: Throwable) {
                     drafts.remove(draft.id) // frees the screenshot
                     Log.e(TAG, "could not open the report screen", t)

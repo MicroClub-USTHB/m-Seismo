@@ -85,26 +85,19 @@ class ReportScreenTest {
         return Robolectric.buildActivity(ReportActivity::class.java, intent).setup().also { opened += it }
     }
 
-    private fun Activity.tap(text: String) {
-        val view = find(window.decorView) { it is TextView && it.text.toString() == text }
-        assertNotNull("no \"$text\" on screen", view)
+    // By its text, or by what TalkBack reads for an icon.
+    private fun Activity.view(label: String) =
+        find(window.decorView) { (it is TextView && it.text.toString() == label) || it.contentDescription == label }
+
+    private fun Activity.tap(label: String) {
+        val view = view(label)
+        assertNotNull("no \"$label\" on screen", view)
         view!!.performClick()
         shadowOf(Looper.getMainLooper()).idle()
     }
 
     private fun Activity.type(hint: String, text: String) {
         (find(window.decorView) { it is EditText && it.hint == hint } as EditText).setText(text)
-    }
-
-    // The form's second dropdown is severity.
-    private fun Activity.choose(severity: Int) {
-        val dropdowns = mutableListOf<android.widget.Spinner>()
-        fun collect(v: View) {
-            if (v is android.widget.Spinner) dropdowns += v
-            if (v is ViewGroup) for (i in 0 until v.childCount) collect(v.getChildAt(i))
-        }
-        collect(window.decorView)
-        dropdowns[1].setSelection(severity)
     }
 
     private fun find(view: View, match: (View) -> Boolean): View? {
@@ -122,10 +115,10 @@ class ReportScreenTest {
         val report = reportScreen(screen.get())!!.get()
         assertEquals("nothing is sent before Send", 0, sends)
 
-        report.tap("Continue") // keeps the screenshot
+        report.tap("Next") // keeps the screenshot
         report.type("Title", "Pay button does nothing")
-        report.choose(severity = 3) // "Not set", Low, Medium, High
-        report.tap("Send")
+        report.tap("High")
+        report.tap("Send report")
 
         assertTrue(sent.await(5, TimeUnit.SECONDS))
         assertEquals("shake", sentJson.getString("trigger"))
@@ -143,11 +136,12 @@ class ReportScreenTest {
         val report = reportScreen(screen.get())!!.get()
 
         report.tap("Skip screenshot")
-        report.tap("Send")
+        report.tap("Send report")
 
         assertTrue(sent.await(5, TimeUnit.SECONDS))
         assertEquals("manual", sentJson.getString("trigger"))
-        assertTrue("severity left at Not set", !sentJson.getJSONObject("user_input").has("severity"))
+        assertTrue("no severity chosen", !sentJson.getJSONObject("user_input").has("severity"))
+        assertEquals("bug", sentJson.getJSONObject("user_input").getString("category"))
         assertNull(sentScreenshot)
     }
 
@@ -173,7 +167,7 @@ class ReportScreenTest {
         MSeismo.showReportScreen(screen.get())
         val report = reportScreen(screen.get())!!.get()
 
-        report.tap("Continue")
+        report.tap("Next")
         report.tap("Back")
 
         report.tap("Undo") // only on the drawing screen
@@ -188,7 +182,7 @@ class ReportScreenTest {
         MSeismo.showReportScreen(screen.get())
         val report = reportScreen(screen.get())!!.get()
 
-        report.tap("Send") // straight to the form: there is no screenshot to draw on
+        report.tap("Send report") // straight to the form: there is no screenshot to draw on
 
         assertTrue(sent.await(5, TimeUnit.SECONDS))
         assertNull(sentScreenshot)
@@ -201,7 +195,7 @@ class ReportScreenTest {
         MSeismo.showReportScreen(screen.get())
         val report = reportScreen(screen.get())!!.get()
 
-        report.tap("Continue")
+        report.tap("Next")
         @Suppress("DEPRECATION") report.onBackPressed()
 
         report.tap("Undo") // only on the drawing screen
@@ -256,22 +250,25 @@ class ReportScreenTest {
         MSeismo.showReportScreen(screen.get())
         val report = reportScreen(screen.get())!!.get()
 
-        for (label in listOf("Pen", "Black out", "Undo", "Cancel", "Skip screenshot", "Continue")) report.assertFullyVisible(label)
-        report.tap("Continue")
-        for (label in listOf("Back", "Send")) report.assertFullyVisible(label)
+        for (label in listOf("Pen", "Black out", "Undo", "Cancel", "Skip screenshot", "Next")) report.assertFullyVisible(label)
+        report.tap("Next")
+        for (label in listOf("Back", "Bug", "Other", "Low", "Critical", "Send report")) report.assertFullyVisible(label)
     }
 
-    // On screen, at least 48 dp wide (Android's minimum touch size), and its whole text shown.
-    private fun Activity.assertFullyVisible(text: String) {
-        val view = find(window.decorView) { it is TextView && it.text.toString() == text } as TextView
+    // On screen, 48 dp or more each way, whole text shown.
+    private fun Activity.assertFullyVisible(label: String) {
+        val view = view(label)!!
         val left = IntArray(2).also { view.getLocationInWindow(it) }[0]
-        val shown = view.transformationMethod?.getTransformation(view.text, view) ?: view.text
-        val textWidth = view.paint.measureText(shown.toString())
-        val room = view.width - view.totalPaddingLeft - view.totalPaddingRight
-        val where = "x=$left w=${view.width}, screen ${window.decorView.width}"
-        assertTrue("\"$text\" is off screen: $where", left >= 0 && left + view.width <= window.decorView.width)
-        assertTrue("\"$text\" is too small to tap: $where", view.width >= 48 * resources.displayMetrics.density)
-        assertTrue("\"$text\" is cut off: needs $textWidth, has $room", textWidth <= room + 1)
+        val where = "x=$left w=${view.width} h=${view.height}, screen ${window.decorView.width}"
+        val minimum = 48 * resources.displayMetrics.density
+        assertTrue("\"$label\" is off screen: $where", left >= 0 && left + view.width <= window.decorView.width)
+        assertTrue("\"$label\" is too small to tap: $where", view.width >= minimum && view.height >= minimum)
+        if (view is TextView && view.text.isNotEmpty()) {
+            val shown = view.transformationMethod?.getTransformation(view.text, view) ?: view.text
+            val textWidth = view.paint.measureText(shown.toString())
+            val room = view.width - view.totalPaddingLeft - view.totalPaddingRight
+            assertTrue("\"$label\" is cut off: needs $textWidth, has $room", textWidth <= room + 1)
+        }
     }
 
     @Test
@@ -297,9 +294,9 @@ class ReportScreenTest {
         MSeismo.showReportScreen(screen.get())
         val report = reportScreen(screen.get())!!.get()
 
-        for (label in listOf("Pen", "Black out", "Undo", "Cancel", "Skip screenshot", "Continue")) report.assertFullyVisible(label)
-        report.tap("Continue")
-        for (label in listOf("Back", "Send")) report.assertFullyVisible(label)
+        for (label in listOf("Pen", "Black out", "Undo", "Cancel", "Skip screenshot", "Next")) report.assertFullyVisible(label)
+        report.tap("Next")
+        for (label in listOf("Back", "Bug", "Other", "Low", "Critical", "Send report")) report.assertFullyVisible(label)
     }
 
     @Test
@@ -326,13 +323,11 @@ class ReportScreenTest {
         val report = reportScreen(screen.get())!!.get()
 
         report.tap("Black out")
-        report.tap("Continue")
+        report.tap("Next")
         report.tap("Back")
 
-        val blackOut = find(report.window.decorView) { it is TextView && it.text.toString() == "Black out" }!!
-        val pen = find(report.window.decorView) { it is TextView && it.text.toString() == "Pen" }!!
-        assertEquals("the button shown selected is the tool that draws", 1f, blackOut.alpha)
-        assertEquals(0.5f, pen.alpha)
+        assertTrue("the button shown selected is the tool that draws", report.view("Black out")!!.isSelected)
+        assertTrue(!report.view("Pen")!!.isSelected)
     }
 
     // Many phones switch to dark mode on a schedule: that must not wipe what the user typed.
@@ -357,23 +352,92 @@ class ReportScreenTest {
     }
 
     @Test
-    fun talkBackKnowsTheSelectedToolAndWhatEachDropdownIs() {
+    fun talkBackKnowsTheSelectedToolAndWhatEachChoiceIsFor() {
         MSeismo.configure(app, valid)
         val screen = appScreen()
         MSeismo.showReportScreen(screen.get())
         val report = reportScreen(screen.get())!!.get()
 
         report.tap("Black out")
-        val blackOut = find(report.window.decorView) { it is TextView && it.text.toString() == "Black out" }!!
-        val pen = find(report.window.decorView) { it is TextView && it.text.toString() == "Pen" }!!
-        assertTrue(blackOut.isSelected)
-        assertTrue(!pen.isSelected)
+        assertTrue(report.view("Black out")!!.isSelected)
+        assertTrue(!report.view("Pen")!!.isSelected)
 
-        report.tap("Continue")
-        for (label in listOf("Category", "Severity")) {
-            val text = find(report.window.decorView) { it is TextView && it.text.toString() == label } as TextView
-            val dropdown = report.window.decorView.findViewById<View>(text.labelFor)
-            assertTrue("$label labels its dropdown", dropdown is android.widget.Spinner)
+        report.tap("Next")
+        report.tap("High")
+        val bug = report.view("Bug") as android.widget.RadioButton
+        val high = report.view("High") as android.widget.RadioButton
+        assertEquals("Category: Bug", bug.contentDescription)
+        assertEquals("Severity (optional): High", high.contentDescription)
+        assertTrue("radio buttons, so TalkBack says checked", bug.isChecked && high.isChecked)
+    }
+
+    @Test
+    fun goingBackToTheDrawingKeepsWhatWasTypedAndChosen() {
+        MSeismo.configure(app, valid)
+        val screen = appScreen()
+        MSeismo.showReportScreen(screen.get())
+        val report = reportScreen(screen.get())!!.get()
+        report.tap("Next")
+        report.type("Title", "Pay button does nothing")
+        report.tap("Crash")
+        report.tap("High")
+
+        report.tap("Edit")
+        report.tap("Next")
+        report.tap("Send report")
+
+        assertTrue(sent.await(5, TimeUnit.SECONDS))
+        val input = sentJson.getJSONObject("user_input")
+        assertEquals("Pay button does nothing", input.getString("title"))
+        assertEquals("crash", input.getString("category"))
+        assertEquals("high", input.getString("severity"))
+    }
+
+    @Test
+    fun aSeverityCanBeUnselected() {
+        MSeismo.configure(app, valid)
+        val screen = appScreen()
+        MSeismo.showReportScreen(screen.get())
+        val report = reportScreen(screen.get())!!.get()
+        report.tap("Skip screenshot")
+
+        report.tap("High")
+        report.tap("High")
+        report.tap("Send report")
+
+        assertTrue(sent.await(5, TimeUnit.SECONDS))
+        assertTrue(!sentJson.getJSONObject("user_input").has("severity"))
+    }
+
+    // Android's light theme: pale grey colorPrimary (skipped), teal colorAccent.
+    @Test
+    fun usesTheAppsColorWhenItStandsOut() {
+        MSeismo.configure(app, valid)
+        val screen = Robolectric.buildActivity(Activity::class.java).apply { get().setTheme(android.R.style.Theme_Material_Light) }.setup()
+        MSeismo.showReportScreen(screen.get())
+        val report = reportScreen(screen.get())!!.get()
+
+        assertEquals(screen.get().themeColor(android.R.attr.colorAccent), report.accent)
+    }
+
+    // Like an app with different light and dark colors.
+    @Test
+    fun theColorSetByTheAppWinsAndCanChange() {
+        val (magenta, blue) = 0xFF920662.toInt() to 0xFF5294FF.toInt()
+        MSeismo.configure(app, valid)
+        val screen = appScreen()
+        try {
+            MSeismo.accentColor = magenta
+            MSeismo.showReportScreen(screen.get())
+            val first = reportScreen(screen.get())!!.get()
+            assertEquals(magenta, first.accent)
+            first.finish()
+
+            MSeismo.accentColor = blue
+            MSeismo.showReportScreen(screen.get())
+            assertEquals(blue, reportScreen(screen.get())!!.get().accent)
+        } finally {
+            MSeismo.accentColor = null
         }
     }
 }

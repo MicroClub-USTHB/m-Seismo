@@ -5,7 +5,7 @@
     <application
         android:name=".ExampleApp"
         android:label="m-Seismo Example"
-        android:theme="@android:style/Theme.Material.Light"
+        android:theme="@style/ExampleTheme"
         android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"

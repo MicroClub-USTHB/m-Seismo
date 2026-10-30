@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.ComponentCallbacks2
 import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -282,5 +283,23 @@ class MSeismoTest {
         assertEquals(id, json.getString("id"))
         assertTrue(json.getBoolean("auto_submitted"))
         assertEquals("bad coupon", json.getJSONObject("crash").getString("reason"))
+    }
+
+    @Test
+    fun composeScreensAreRecordedOnceEachTime() {
+        val sent = CountDownLatch(1)
+        var crumbs = JSONArray()
+        MSeismo.send = { _, _, reportJson, _ ->
+            JSONObject(reportJson).takeIf { it.getString("trigger") == "manual" }?.let { crumbs = it.getJSONArray("breadcrumbs"); sent.countDown() }
+            SendResult.Accepted
+        }
+        MSeismo.configure(app, valid)
+
+        listOf("Calls", "Calls", "Calls", "Local logs", "Calls").forEach(MSeismo::screen) // recompositions repeat it
+
+        MSeismo.report()
+        assertTrue(sent.await(5, TimeUnit.SECONDS))
+        val screens = (0 until crumbs.length()).map { crumbs.getJSONObject(it).getString("message") }.filter { it == "Calls" || it == "Local logs" }
+        assertEquals(listOf("Calls", "Local logs", "Calls"), screens)
     }
 }

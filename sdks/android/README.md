@@ -46,14 +46,36 @@ Shake, screenshot, or a call to `MSeismo.showReportScreen(activity)` (for a
 "Report a bug" button) opens the report screen. It first captures the screen
 the user was on, so they can circle the problem with the pen or hide private
 parts with the black-out marker, then shows a short form: title, description,
-category and severity. Send uploads the report with the drawn-on screenshot;
-"Skip screenshot" sends it without one. `MSeismo.report(...)` still sends a
-report straight away, without the screen.
+category and severity. "Send report" uploads it with the drawn-on
+screenshot; "Skip screenshot" sends it without one. `MSeismo.report(...)`
+still sends a report straight away, without the screen.
+
+The screen takes your app's brand color on its own: the `colorPrimary` of the
+theme of the screen the user was on. It follows the phone's light or dark mode.
+To choose the color yourself, set `MSeismo.accentColor` (0xAARRGGBB), as often
+as your colors change.
 
 Screens your app marks with `FLAG_SECURE` are never captured. To translate the
 screen, override the `mseismo_*` strings in your own `values-xx/strings.xml`
 and keep the same number of items in `mseismo_categories` and
 `mseismo_severities`.
+
+### Jetpack Compose
+
+Compose keeps its colors in code and its screens inside one activity, so tell
+m-Seismo about both. In Kotlin Multiplatform, do it from `androidMain`.
+
+```kotlin
+// Inside your theme: the report screen follows your light, dark and theme changes.
+val primary = MaterialTheme.colorScheme.primary
+SideEffect { MSeismo.accentColor = primary.toArgb() }
+
+// Where your navigation changes screen: recorded as a breadcrumb.
+LaunchedEffect(currentRoute) { MSeismo.screen(currentRoute) }
+```
+
+`MSeismo.screen` records the same screen only once in a row, so calling it
+again on a recomposition or rotation is fine.
 
 ### Crashes
 

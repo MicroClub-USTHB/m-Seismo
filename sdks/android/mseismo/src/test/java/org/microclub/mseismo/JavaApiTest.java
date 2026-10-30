@@ -28,6 +28,9 @@ public class JavaApiTest {
         MSeismo.report("title");
         MSeismo.report("title", "description", Category.BUG, Severity.HIGH);
         MSeismo.recordError(new IllegalStateException("from Java"));
+        MSeismo.screen("Checkout");
+        MSeismo.setAccentColor(0xFF5B3CC4);
+        MSeismo.setAccentColor(null);
         MSeismo.showReportScreen(Robolectric.buildActivity(Activity.class).setup().get());
         MSeismo.getSessionId();
         MSeismo.getSDK_VERSION();
