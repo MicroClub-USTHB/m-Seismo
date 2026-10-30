@@ -4,6 +4,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/app"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/attachment"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/auth"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/coordinator"
@@ -40,6 +41,7 @@ func Options() fx.Option {
 		owner.Module,
 		project.Module,
 		app.Module,
+		attachment.Module,
 		secrets.Module,
 		provider.Module,
 		github.Module,

@@ -31,7 +31,9 @@ const (
 type reportInfo struct {
 	ID             uuid.UUID
 	InstallationID uuid.UUID
-	Screenshot     bool
+	// ScreenshotURL is the private, expiring link to the report's
+	// screenshot, empty when it sent none.
+	ScreenshotURL string
 	// ServerLogs is the coordinator's answer, nil when there is none.
 	ServerLogs *seismov1.AggregateResult
 	CrashEvent *crashprovider.Event
@@ -160,8 +162,8 @@ func render(r *ingest.Report, info reportInfo) issue.Draft {
 
 	renderServerLogs(&b, info.ServerLogs)
 
-	if info.Screenshot {
-		b.WriteString("_A screenshot was sent with this report and is kept in m-Seismo._\n\n")
+	if info.ScreenshotURL != "" {
+		fmt.Fprintf(&b, "[Screenshot](%s) _(link expires; only people with access to this issue should open it)_\n\n", info.ScreenshotURL)
 	}
 
 	b.WriteString("---\n")

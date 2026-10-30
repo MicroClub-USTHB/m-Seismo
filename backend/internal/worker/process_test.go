@@ -20,6 +20,17 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
 )
 
+// screenshotAttachmentID is the fixed id ListReportAttachments answers
+// with, so tests can assert on the link fakeLinker built from it.
+var screenshotAttachmentID = uuid.MustParse("00000000-0000-0000-0000-00000000a77a")
+
+// fakeLinker returns a fixed, recognizable URL for any attachment id.
+type fakeLinker struct{}
+
+func (fakeLinker) SignedURL(id uuid.UUID) string {
+	return "https://seismo.example.com/attachments/" + id.String()
+}
+
 type fakeQueries struct {
 	report     *db.Report
 	router     *fakeRouter
@@ -36,8 +47,8 @@ func (f *fakeQueries) GetReport(_ context.Context, id uuid.UUID) (db.Report, err
 	return *f.report, nil
 }
 
-func (f *fakeQueries) ListReportAttachmentNames(context.Context, uuid.UUID) ([]string, error) {
-	return []string{"screenshot"}, nil
+func (f *fakeQueries) ListReportAttachments(context.Context, uuid.UUID) ([]db.ListReportAttachmentsRow, error) {
+	return []db.ListReportAttachmentsRow{{ID: screenshotAttachmentID, Name: ingest.ScreenshotName}}, nil
 }
 
 func (f *fakeQueries) ListReportDeliveryProjects(context.Context, uuid.UUID) ([]uuid.UUID, error) {
@@ -108,7 +119,7 @@ func newFixture(t *testing.T, projects int) (*fakeQueries, *fakeIssues, *Process
 		q.projectOf[route.ProjectRepositoryID] = route.ProjectID
 	}
 	is := &fakeIssues{fail: map[uuid.UUID]error{}}
-	return q, is, NewProcessor(q, is, router, nil, time.Minute, nil)
+	return q, is, NewProcessor(q, is, router, nil, time.Minute, nil, fakeLinker{})
 }
 
 func TestProcessOpensOneIssuePerProject(t *testing.T) {
@@ -191,7 +202,7 @@ func TestProcessAddsServerLogs(t *testing.T) {
 	q, is, _ := newFixture(t, 1)
 	q.report.OccurredAt = time.Date(2026, 10, 21, 14, 0, 0, 0, time.UTC)
 	logs := &fakeLogs{}
-	p := NewProcessor(q, is, q.router, logs, 2*time.Minute, nil)
+	p := NewProcessor(q, is, q.router, logs, 2*time.Minute, nil, fakeLinker{})
 
 	if err := p.Process(context.Background(), q.report.ID); err != nil {
 		t.Fatal(err)
@@ -215,7 +226,7 @@ func TestProcessAddsServerLogs(t *testing.T) {
 func TestProcessWithoutServerLogs(t *testing.T) {
 	for _, err := range []error{coordinator.ErrNotAttached, errors.New("NATS is down")} {
 		q, is, _ := newFixture(t, 1)
-		p := NewProcessor(q, is, q.router, &fakeLogs{err: err}, time.Minute, nil)
+		p := NewProcessor(q, is, q.router, &fakeLogs{err: err}, time.Minute, nil, fakeLinker{})
 		if err := p.Process(context.Background(), q.report.ID); err != nil {
 			t.Fatalf("logs failing with %v failed the report: %v", err, err)
 		}

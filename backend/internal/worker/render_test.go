@@ -46,7 +46,7 @@ func TestRenderBody(t *testing.T) {
 		},
 	}
 	id, inst := uuid.New(), uuid.New()
-	body := render(&r, reportInfo{ID: id, InstallationID: inst, Screenshot: true}).Body
+	body := render(&r, reportInfo{ID: id, InstallationID: inst, ScreenshotURL: "https://seismo.example.com/api/v1/attachments/1?expires=1&sig=abc"}).Body
 
 	for _, want := range []string{
 		"ping @\u200boctocat",
@@ -56,7 +56,7 @@ func TestRenderBody(t *testing.T) {
 		"| Release | 2.3.1 (87) |",
 		"````\n2026-10-21T10:00:00.000Z ERROR payment failed ``` here\n````",
 		"POST https://api.example.com/pay → no response",
-		"screenshot was sent",
+		"[Screenshot](https://seismo.example.com/api/v1/attachments/1?expires=1&sig=abc)",
 		id.String(),
 		inst.String(),
 	} {

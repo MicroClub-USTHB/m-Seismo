@@ -115,6 +115,25 @@ func (q *Queries) GetReport(ctx context.Context, id uuid.UUID) (Report, error) {
 	return i, err
 }
 
+const getReportAttachment = `-- name: GetReportAttachment :one
+SELECT report_id, name, content_type, data, created_at, id FROM report_attachments
+WHERE id = $1
+`
+
+func (q *Queries) GetReportAttachment(ctx context.Context, id uuid.UUID) (ReportAttachment, error) {
+	row := q.db.QueryRow(ctx, getReportAttachment, id)
+	var i ReportAttachment
+	err := row.Scan(
+		&i.ReportID,
+		&i.Name,
+		&i.ContentType,
+		&i.Data,
+		&i.CreatedAt,
+		&i.ID,
+	)
+	return i, err
+}
+
 const getReportByReportID = `-- name: GetReportByReportID :one
 SELECT id, app_id, report_id, installation_id, session_id, trigger, occurred_at, received_at, queued_at, payload, processed_at FROM reports
 WHERE app_id = $1 AND report_id = $2
@@ -211,25 +230,30 @@ func (q *Queries) InsertReportAttachment(ctx context.Context, arg InsertReportAt
 	return err
 }
 
-const listReportAttachmentNames = `-- name: ListReportAttachmentNames :many
-SELECT name FROM report_attachments
+const listReportAttachments = `-- name: ListReportAttachments :many
+SELECT id, name FROM report_attachments
 WHERE report_id = $1
 ORDER BY name
 `
 
-func (q *Queries) ListReportAttachmentNames(ctx context.Context, reportID uuid.UUID) ([]string, error) {
-	rows, err := q.db.Query(ctx, listReportAttachmentNames, reportID)
+type ListReportAttachmentsRow struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+func (q *Queries) ListReportAttachments(ctx context.Context, reportID uuid.UUID) ([]ListReportAttachmentsRow, error) {
+	rows, err := q.db.Query(ctx, listReportAttachments, reportID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	var items []ListReportAttachmentsRow
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+		var i ListReportAttachmentsRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
 			return nil, err
 		}
-		items = append(items, name)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

@@ -36,10 +36,14 @@ INSERT INTO report_deliveries (report_id, project_repository_id, issue_id, url)
 VALUES ($1, $2, $3, $4)
 ON CONFLICT (report_id, project_repository_id) DO NOTHING;
 
--- name: ListReportAttachmentNames :many
-SELECT name FROM report_attachments
+-- name: ListReportAttachments :many
+SELECT id, name FROM report_attachments
 WHERE report_id = $1
 ORDER BY name;
+
+-- name: GetReportAttachment :one
+SELECT * FROM report_attachments
+WHERE id = $1;
 
 -- name: ListReportDeliveryProjects :many
 -- The projects that already got the report's issue, whichever of their

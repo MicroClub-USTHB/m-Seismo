@@ -52,6 +52,7 @@ type Querier interface {
 	GetProject(ctx context.Context, arg GetProjectParams) (Project, error)
 	GetProjectRepository(ctx context.Context, arg GetProjectRepositoryParams) (ProjectRepository, error)
 	GetReport(ctx context.Context, id uuid.UUID) (Report, error)
+	GetReportAttachment(ctx context.Context, id uuid.UUID) (ReportAttachment, error)
 	GetReportByReportID(ctx context.Context, arg GetReportByReportIDParams) (Report, error)
 	GetRoutingRule(ctx context.Context, arg GetRoutingRuleParams) (RoutingRule, error)
 	// Returns no row when the app already sent a report with this report_id.
@@ -74,7 +75,7 @@ type Querier interface {
 	ListProjectApps(ctx context.Context, projectID uuid.UUID) ([]App, error)
 	ListProjectRepositories(ctx context.Context, projectID uuid.UUID) ([]ProjectRepository, error)
 	ListProjects(ctx context.Context, ownerID uuid.UUID) ([]Project, error)
-	ListReportAttachmentNames(ctx context.Context, reportID uuid.UUID) ([]string, error)
+	ListReportAttachments(ctx context.Context, reportID uuid.UUID) ([]ListReportAttachmentsRow, error)
 	ListReportDeliveries(ctx context.Context, reportID uuid.UUID) ([]ReportDelivery, error)
 	// The projects that already got the report's issue, whichever of their
 	// repositories it went to.

@@ -30,7 +30,7 @@ type Issues interface {
 // Queries is the part of db.Querier the processor uses.
 type Queries interface {
 	GetReport(ctx context.Context, id uuid.UUID) (db.Report, error)
-	ListReportAttachmentNames(ctx context.Context, reportID uuid.UUID) ([]string, error)
+	ListReportAttachments(ctx context.Context, reportID uuid.UUID) ([]db.ListReportAttachmentsRow, error)
 	ListReportDeliveryProjects(ctx context.Context, reportID uuid.UUID) ([]uuid.UUID, error)
 	CreateReportDelivery(ctx context.Context, arg db.CreateReportDeliveryParams) error
 	MarkReportProcessed(ctx context.Context, id uuid.UUID) error
@@ -61,6 +61,12 @@ type CrashResolver interface {
 	ForReport(context.Context, uuid.UUID, *ingest.Report) (*crashprovider.Event, error)
 }
 
+// AttachmentLinker builds the private, expiring link an issue uses to show
+// an attachment (FR-48). Implemented by *attachment.Service.
+type AttachmentLinker interface {
+	SignedURL(id uuid.UUID) string
+}
+
 // Processor turns one stored report into issues.
 type Processor struct {
 	q      Queries
@@ -70,10 +76,11 @@ type Processor struct {
 	logs    ServerLogs
 	window  time.Duration
 	crashes CrashResolver
+	links   AttachmentLinker
 }
 
-func NewProcessor(q Queries, issues Issues, router Router, logs ServerLogs, window time.Duration, crashes CrashResolver) *Processor {
-	return &Processor{q: q, issues: issues, router: router, logs: logs, window: window, crashes: crashes}
+func NewProcessor(q Queries, issues Issues, router Router, logs ServerLogs, window time.Duration, crashes CrashResolver, links AttachmentLinker) *Processor {
+	return &Processor{q: q, issues: issues, router: router, logs: logs, window: window, crashes: crashes, links: links}
 }
 
 // Process opens the report's issue in every project its app is linked to,
@@ -130,7 +137,7 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 		return p.markProcessed(ctx, id)
 	}
 
-	names, err := p.q.ListReportAttachmentNames(ctx, id)
+	attachments, err := p.q.ListReportAttachments(ctx, id)
 	if err != nil {
 		return fmt.Errorf("list attachments of report %s: %w", id, err)
 	}
@@ -148,7 +155,7 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 		CrashEvent:     crashEvent,
 		ID:             row.ReportID,
 		InstallationID: row.InstallationID,
-		Screenshot:     slices.Contains(names, ingest.ScreenshotName),
+		ScreenshotURL:  p.screenshotURL(attachments),
 		ServerLogs:     p.serverLogs(ctx, row),
 	})
 
@@ -199,6 +206,17 @@ func (p *Processor) markProcessed(ctx context.Context, id uuid.UUID) error {
 		return fmt.Errorf("mark report %s processed: %w", id, err)
 	}
 	return nil
+}
+
+// screenshotURL returns the private, expiring link to the report's
+// screenshot, or "" when it sent none.
+func (p *Processor) screenshotURL(attachments []db.ListReportAttachmentsRow) string {
+	for _, a := range attachments {
+		if a.Name == ingest.ScreenshotName {
+			return p.links.SignedURL(a.ID)
+		}
+	}
+	return ""
 }
 
 // serverLogs asks the app's coordinator for the server logs around the
