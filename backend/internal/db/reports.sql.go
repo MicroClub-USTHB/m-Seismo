@@ -35,6 +35,44 @@ func (q *Queries) CreateReportDelivery(ctx context.Context, arg CreateReportDeli
 	return err
 }
 
+const deleteReportByReportID = `-- name: DeleteReportByReportID :execrows
+DELETE FROM reports
+WHERE app_id = $1 AND report_id = $2
+`
+
+type DeleteReportByReportIDParams struct {
+	AppID    uuid.UUID `json:"app_id"`
+	ReportID uuid.UUID `json:"report_id"`
+}
+
+// Attachments cascade; report_deliveries and the issues they point to are
+// left as they are.
+func (q *Queries) DeleteReportByReportID(ctx context.Context, arg DeleteReportByReportIDParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteReportByReportID, arg.AppID, arg.ReportID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteReportsByInstallation = `-- name: DeleteReportsByInstallation :execrows
+DELETE FROM reports
+WHERE app_id = $1 AND installation_id = $2
+`
+
+type DeleteReportsByInstallationParams struct {
+	AppID          uuid.UUID `json:"app_id"`
+	InstallationID uuid.UUID `json:"installation_id"`
+}
+
+func (q *Queries) DeleteReportsByInstallation(ctx context.Context, arg DeleteReportsByInstallationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteReportsByInstallation, arg.AppID, arg.InstallationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getReport = `-- name: GetReport :one
 SELECT id, app_id, report_id, installation_id, session_id, trigger, occurred_at, received_at, queued_at, payload, processed_at FROM reports
 WHERE id = $1
