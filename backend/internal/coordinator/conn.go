@@ -56,20 +56,20 @@ func newConn(appID uuid.UUID, coordinatorID string, stream sender) *conn {
 	}
 }
 
-// query sends q on the stream and waits for the event that answers it.
-func (c *conn) query(ctx context.Context, q *seismov1.QueryLogs) (*seismov1.CoordinatorEvent, error) {
+// query sends req on the stream and waits for the event answering queryID.
+func (c *conn) query(ctx context.Context, queryID string, req *seismov1.BackendRequest) (*seismov1.CoordinatorEvent, error) {
 	ch := make(chan *seismov1.CoordinatorEvent, 1)
 	c.mu.Lock()
-	c.pending[q.GetQueryId()] = ch
+	c.pending[queryID] = ch
 	c.mu.Unlock()
 	defer func() {
 		c.mu.Lock()
-		delete(c.pending, q.GetQueryId())
+		delete(c.pending, queryID)
 		c.mu.Unlock()
 	}()
 
 	c.sendMu.Lock()
-	err := c.stream.Send(&seismov1.BackendRequest{Request: &seismov1.BackendRequest_QueryLogs{QueryLogs: q}})
+	err := c.stream.Send(req)
 	c.sendMu.Unlock()
 	if err != nil {
 		return nil, err
@@ -94,6 +94,10 @@ func (c *conn) deliver(ev *seismov1.CoordinatorEvent) {
 		queryID = e.Result.GetQueryId()
 	case *seismov1.CoordinatorEvent_Error:
 		queryID = e.Error.GetQueryId()
+	case *seismov1.CoordinatorEvent_Metrics:
+		queryID = e.Metrics.GetQueryId()
+	case *seismov1.CoordinatorEvent_Status:
+		queryID = e.Status.GetQueryId()
 	default:
 		slog.Warn("coordinator: unexpected event after Hello", "app", c.appID, "coordinator", c.coordinatorID)
 		return

@@ -142,6 +142,7 @@ type CoordinatorEvent struct {
 	//	*CoordinatorEvent_Result
 	//	*CoordinatorEvent_Error
 	//	*CoordinatorEvent_Metrics
+	//	*CoordinatorEvent_Status
 	Event         isCoordinatorEvent_Event `protobuf_oneof:"event"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -220,6 +221,15 @@ func (x *CoordinatorEvent) GetMetrics() *AggregateMetrics {
 	return nil
 }
 
+func (x *CoordinatorEvent) GetStatus() *AggregateStatus {
+	if x != nil {
+		if x, ok := x.Event.(*CoordinatorEvent_Status); ok {
+			return x.Status
+		}
+	}
+	return nil
+}
+
 type isCoordinatorEvent_Event interface {
 	isCoordinatorEvent_Event()
 }
@@ -241,6 +251,11 @@ type CoordinatorEvent_Metrics struct {
 	Metrics *AggregateMetrics `protobuf:"bytes,4,opt,name=metrics,proto3,oneof"`
 }
 
+type CoordinatorEvent_Status struct {
+	// Added after v1.
+	Status *AggregateStatus `protobuf:"bytes,5,opt,name=status,proto3,oneof"`
+}
+
 func (*CoordinatorEvent_Hello) isCoordinatorEvent_Event() {}
 
 func (*CoordinatorEvent_Result) isCoordinatorEvent_Event() {}
@@ -249,6 +264,8 @@ func (*CoordinatorEvent_Error) isCoordinatorEvent_Event() {}
 
 func (*CoordinatorEvent_Metrics) isCoordinatorEvent_Event() {}
 
+func (*CoordinatorEvent_Status) isCoordinatorEvent_Event() {}
+
 // Backend -> coordinator.
 type BackendRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -256,6 +273,7 @@ type BackendRequest struct {
 	//
 	//	*BackendRequest_QueryLogs
 	//	*BackendRequest_QueryMetrics
+	//	*BackendRequest_QueryStatus
 	Request       isBackendRequest_Request `protobuf_oneof:"request"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -316,6 +334,15 @@ func (x *BackendRequest) GetQueryMetrics() *MetricsQuery {
 	return nil
 }
 
+func (x *BackendRequest) GetQueryStatus() *StatusQuery {
+	if x != nil {
+		if x, ok := x.Request.(*BackendRequest_QueryStatus); ok {
+			return x.QueryStatus
+		}
+	}
+	return nil
+}
+
 type isBackendRequest_Request interface {
 	isBackendRequest_Request()
 }
@@ -329,9 +356,16 @@ type BackendRequest_QueryMetrics struct {
 	QueryMetrics *MetricsQuery `protobuf:"bytes,2,opt,name=query_metrics,json=queryMetrics,proto3,oneof"`
 }
 
+type BackendRequest_QueryStatus struct {
+	// Added after v1.
+	QueryStatus *StatusQuery `protobuf:"bytes,3,opt,name=query_status,json=queryStatus,proto3,oneof"`
+}
+
 func (*BackendRequest_QueryLogs) isBackendRequest_Request() {}
 
 func (*BackendRequest_QueryMetrics) isBackendRequest_Request() {}
+
+func (*BackendRequest_QueryStatus) isBackendRequest_Request() {}
 
 // Must be the first event. Same rejection scheme as agent Register:
 // FAILED_PRECONDITION for an unsupported version, UNAUTHENTICATED for a
@@ -893,21 +927,162 @@ func (x *AggregateMetrics) GetAgents() []*AgentMetrics {
 	return nil
 }
 
+// One agent's answer to a StatusQuery. Same status rules as AgentSection,
+// except status never produces TRUNCATED.
+type AgentStatusReport struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Source        AgentSource            `protobuf:"varint,2,opt,name=source,proto3,enum=seismo.v1.AgentSource" json:"source,omitempty"`
+	Status        AgentStatus            `protobuf:"varint,3,opt,name=status,proto3,enum=seismo.v1.AgentStatus" json:"status,omitempty"`
+	Services      []*ServiceStatus       `protobuf:"bytes,4,rep,name=services,proto3" json:"services,omitempty"`
+	Detail        string                 `protobuf:"bytes,5,opt,name=detail,proto3" json:"detail,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AgentStatusReport) Reset() {
+	*x = AgentStatusReport{}
+	mi := &file_seismo_v1_coordinator_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AgentStatusReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AgentStatusReport) ProtoMessage() {}
+
+func (x *AgentStatusReport) ProtoReflect() protoreflect.Message {
+	mi := &file_seismo_v1_coordinator_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AgentStatusReport.ProtoReflect.Descriptor instead.
+func (*AgentStatusReport) Descriptor() ([]byte, []int) {
+	return file_seismo_v1_coordinator_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *AgentStatusReport) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *AgentStatusReport) GetSource() AgentSource {
+	if x != nil {
+		return x.Source
+	}
+	return AgentSource_AGENT_SOURCE_UNSPECIFIED
+}
+
+func (x *AgentStatusReport) GetStatus() AgentStatus {
+	if x != nil {
+		return x.Status
+	}
+	return AgentStatus_AGENT_STATUS_UNSPECIFIED
+}
+
+func (x *AgentStatusReport) GetServices() []*ServiceStatus {
+	if x != nil {
+		return x.Services
+	}
+	return nil
+}
+
+func (x *AgentStatusReport) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
+// Answer to a StatusQuery. Coordinator faults still come as AggregateError.
+type AggregateStatus struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SchemaVersion uint32                 `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
+	QueryId       string                 `protobuf:"bytes,2,opt,name=query_id,json=queryId,proto3" json:"query_id,omitempty"`
+	Agents        []*AgentStatusReport   `protobuf:"bytes,3,rep,name=agents,proto3" json:"agents,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AggregateStatus) Reset() {
+	*x = AggregateStatus{}
+	mi := &file_seismo_v1_coordinator_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AggregateStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AggregateStatus) ProtoMessage() {}
+
+func (x *AggregateStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_seismo_v1_coordinator_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AggregateStatus.ProtoReflect.Descriptor instead.
+func (*AggregateStatus) Descriptor() ([]byte, []int) {
+	return file_seismo_v1_coordinator_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *AggregateStatus) GetSchemaVersion() uint32 {
+	if x != nil {
+		return x.SchemaVersion
+	}
+	return 0
+}
+
+func (x *AggregateStatus) GetQueryId() string {
+	if x != nil {
+		return x.QueryId
+	}
+	return ""
+}
+
+func (x *AggregateStatus) GetAgents() []*AgentStatusReport {
+	if x != nil {
+		return x.Agents
+	}
+	return nil
+}
+
 var File_seismo_v1_coordinator_proto protoreflect.FileDescriptor
 
 const file_seismo_v1_coordinator_proto_rawDesc = "" +
 	"\n" +
-	"\x1bseismo/v1/coordinator.proto\x12\tseismo.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x16seismo/v1/common.proto\"\xe7\x01\n" +
+	"\x1bseismo/v1/coordinator.proto\x12\tseismo.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x16seismo/v1/common.proto\"\x9d\x02\n" +
 	"\x10CoordinatorEvent\x12(\n" +
 	"\x05hello\x18\x01 \x01(\v2\x10.seismo.v1.HelloH\x00R\x05hello\x124\n" +
 	"\x06result\x18\x02 \x01(\v2\x1a.seismo.v1.AggregateResultH\x00R\x06result\x121\n" +
 	"\x05error\x18\x03 \x01(\v2\x19.seismo.v1.AggregateErrorH\x00R\x05error\x127\n" +
-	"\ametrics\x18\x04 \x01(\v2\x1b.seismo.v1.AggregateMetricsH\x00R\ametricsB\a\n" +
-	"\x05event\"\x92\x01\n" +
+	"\ametrics\x18\x04 \x01(\v2\x1b.seismo.v1.AggregateMetricsH\x00R\ametrics\x124\n" +
+	"\x06status\x18\x05 \x01(\v2\x1a.seismo.v1.AggregateStatusH\x00R\x06statusB\a\n" +
+	"\x05event\"\xcf\x01\n" +
 	"\x0eBackendRequest\x125\n" +
 	"\n" +
 	"query_logs\x18\x01 \x01(\v2\x14.seismo.v1.QueryLogsH\x00R\tqueryLogs\x12>\n" +
-	"\rquery_metrics\x18\x02 \x01(\v2\x17.seismo.v1.MetricsQueryH\x00R\fqueryMetricsB\t\n" +
+	"\rquery_metrics\x18\x02 \x01(\v2\x17.seismo.v1.MetricsQueryH\x00R\fqueryMetrics\x12;\n" +
+	"\fquery_status\x18\x03 \x01(\v2\x16.seismo.v1.StatusQueryH\x00R\vqueryStatusB\t\n" +
 	"\arequest\"Y\n" +
 	"\x05Hello\x12)\n" +
 	"\x10protocol_version\x18\x01 \x01(\rR\x0fprotocolVersion\x12%\n" +
@@ -952,7 +1127,17 @@ const file_seismo_v1_coordinator_proto_rawDesc = "" +
 	"\x0eschema_version\x18\x01 \x01(\rR\rschemaVersion\x12\x19\n" +
 	"\bquery_id\x18\x02 \x01(\tR\aqueryId\x12@\n" +
 	"\x10requested_window\x18\x03 \x01(\v2\x15.seismo.v1.TimeWindowR\x0frequestedWindow\x12/\n" +
-	"\x06agents\x18\x04 \x03(\v2\x17.seismo.v1.AgentMetricsR\x06agents*\xad\x01\n" +
+	"\x06agents\x18\x04 \x03(\v2\x17.seismo.v1.AgentMetricsR\x06agents\"\xdc\x01\n" +
+	"\x11AgentStatusReport\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12.\n" +
+	"\x06source\x18\x02 \x01(\x0e2\x16.seismo.v1.AgentSourceR\x06source\x12.\n" +
+	"\x06status\x18\x03 \x01(\x0e2\x16.seismo.v1.AgentStatusR\x06status\x124\n" +
+	"\bservices\x18\x04 \x03(\v2\x18.seismo.v1.ServiceStatusR\bservices\x12\x16\n" +
+	"\x06detail\x18\x05 \x01(\tR\x06detail\"\x89\x01\n" +
+	"\x0fAggregateStatus\x12%\n" +
+	"\x0eschema_version\x18\x01 \x01(\rR\rschemaVersion\x12\x19\n" +
+	"\bquery_id\x18\x02 \x01(\tR\aqueryId\x124\n" +
+	"\x06agents\x18\x03 \x03(\v2\x1c.seismo.v1.AgentStatusReportR\x06agents*\xad\x01\n" +
 	"\vAgentStatus\x12\x1c\n" +
 	"\x18AGENT_STATUS_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fAGENT_STATUS_OK\x10\x01\x12\x18\n" +
@@ -979,7 +1164,7 @@ func file_seismo_v1_coordinator_proto_rawDescGZIP() []byte {
 }
 
 var file_seismo_v1_coordinator_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_seismo_v1_coordinator_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_seismo_v1_coordinator_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_seismo_v1_coordinator_proto_goTypes = []any{
 	(AgentStatus)(0),              // 0: seismo.v1.AgentStatus
 	(WarningCode)(0),              // 1: seismo.v1.WarningCode
@@ -993,45 +1178,55 @@ var file_seismo_v1_coordinator_proto_goTypes = []any{
 	(*AggregateError)(nil),        // 9: seismo.v1.AggregateError
 	(*AgentMetrics)(nil),          // 10: seismo.v1.AgentMetrics
 	(*AggregateMetrics)(nil),      // 11: seismo.v1.AggregateMetrics
-	(*MetricsQuery)(nil),          // 12: seismo.v1.MetricsQuery
-	(*TimeWindow)(nil),            // 13: seismo.v1.TimeWindow
-	(*timestamppb.Timestamp)(nil), // 14: google.protobuf.Timestamp
-	(*QueryLimits)(nil),           // 15: seismo.v1.QueryLimits
-	(AgentSource)(0),              // 16: seismo.v1.AgentSource
-	(*QueryResult)(nil),           // 17: seismo.v1.QueryResult
-	(*SourceError)(nil),           // 18: seismo.v1.SourceError
-	(*ServiceMetrics)(nil),        // 19: seismo.v1.ServiceMetrics
+	(*AgentStatusReport)(nil),     // 12: seismo.v1.AgentStatusReport
+	(*AggregateStatus)(nil),       // 13: seismo.v1.AggregateStatus
+	(*MetricsQuery)(nil),          // 14: seismo.v1.MetricsQuery
+	(*StatusQuery)(nil),           // 15: seismo.v1.StatusQuery
+	(*TimeWindow)(nil),            // 16: seismo.v1.TimeWindow
+	(*timestamppb.Timestamp)(nil), // 17: google.protobuf.Timestamp
+	(*QueryLimits)(nil),           // 18: seismo.v1.QueryLimits
+	(AgentSource)(0),              // 19: seismo.v1.AgentSource
+	(*QueryResult)(nil),           // 20: seismo.v1.QueryResult
+	(*SourceError)(nil),           // 21: seismo.v1.SourceError
+	(*ServiceMetrics)(nil),        // 22: seismo.v1.ServiceMetrics
+	(*ServiceStatus)(nil),         // 23: seismo.v1.ServiceStatus
 }
 var file_seismo_v1_coordinator_proto_depIdxs = []int32{
 	4,  // 0: seismo.v1.CoordinatorEvent.hello:type_name -> seismo.v1.Hello
 	8,  // 1: seismo.v1.CoordinatorEvent.result:type_name -> seismo.v1.AggregateResult
 	9,  // 2: seismo.v1.CoordinatorEvent.error:type_name -> seismo.v1.AggregateError
 	11, // 3: seismo.v1.CoordinatorEvent.metrics:type_name -> seismo.v1.AggregateMetrics
-	5,  // 4: seismo.v1.BackendRequest.query_logs:type_name -> seismo.v1.QueryLogs
-	12, // 5: seismo.v1.BackendRequest.query_metrics:type_name -> seismo.v1.MetricsQuery
-	13, // 6: seismo.v1.QueryLogs.window:type_name -> seismo.v1.TimeWindow
-	14, // 7: seismo.v1.QueryLogs.deadline:type_name -> google.protobuf.Timestamp
-	15, // 8: seismo.v1.QueryLogs.limits:type_name -> seismo.v1.QueryLimits
-	16, // 9: seismo.v1.AgentSection.source:type_name -> seismo.v1.AgentSource
-	0,  // 10: seismo.v1.AgentSection.status:type_name -> seismo.v1.AgentStatus
-	17, // 11: seismo.v1.AgentSection.result:type_name -> seismo.v1.QueryResult
-	1,  // 12: seismo.v1.Warning.code:type_name -> seismo.v1.WarningCode
-	13, // 13: seismo.v1.AggregateResult.requested_window:type_name -> seismo.v1.TimeWindow
-	6,  // 14: seismo.v1.AggregateResult.agents:type_name -> seismo.v1.AgentSection
-	7,  // 15: seismo.v1.AggregateResult.warnings:type_name -> seismo.v1.Warning
-	18, // 16: seismo.v1.AggregateError.error:type_name -> seismo.v1.SourceError
-	16, // 17: seismo.v1.AgentMetrics.source:type_name -> seismo.v1.AgentSource
-	0,  // 18: seismo.v1.AgentMetrics.status:type_name -> seismo.v1.AgentStatus
-	19, // 19: seismo.v1.AgentMetrics.services:type_name -> seismo.v1.ServiceMetrics
-	13, // 20: seismo.v1.AggregateMetrics.requested_window:type_name -> seismo.v1.TimeWindow
-	10, // 21: seismo.v1.AggregateMetrics.agents:type_name -> seismo.v1.AgentMetrics
-	2,  // 22: seismo.v1.Coordinator.Attach:input_type -> seismo.v1.CoordinatorEvent
-	3,  // 23: seismo.v1.Coordinator.Attach:output_type -> seismo.v1.BackendRequest
-	23, // [23:24] is the sub-list for method output_type
-	22, // [22:23] is the sub-list for method input_type
-	22, // [22:22] is the sub-list for extension type_name
-	22, // [22:22] is the sub-list for extension extendee
-	0,  // [0:22] is the sub-list for field type_name
+	13, // 4: seismo.v1.CoordinatorEvent.status:type_name -> seismo.v1.AggregateStatus
+	5,  // 5: seismo.v1.BackendRequest.query_logs:type_name -> seismo.v1.QueryLogs
+	14, // 6: seismo.v1.BackendRequest.query_metrics:type_name -> seismo.v1.MetricsQuery
+	15, // 7: seismo.v1.BackendRequest.query_status:type_name -> seismo.v1.StatusQuery
+	16, // 8: seismo.v1.QueryLogs.window:type_name -> seismo.v1.TimeWindow
+	17, // 9: seismo.v1.QueryLogs.deadline:type_name -> google.protobuf.Timestamp
+	18, // 10: seismo.v1.QueryLogs.limits:type_name -> seismo.v1.QueryLimits
+	19, // 11: seismo.v1.AgentSection.source:type_name -> seismo.v1.AgentSource
+	0,  // 12: seismo.v1.AgentSection.status:type_name -> seismo.v1.AgentStatus
+	20, // 13: seismo.v1.AgentSection.result:type_name -> seismo.v1.QueryResult
+	1,  // 14: seismo.v1.Warning.code:type_name -> seismo.v1.WarningCode
+	16, // 15: seismo.v1.AggregateResult.requested_window:type_name -> seismo.v1.TimeWindow
+	6,  // 16: seismo.v1.AggregateResult.agents:type_name -> seismo.v1.AgentSection
+	7,  // 17: seismo.v1.AggregateResult.warnings:type_name -> seismo.v1.Warning
+	21, // 18: seismo.v1.AggregateError.error:type_name -> seismo.v1.SourceError
+	19, // 19: seismo.v1.AgentMetrics.source:type_name -> seismo.v1.AgentSource
+	0,  // 20: seismo.v1.AgentMetrics.status:type_name -> seismo.v1.AgentStatus
+	22, // 21: seismo.v1.AgentMetrics.services:type_name -> seismo.v1.ServiceMetrics
+	16, // 22: seismo.v1.AggregateMetrics.requested_window:type_name -> seismo.v1.TimeWindow
+	10, // 23: seismo.v1.AggregateMetrics.agents:type_name -> seismo.v1.AgentMetrics
+	19, // 24: seismo.v1.AgentStatusReport.source:type_name -> seismo.v1.AgentSource
+	0,  // 25: seismo.v1.AgentStatusReport.status:type_name -> seismo.v1.AgentStatus
+	23, // 26: seismo.v1.AgentStatusReport.services:type_name -> seismo.v1.ServiceStatus
+	12, // 27: seismo.v1.AggregateStatus.agents:type_name -> seismo.v1.AgentStatusReport
+	2,  // 28: seismo.v1.Coordinator.Attach:input_type -> seismo.v1.CoordinatorEvent
+	3,  // 29: seismo.v1.Coordinator.Attach:output_type -> seismo.v1.BackendRequest
+	29, // [29:30] is the sub-list for method output_type
+	28, // [28:29] is the sub-list for method input_type
+	28, // [28:28] is the sub-list for extension type_name
+	28, // [28:28] is the sub-list for extension extendee
+	0,  // [0:28] is the sub-list for field type_name
 }
 
 func init() { file_seismo_v1_coordinator_proto_init() }
@@ -1045,10 +1240,12 @@ func file_seismo_v1_coordinator_proto_init() {
 		(*CoordinatorEvent_Result)(nil),
 		(*CoordinatorEvent_Error)(nil),
 		(*CoordinatorEvent_Metrics)(nil),
+		(*CoordinatorEvent_Status)(nil),
 	}
 	file_seismo_v1_coordinator_proto_msgTypes[1].OneofWrappers = []any{
 		(*BackendRequest_QueryLogs)(nil),
 		(*BackendRequest_QueryMetrics)(nil),
+		(*BackendRequest_QueryStatus)(nil),
 	}
 	file_seismo_v1_coordinator_proto_msgTypes[3].OneofWrappers = []any{}
 	file_seismo_v1_coordinator_proto_msgTypes[4].OneofWrappers = []any{}
@@ -1059,7 +1256,7 @@ func file_seismo_v1_coordinator_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_seismo_v1_coordinator_proto_rawDesc), len(file_seismo_v1_coordinator_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   10,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

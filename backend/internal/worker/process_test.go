@@ -119,7 +119,7 @@ func newFixture(t *testing.T, projects int) (*fakeQueries, *fakeIssues, *Process
 		q.projectOf[route.ProjectRepositoryID] = route.ProjectID
 	}
 	is := &fakeIssues{fail: map[uuid.UUID]error{}}
-	return q, is, NewProcessor(q, is, router, nil, time.Minute, nil, fakeLinker{})
+	return q, is, NewProcessor(q, is, router, nil, time.Minute, nil, fakeLinker{}, nil)
 }
 
 func TestProcessOpensOneIssuePerProject(t *testing.T) {
@@ -231,11 +231,44 @@ func (f *fakeLogs) QueryLogs(_ context.Context, _ uuid.UUID, from, to time.Time)
 	return &seismov1.AggregateResult{Agents: []*seismov1.AgentSection{{AgentId: "prod-1"}}}, nil
 }
 
+// fakeHealth answers every service-health query the same way.
+type fakeHealth struct {
+	metrics *seismov1.AggregateMetrics
+	status  *seismov1.AggregateStatus
+}
+
+func (f *fakeHealth) QueryMetrics(context.Context, uuid.UUID, time.Time, time.Time) (*seismov1.AggregateMetrics, error) {
+	return f.metrics, nil
+}
+
+func (f *fakeHealth) QueryStatus(context.Context, uuid.UUID) (*seismov1.AggregateStatus, error) {
+	return f.status, nil
+}
+
+func TestProcessAddsServiceHealth(t *testing.T) {
+	q, is, _ := newFixture(t, 1)
+	health := &fakeHealth{
+		metrics: &seismov1.AggregateMetrics{Agents: []*seismov1.AgentMetrics{{
+			AgentId:  "agent-1",
+			Services: []*seismov1.ServiceMetrics{{Service: "api", Lines: 10, ErrorLines: 1}},
+		}}},
+	}
+	p := NewProcessor(q, is, q.router, nil, time.Minute, nil, fakeLinker{}, health)
+
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	body := is.drafts[0].Body
+	if !strings.Contains(body, "### Service health") || !strings.Contains(body, "1/10 (10.0%)") {
+		t.Errorf("body missing service health: %q", body)
+	}
+}
+
 func TestProcessAddsServerLogs(t *testing.T) {
 	q, is, _ := newFixture(t, 1)
 	q.report.OccurredAt = time.Date(2026, 10, 21, 14, 0, 0, 0, time.UTC)
 	logs := &fakeLogs{}
-	p := NewProcessor(q, is, q.router, logs, 2*time.Minute, nil, fakeLinker{})
+	p := NewProcessor(q, is, q.router, logs, 2*time.Minute, nil, fakeLinker{}, nil)
 
 	if err := p.Process(context.Background(), q.report.ID); err != nil {
 		t.Fatal(err)
@@ -259,7 +292,7 @@ func TestProcessAddsServerLogs(t *testing.T) {
 func TestProcessWithoutServerLogs(t *testing.T) {
 	for _, err := range []error{coordinator.ErrNotAttached, errors.New("NATS is down")} {
 		q, is, _ := newFixture(t, 1)
-		p := NewProcessor(q, is, q.router, &fakeLogs{err: err}, time.Minute, nil, fakeLinker{})
+		p := NewProcessor(q, is, q.router, &fakeLogs{err: err}, time.Minute, nil, fakeLinker{}, nil)
 		if err := p.Process(context.Background(), q.report.ID); err != nil {
 			t.Fatalf("logs failing with %v failed the report: %v", err, err)
 		}

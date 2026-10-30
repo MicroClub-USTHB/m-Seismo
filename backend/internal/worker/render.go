@@ -37,6 +37,10 @@ type reportInfo struct {
 	ScreenshotURL string
 	// ServerLogs is the coordinator's answer, nil when there is none.
 	ServerLogs *seismov1.AggregateResult
+	// Health is the service health snapshot (error rate, restarts,
+	// configured CPU and memory, deployed version), empty when there is
+	// none.
+	Health     []healthRow
 	CrashEvent *crashprovider.Event
 }
 
@@ -202,6 +206,7 @@ func logsSection(r *ingest.Report) string {
 func footer(info reportInfo) string {
 	var b strings.Builder
 	renderServerLogs(&b, info.ServerLogs)
+	renderHealth(&b, info.Health)
 	if info.ScreenshotURL != "" {
 		fmt.Fprintf(&b, "[Screenshot](%s) _(link expires; only people with access to this issue should open it)_\n\n", info.ScreenshotURL)
 	}

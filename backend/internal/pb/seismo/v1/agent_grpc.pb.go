@@ -72,7 +72,7 @@ type AgentServer interface {
 type UnimplementedAgentServer struct{}
 
 func (UnimplementedAgentServer) Connect(grpc.BidiStreamingServer[AgentMessage, CoordinatorMessage]) error {
-	return status.Errorf(codes.Unimplemented, "method Connect not implemented")
+	return status.Error(codes.Unimplemented, "method Connect not implemented")
 }
 func (UnimplementedAgentServer) mustEmbedUnimplementedAgentServer() {}
 func (UnimplementedAgentServer) testEmbeddedByValue()               {}
@@ -85,7 +85,7 @@ type UnsafeAgentServer interface {
 }
 
 func RegisterAgentServer(s grpc.ServiceRegistrar, srv AgentServer) {
-	// If the following call pancis, it indicates UnimplementedAgentServer was
+	// If the following call panics, it indicates UnimplementedAgentServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.

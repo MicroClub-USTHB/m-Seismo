@@ -20,8 +20,9 @@ var Module = fx.Module("worker",
 		func(s *issue.Service) Issues { return s },
 		func(s *crashprovider.Service) CrashResolver { return s },
 		func(s *attachment.Service) AttachmentLinker { return s },
-		func(q Queries, is Issues, r *routing.Router, c *coordinator.Client, cr CrashResolver, cfg *config.Config, links AttachmentLinker) *Processor {
-			return NewProcessor(q, is, r, c, cfg.Coordinator.Window, cr, links)
+		func(c *coordinator.Client) ServiceHealth { return c },
+		func(q Queries, is Issues, r *routing.Router, c *coordinator.Client, cr CrashResolver, cfg *config.Config, links AttachmentLinker, health ServiceHealth) *Processor {
+			return NewProcessor(q, is, r, c, cfg.Coordinator.Window, cr, links, health)
 		},
 	),
 	fx.Invoke(register),

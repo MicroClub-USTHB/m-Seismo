@@ -81,7 +81,7 @@ type CoordinatorServer interface {
 type UnimplementedCoordinatorServer struct{}
 
 func (UnimplementedCoordinatorServer) Attach(grpc.BidiStreamingServer[CoordinatorEvent, BackendRequest]) error {
-	return status.Errorf(codes.Unimplemented, "method Attach not implemented")
+	return status.Error(codes.Unimplemented, "method Attach not implemented")
 }
 func (UnimplementedCoordinatorServer) mustEmbedUnimplementedCoordinatorServer() {}
 func (UnimplementedCoordinatorServer) testEmbeddedByValue()                     {}
@@ -94,7 +94,7 @@ type UnsafeCoordinatorServer interface {
 }
 
 func RegisterCoordinatorServer(s grpc.ServiceRegistrar, srv CoordinatorServer) {
-	// If the following call pancis, it indicates UnimplementedCoordinatorServer was
+	// If the following call panics, it indicates UnimplementedCoordinatorServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
