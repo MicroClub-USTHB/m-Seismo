@@ -78,6 +78,18 @@ public struct Report: Codable, Equatable {
     /// backend requires them when `trigger` is `crash` or `non_fatal`.
     public var crash: CrashReport?
 
+    /// Feature flags active when the report was made (FR-16). Filled from
+    /// `MSeismo.featureFlags` unless the report sets its own.
+    public var featureFlags: [String: FlagValue]?
+
+    /// Experiment name to the variant the user is in (FR-16).
+    public var experiments: [String: String]?
+
+    /// Crashlytics' own installation ID, which lets the backend find the
+    /// matching Crashlytics crash (the m-Seismo installation ID is not
+    /// known to Crashlytics). `nil` when the app doesn't use Crashlytics.
+    public var crashlyticsInstallationID: String?
+
     public init(
         title: String = "",
         description: String = "",
@@ -92,7 +104,10 @@ public struct Report: Codable, Equatable {
         id: String? = nil,
         occurredAt: Date? = nil,
         trigger: Trigger? = nil,
-        crash: CrashReport? = nil
+        crash: CrashReport? = nil,
+        featureFlags: [String: FlagValue]? = nil,
+        experiments: [String: String]? = nil,
+        crashlyticsInstallationID: String? = nil
     ) {
         self.title = title
         self.description = description
@@ -108,5 +123,8 @@ public struct Report: Codable, Equatable {
         self.occurredAt = occurredAt
         self.trigger = trigger
         self.crash = crash
+        self.featureFlags = featureFlags
+        self.experiments = experiments
+        self.crashlyticsInstallationID = crashlyticsInstallationID
     }
 }

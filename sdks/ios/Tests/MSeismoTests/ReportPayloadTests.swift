@@ -177,4 +177,68 @@ final class ReportPayloadTests: XCTestCase {
         XCTAssertEqual(try json(Report())["trigger"] as? String, "manual")
         XCTAssertEqual(try json(Report())["auto_submitted"] as? Bool, false)
     }
+
+    func testFeatureFlagsKeepTheirTypes() throws {
+        let report = Report(featureFlags: ["new_checkout": true, "max_items": 20, "theme": "dark"])
+
+        let flags = try XCTUnwrap(try json(report)["feature_flags"] as? [String: Any])
+
+        XCTAssertEqual(flags["new_checkout"] as? Bool, true)
+        XCTAssertEqual(flags["max_items"] as? Int, 20)
+        XCTAssertEqual(flags["theme"] as? String, "dark")
+    }
+
+    func testExperimentsAreSentAsNameToVariant() throws {
+        let report = Report(experiments: ["pay_button_color": "green"])
+
+        let experiments = try XCTUnwrap(try json(report)["experiments"] as? [String: String])
+
+        XCTAssertEqual(experiments, ["pay_button_color": "green"])
+    }
+
+    func testNoFlagsOrExperimentsLeavesTheFieldsOut() throws {
+        let object = try json(Report(featureFlags: [:], experiments: [:]))
+
+        XCTAssertNil(object["feature_flags"])
+        XCTAssertNil(object["experiments"])
+        XCTAssertNil(object["crashlytics"])
+    }
+
+    func testFlagsAndExperimentsAreCappedAtTheSchemaLimits() throws {
+        var flags: [String: FlagValue] = [:]
+        var experiments: [String: String] = [:]
+        for index in 0..<300 {
+            flags[String(format: "flag_%03d", index)] = true
+            experiments[String(format: "exp_%03d", index)] = String(repeating: "v", count: 200)
+        }
+
+        let object = try json(Report(featureFlags: flags, experiments: experiments))
+        let sentFlags = try XCTUnwrap(object["feature_flags"] as? [String: Any])
+        let sentExperiments = try XCTUnwrap(object["experiments"] as? [String: String])
+
+        XCTAssertEqual(sentFlags.count, 200)
+        XCTAssertEqual(sentExperiments.count, 100)
+        XCTAssertEqual(sentExperiments.values.first?.count, 128)
+        // The cut is by name, so it is the same on every retry.
+        XCTAssertNotNil(sentFlags["flag_000"])
+        XCTAssertNil(sentFlags["flag_299"])
+    }
+
+    func testNumbersTheJSONCannotHoldAreLeftOut() throws {
+        let report = Report(featureFlags: ["ok": 1.5, "bad": .number(.nan), "inf": .number(.infinity)])
+
+        let flags = try XCTUnwrap(try json(report)["feature_flags"] as? [String: Any])
+
+        XCTAssertEqual(Array(flags.keys), ["ok"])
+    }
+
+    func testCrashlyticsInstallationIDIsSentWhenPresent() throws {
+        let crashlytics = try XCTUnwrap(try json(Report(crashlyticsInstallationID: "fid-123"))["crashlytics"] as? [String: Any])
+
+        XCTAssertEqual(crashlytics["installation_id"] as? String, "fid-123")
+    }
+
+    func testEmptyCrashlyticsInstallationIDIsLeftOut() throws {
+        XCTAssertNil(try json(Report(crashlyticsInstallationID: ""))["crashlytics"])
+    }
 }
