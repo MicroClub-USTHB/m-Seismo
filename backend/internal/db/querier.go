@@ -24,6 +24,10 @@ type Querier interface {
 	DeleteAppConnection(ctx context.Context, arg DeleteAppConnectionParams) (int64, error)
 	DeleteAppCrashProvider(ctx context.Context, appID uuid.UUID) error
 	DeleteAppTrackerCredentials(ctx context.Context, arg DeleteAppTrackerCredentialsParams) (int64, error)
+	// Deletes reports older than their app's retention period, falling back to
+	// the operator's default (sqlc.arg(default_days)) for apps that don't set
+	// their own.
+	DeleteExpiredReports(ctx context.Context, defaultDays int32) (int64, error)
 	DeleteOwner(ctx context.Context, id uuid.UUID) (int64, error)
 	DeleteProject(ctx context.Context, arg DeleteProjectParams) (int64, error)
 	// Attachments cascade; report_deliveries and the issues they point to are

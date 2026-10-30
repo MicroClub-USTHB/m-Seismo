@@ -68,6 +68,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("worker.concurrency", 4)
 	v.SetDefault("worker.max_attempts", 10)
 
+	v.SetDefault("retention.default_days", 90)
+
 	v.SetDefault("coordinator.enabled", false)
 	v.SetDefault("coordinator.addr", ":9443")
 	v.SetDefault("coordinator.tls_cert_file", "")

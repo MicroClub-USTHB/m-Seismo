@@ -58,3 +58,12 @@ WHERE app_id = $1 AND report_id = $2;
 -- name: DeleteReportsByInstallation :execrows
 DELETE FROM reports
 WHERE app_id = $1 AND installation_id = $2;
+
+-- name: DeleteExpiredReports :execrows
+-- Deletes reports older than their app's retention period, falling back to
+-- the operator's default (sqlc.arg(default_days)) for apps that don't set
+-- their own.
+DELETE FROM reports
+USING apps
+WHERE reports.app_id = apps.id
+  AND reports.occurred_at < now() - make_interval(days => COALESCE(apps.retention_days, sqlc.arg(default_days)::int));

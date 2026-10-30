@@ -141,13 +141,14 @@ func (ns NullTracker) Value() (driver.Value, error) {
 }
 
 type App struct {
-	ID        uuid.UUID   `json:"id"`
-	OwnerID   uuid.UUID   `json:"owner_id"`
-	Name      string      `json:"name"`
-	Platform  AppPlatform `json:"platform"`
-	BundleID  string      `json:"bundle_id"`
-	CreatedAt time.Time   `json:"created_at"`
-	UpdatedAt time.Time   `json:"updated_at"`
+	ID            uuid.UUID   `json:"id"`
+	OwnerID       uuid.UUID   `json:"owner_id"`
+	Name          string      `json:"name"`
+	Platform      AppPlatform `json:"platform"`
+	BundleID      string      `json:"bundle_id"`
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
+	RetentionDays *int32      `json:"retention_days"`
 }
 
 type AppCrashProvider struct {

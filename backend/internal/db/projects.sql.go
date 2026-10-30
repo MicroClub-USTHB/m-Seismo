@@ -80,7 +80,7 @@ func (q *Queries) GetProject(ctx context.Context, arg GetProjectParams) (Project
 }
 
 const listProjectApps = `-- name: ListProjectApps :many
-SELECT a.id, a.owner_id, a.name, a.platform, a.bundle_id, a.created_at, a.updated_at FROM apps a
+SELECT a.id, a.owner_id, a.name, a.platform, a.bundle_id, a.created_at, a.updated_at, a.retention_days FROM apps a
 JOIN app_projects ap ON ap.app_id = a.id
 WHERE ap.project_id = $1
 ORDER BY ap.created_at
@@ -103,6 +103,7 @@ func (q *Queries) ListProjectApps(ctx context.Context, projectID uuid.UUID) ([]A
 			&i.BundleID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RetentionDays,
 		); err != nil {
 			return nil, err
 		}
