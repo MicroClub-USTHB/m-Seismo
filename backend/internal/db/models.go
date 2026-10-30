@@ -275,6 +275,7 @@ type ReportAttachment struct {
 	ContentType string    `json:"content_type"`
 	Data        []byte    `json:"data"`
 	CreatedAt   time.Time `json:"created_at"`
+	ID          uuid.UUID `json:"id"`
 }
 
 type ReportDelivery struct {

@@ -113,6 +113,9 @@ func Load(configPath string) (*Config, error) {
 			Concurrency: v.GetInt("worker.concurrency"),
 			MaxAttempts: v.GetInt("worker.max_attempts"),
 		},
+		Attachments: AttachmentsConfig{
+			LinkTTL: v.GetDuration("attachments.link_ttl"),
+		},
 		Retention: RetentionConfig{
 			DefaultDays: v.GetInt("retention.default_days"),
 		},
@@ -188,6 +191,9 @@ func (c *Config) validate() error {
 	}
 	if c.Retention.DefaultDays < 1 || c.Retention.DefaultDays > math.MaxInt32 {
 		return fmt.Errorf("retention.default_days must be between 1 and %d", math.MaxInt32)
+	}
+	if c.Attachments.LinkTTL <= 0 {
+		return fmt.Errorf("attachments.link_ttl must be positive")
 	}
 	if err := c.Coordinator.validate(c.Env); err != nil {
 		return err

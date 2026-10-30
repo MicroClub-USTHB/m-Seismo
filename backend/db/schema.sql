@@ -267,7 +267,8 @@ CREATE TABLE public.report_attachments (
     name text NOT NULL,
     content_type text NOT NULL,
     data bytea NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL
 );
 
 
@@ -485,6 +486,14 @@ ALTER TABLE ONLY public.provider_connections
 
 ALTER TABLE ONLY public.provider_connections
     ADD CONSTRAINT provider_connections_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: report_attachments report_attachments_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_attachments
+    ADD CONSTRAINT report_attachments_id_key UNIQUE (id);
 
 
 --
@@ -856,4 +865,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261023090000'),
     ('20261026090000'),
     ('20261029090000'),
-    ('20261030160000');
+    ('20261030160000'),
+    ('20261030170000');
