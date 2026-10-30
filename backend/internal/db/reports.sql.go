@@ -35,6 +35,24 @@ func (q *Queries) CreateReportDelivery(ctx context.Context, arg CreateReportDeli
 	return err
 }
 
+const deleteExpiredReports = `-- name: DeleteExpiredReports :execrows
+DELETE FROM reports
+USING apps
+WHERE reports.app_id = apps.id
+  AND reports.occurred_at < now() - make_interval(days => COALESCE(apps.retention_days, $1::int))
+`
+
+// Deletes reports older than their app's retention period, falling back to
+// the operator's default (sqlc.arg(default_days)) for apps that don't set
+// their own.
+func (q *Queries) DeleteExpiredReports(ctx context.Context, defaultDays int32) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredReports, defaultDays)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteReportByReportID = `-- name: DeleteReportByReportID :execrows
 DELETE FROM reports
 WHERE app_id = $1 AND report_id = $2

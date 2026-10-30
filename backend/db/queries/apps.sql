@@ -17,6 +17,7 @@ UPDATE apps
 SET name = $3,
     platform = $4,
     bundle_id = $5,
+    retention_days = $6,
     updated_at = now()
 WHERE id = $1 AND owner_id = $2
 RETURNING *;

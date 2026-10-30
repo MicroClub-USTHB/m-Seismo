@@ -1,7 +1,6 @@
-\restrict dbmate
 
--- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
--- Dumped by pg_dump version 18.6
+-- Dumped from database version 17.11
+-- Dumped by pg_dump version 18.1 (Homebrew)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -147,7 +146,9 @@ CREATE TABLE public.apps (
     platform public.app_platform NOT NULL,
     bundle_id text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    retention_days integer,
+    CONSTRAINT apps_retention_days_check CHECK (((retention_days IS NULL) OR (retention_days > 0)))
 );
 
 
@@ -834,7 +835,6 @@ ALTER TABLE ONLY public.routing_rules
 -- PostgreSQL database dump complete
 --
 
-\unrestrict dbmate
 
 
 --
@@ -855,4 +855,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022210000'),
     ('20261023090000'),
     ('20261026090000'),
-    ('20261029090000');
+    ('20261029090000'),
+    ('20261030160000');

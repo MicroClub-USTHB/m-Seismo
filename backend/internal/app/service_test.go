@@ -44,6 +44,17 @@ func (f *fakeQuerier) GetActiveAppKeyByHash(_ context.Context, arg db.GetActiveA
 	return db.AppKey{}, pgx.ErrNoRows
 }
 
+func (f *fakeQuerier) UpdateApp(_ context.Context, arg db.UpdateAppParams) (db.App, error) {
+	if arg.ID != f.app.ID || arg.OwnerID != f.app.OwnerID {
+		return db.App{}, pgx.ErrNoRows
+	}
+	f.app.Name = arg.Name
+	f.app.Platform = arg.Platform
+	f.app.BundleID = arg.BundleID
+	f.app.RetentionDays = arg.RetentionDays
+	return f.app, nil
+}
+
 func TestKeyLifecycle(t *testing.T) {
 	owner := uuid.New()
 	q := &fakeQuerier{app: db.App{ID: uuid.New(), OwnerID: owner}}
@@ -115,6 +126,27 @@ func TestCreateValidation(t *testing.T) {
 	_, err := svc.Create(context.Background(), uuid.New(), CreateInput{Name: "App", Platform: "windows", BundleID: "x"})
 	if kind(err) != apperr.KindInvalid {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestUpdateRetentionDays(t *testing.T) {
+	owner := uuid.New()
+	q := &fakeQuerier{app: db.App{ID: uuid.New(), OwnerID: owner, Name: "App", Platform: db.AppPlatformWeb, BundleID: "x"}}
+	svc := NewService(q, nil, nil, &config.Config{})
+	ctx := context.Background()
+
+	days := 30
+	a, err := svc.Update(ctx, owner, q.app.ID, UpdateInput{RetentionDays: &days})
+	if err != nil {
+		t.Fatalf("Update() err = %v", err)
+	}
+	if a.RetentionDays == nil || *a.RetentionDays != 30 {
+		t.Errorf("RetentionDays = %v", a.RetentionDays)
+	}
+
+	bad := 0
+	if _, err := svc.Update(ctx, owner, q.app.ID, UpdateInput{RetentionDays: &bad}); kind(err) != apperr.KindInvalid {
+		t.Errorf("retention_days = 0: err = %v", err)
 	}
 }
 

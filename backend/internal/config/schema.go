@@ -146,6 +146,14 @@ type WorkerConfig struct {
 	MaxAttempts int
 }
 
+// RetentionConfig controls the daily sweep that deletes reports older than
+// their app's retention period.
+type RetentionConfig struct {
+	// DefaultDays is the retention period for apps that don't set their
+	// own retention_days.
+	DefaultDays int
+}
+
 // CoordinatorConfig controls the gRPC server the log coordinator attaches
 // to, and the server logs the worker asks it for.
 type CoordinatorConfig struct {
@@ -194,6 +202,7 @@ type Config struct {
 	Limits         LimitsConfig
 	Ingest         IngestConfig
 	Worker         WorkerConfig
+	Retention      RetentionConfig
 	Coordinator    CoordinatorConfig
 	CrashProviders CrashProvidersConfig
 	Crash          CrashConfig
