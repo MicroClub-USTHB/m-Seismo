@@ -1,4 +1,5 @@
-use regex::Regex;
+use regex::{Captures, Regex};
+use std::borrow::Cow;
 use std::sync::LazyLock;
 
 // NOTE: (pattern, replacement), applied in order. regex crate is linear time so
@@ -21,22 +22,70 @@ static RULES: LazyLock<Vec<(Regex, &str)>> = LazyLock::new(|| {
         // scheme://user:pass@host
         (r"://[^/\s:@]+:[^/\s@]+@", "://[REDACTED]@"),
         (r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b", "[REDACTED]"),
-        // XXX: no email / ip scrubbing, too many false positives for debugging logs
+        // email addresses
+        (r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "[REDACTED]"),
+        // phone numbers: E.164-ish (+1415...), or a 3-3-4 group with a
+        // separator (415-555-0132, (415) 555-0132); a bare run of digits
+        // is left alone, too many false positives (ids, ports, durations).
+        (r"\+[1-9]\d{6,14}\b", "[REDACTED]"),
+        (r"\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b", "[REDACTED]"),
+        // XXX: no ip scrubbing, too many false positives for debugging logs
     ]
     .into_iter()
     .map(|(re, to)| (Regex::new(re).expect("static redaction regex"), to))
     .collect()
 });
 
+// Card numbers: 13-19 digits, optionally grouped with spaces or dashes.
+// Scrubbed only when they pass the Luhn check, so a plain id or trace
+// number of the same length (common in debugging logs) is left alone.
+static CARD_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b(?:\d[ -]?){12,18}\d\b").expect("static redaction regex"));
+
 pub fn redact(line: &str) -> String {
     let mut out = line.to_owned();
     for (re, to) in RULES.iter() {
         // PERF: replace_all returns Cow, only allocates when something matched
-        if let std::borrow::Cow::Owned(s) = re.replace_all(&out, *to) {
+        if let Cow::Owned(s) = re.replace_all(&out, *to) {
             out = s;
         }
     }
+    if let Cow::Owned(s) = CARD_RE.replace_all(&out, redact_card) {
+        out = s;
+    }
     out
+}
+
+fn redact_card(caps: &Captures) -> String {
+    let m = &caps[0];
+    let digits: String = m.chars().filter(char::is_ascii_digit).collect();
+    if luhn_valid(&digits) {
+        "[REDACTED]".to_string()
+    } else {
+        m.to_string()
+    }
+}
+
+// PERF: no allocation, no catastrophic anything: one pass over the digits.
+fn luhn_valid(digits: &str) -> bool {
+    if digits.len() < 13 || digits.len() > 19 {
+        return false;
+    }
+    let sum: u32 = digits
+        .chars()
+        .rev()
+        .enumerate()
+        .map(|(i, c)| {
+            let d = c.to_digit(10).expect("digits only");
+            if i % 2 == 1 {
+                let d2 = d * 2;
+                if d2 > 9 { d2 - 9 } else { d2 }
+            } else {
+                d
+            }
+        })
+        .sum();
+    sum.is_multiple_of(10)
 }
 
 #[cfg(test)]
@@ -54,11 +103,25 @@ mod tests {
             ("token: abcdef", "abcdef"),
             ("dial postgres://app:s3cret@db:5432/x", "s3cret"),
             ("key AKIAIOSFODNN7EXAMPLE used", "AKIAIOSFODNN7EXAMPLE"),
+            ("contact user@example.com for help", "user@example.com"),
+            ("call (415) 555-0132 now", "(415) 555-0132"),
+            ("call 415-555-0132 now", "415-555-0132"),
+            ("reach +14155550132 support", "+14155550132"),
+            ("card 4111 1111 1111 1111 charged", "4111 1111 1111 1111"),
+            ("card 4111111111111111 charged", "4111111111111111"),
         ] {
             let out = redact(input);
             assert!(!out.contains(gone), "{input} -> {out}");
             assert!(out.contains("[REDACTED]"), "{input} -> {out}");
         }
+    }
+
+    #[test]
+    fn keeps_numbers_that_are_not_card_numbers() {
+        // 16 digits, but fails the Luhn check: not a real card number, and a
+        // trace/order id like this is common in debugging logs.
+        let l = "order id 1234567890123456 created";
+        assert_eq!(redact(l), l);
     }
 
     #[test]

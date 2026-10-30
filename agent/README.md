@@ -190,6 +190,49 @@ The logs-only sources answer every service `UNAVAILABLE` with
 `DRIVER_UNSUPPORTED`. The coordinator fans it out like a log query, and the
 backend asks for it with `QueryStatus`.
 
+## Redaction
+
+Every log line is scrubbed before it leaves the agent (`crates/agent/src/redaction.rs`):
+bearer/basic tokens, JWTs, `password=`/`token:`/`api_key`-style fields,
+credentials in a `scheme://user:pass@host` URL, AWS access key IDs, email
+addresses, phone numbers (`+1415...`, or a 3-3-4 group like
+`415-555-0132`), and card numbers (13-19 digits, grouped or not) that pass
+the Luhn check — a same-length id or trace number that isn't a real card
+number is left alone. IP addresses are deliberately not scrubbed: too many
+false positives in debugging logs.
+
+## Resource budget
+
+Idle (registered with a coordinator, zero log/metrics activity) the agent
+measured 8.3 MB RSS and effectively 0% CPU over a minute, on an Apple M1
+Pro (`cargo build --release`, single `file` source, one service). Both are
+far under the 50 MB / 2% CPU budget (FR: agent redaction and resource
+budget).
+
+Reproduce with:
+
+```sh
+cargo build --release -p seismo-agent
+cat > /tmp/idle-agent.toml <<'EOF'
+agent_id = "resource-budget-probe"
+services = ["idle"]
+
+[coordinator]
+url = "http://127.0.0.1:1"   # unreachable on purpose: steady reconnect-with-backoff, not a live session
+token_env = "SEISMO_AGENT_TOKEN"
+
+[source]
+type = "file"
+
+[source.files]
+idle = "/tmp/idle-service.log"
+EOF
+touch /tmp/idle-service.log
+SEISMO_AGENT_TOKEN=dummy SEISMO_AGENT_CONFIG=/tmp/idle-agent.toml \
+  RUST_LOG=warn ./target/release/seismo-agent &
+sleep 60 && ps -p $! -o rss,%cpu,etime,time
+```
+
 ## Status
 
 Agent: sources `loki`, `file`, `journal`, `docker`, `kubernetes`, and container
