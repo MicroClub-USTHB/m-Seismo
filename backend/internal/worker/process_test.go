@@ -163,6 +163,39 @@ func TestProcessUsesTheRoute(t *testing.T) {
 	}
 }
 
+func TestProcessUsesTheRouteIssueTemplate(t *testing.T) {
+	q, is, p := newFixture(t, 1)
+	title, body := "Bug: {{.Title}}", "## Steps\n\n{{.Steps}}\n## Env\n\n{{.Environment}}"
+	q.router.routes[0].TitleTemplate, q.router.routes[0].BodyTemplate = &title, &body
+
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	d := is.drafts[0]
+	if d.Title != "Bug: Pay button does nothing" {
+		t.Errorf("title = %q", d.Title)
+	}
+	if !strings.Contains(d.Body, "## Steps") || !strings.Contains(d.Body, "## Env") {
+		t.Errorf("body = %q", d.Body)
+	}
+	if !strings.Contains(d.Body, "Opened by m-Seismo") {
+		t.Errorf("templated body dropped the footer: %q", d.Body)
+	}
+}
+
+func TestProcessFallsBackToDefaultLayoutOnBadTemplate(t *testing.T) {
+	q, is, p := newFixture(t, 1)
+	title, body := "{{.NotAField}}", "whatever"
+	q.router.routes[0].TitleTemplate, q.router.routes[0].BodyTemplate = &title, &body
+
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	if d := is.drafts[0]; d.Title != "Pay button does nothing" {
+		t.Errorf("title = %q, want the default layout's", d.Title)
+	}
+}
+
 func TestProcessSkipsProjectsAlreadyDelivered(t *testing.T) {
 	q, is, p := newFixture(t, 1)
 	if err := p.Process(context.Background(), q.report.ID); err != nil {
