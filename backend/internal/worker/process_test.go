@@ -21,6 +21,17 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
 )
 
+// screenshotAttachmentID is the fixed id ListReportAttachments answers
+// with, so tests can assert on the link fakeLinker built from it.
+var screenshotAttachmentID = uuid.MustParse("00000000-0000-0000-0000-00000000a77a")
+
+// fakeLinker returns a fixed, recognizable URL for any attachment id.
+type fakeLinker struct{}
+
+func (fakeLinker) SignedURL(id uuid.UUID) string {
+	return "https://seismo.example.com/attachments/" + id.String()
+}
+
 type fakeQueries struct {
 	report     *db.Report
 	router     *fakeRouter
@@ -39,8 +50,8 @@ func (f *fakeQueries) GetReport(_ context.Context, id uuid.UUID) (db.Report, err
 	return *f.report, nil
 }
 
-func (f *fakeQueries) ListReportAttachmentNames(context.Context, uuid.UUID) ([]string, error) {
-	return []string{"screenshot"}, nil
+func (f *fakeQueries) ListReportAttachments(context.Context, uuid.UUID) ([]db.ListReportAttachmentsRow, error) {
+	return []db.ListReportAttachmentsRow{{ID: screenshotAttachmentID, Name: ingest.ScreenshotName}}, nil
 }
 
 func (f *fakeQueries) ListReportDeliveryProjects(_ context.Context, reportID uuid.UUID) ([]uuid.UUID, error) {
@@ -160,7 +171,7 @@ func newFixture(t *testing.T, projects int) (*fakeQueries, *fakeIssues, *Process
 		q.projectOf[route.ProjectRepositoryID] = route.ProjectID
 	}
 	is := &fakeIssues{q: q, fail: map[uuid.UUID]error{}, closed: map[uuid.UUID]bool{}}
-	return q, is, NewProcessor(q, is, router, &fakeLocks{}, nil, time.Minute, nil)
+	return q, is, NewProcessor(q, is, router, &fakeLocks{}, nil, time.Minute, nil, fakeLinker{}, nil)
 }
 
 func TestProcessOpensOneIssuePerProject(t *testing.T) {
@@ -201,6 +212,39 @@ func TestProcessUsesTheRoute(t *testing.T) {
 	d := is.drafts[0]
 	if strings.Join(d.Labels, ",") != "bug,ios" || strings.Join(d.Assignees, ",") != "octocat" || d.Milestone != "v2.4" {
 		t.Errorf("labels %v, assignees %v, milestone %q", d.Labels, d.Assignees, d.Milestone)
+	}
+}
+
+func TestProcessUsesTheRouteIssueTemplate(t *testing.T) {
+	q, is, p := newFixture(t, 1)
+	title, body := "Bug: {{.Title}}", "## Steps\n\n{{.Steps}}\n## Env\n\n{{.Environment}}"
+	q.router.routes[0].TitleTemplate, q.router.routes[0].BodyTemplate = &title, &body
+
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	d := is.drafts[0]
+	if d.Title != "Bug: Pay button does nothing" {
+		t.Errorf("title = %q", d.Title)
+	}
+	if !strings.Contains(d.Body, "## Steps") || !strings.Contains(d.Body, "## Env") {
+		t.Errorf("body = %q", d.Body)
+	}
+	if !strings.Contains(d.Body, "Opened by m-Seismo") {
+		t.Errorf("templated body dropped the footer: %q", d.Body)
+	}
+}
+
+func TestProcessFallsBackToDefaultLayoutOnBadTemplate(t *testing.T) {
+	q, is, p := newFixture(t, 1)
+	title, body := "{{.NotAField}}", "whatever"
+	q.router.routes[0].TitleTemplate, q.router.routes[0].BodyTemplate = &title, &body
+
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	if d := is.drafts[0]; d.Title != "Pay button does nothing" {
+		t.Errorf("title = %q, want the default layout's", d.Title)
 	}
 }
 
@@ -274,6 +318,22 @@ func TestProcessGroupsReportsOfTheSameBug(t *testing.T) {
 	}
 }
 
+func TestProcessGroupsReportsWithAnIssueTemplate(t *testing.T) {
+	q, is, p := newFixture(t, 1)
+	title, body := "Bug: {{.Title}}", "{{.Steps}}"
+	q.router.routes[0].TitleTemplate, q.router.routes[0].BodyTemplate = &title, &body
+
+	for range 2 {
+		crashReport(t, q)
+		if err := p.Process(context.Background(), q.report.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(is.opened) != 1 || len(is.comments) != 1 {
+		t.Fatalf("opened %d issues and %d comments, want 1 and 1", len(is.opened), len(is.comments))
+	}
+}
+
 func TestProcessOpensAgainWhenTheIssueWasClosed(t *testing.T) {
 	q, is, p := newFixture(t, 1)
 	crashReport(t, q)
@@ -319,11 +379,44 @@ func (f *fakeLogs) QueryLogs(_ context.Context, _ uuid.UUID, from, to time.Time)
 	return &seismov1.AggregateResult{Agents: []*seismov1.AgentSection{{AgentId: "prod-1"}}}, nil
 }
 
+// fakeHealth answers every service-health query the same way.
+type fakeHealth struct {
+	metrics *seismov1.AggregateMetrics
+	status  *seismov1.AggregateStatus
+}
+
+func (f *fakeHealth) QueryMetrics(context.Context, uuid.UUID, time.Time, time.Time) (*seismov1.AggregateMetrics, error) {
+	return f.metrics, nil
+}
+
+func (f *fakeHealth) QueryStatus(context.Context, uuid.UUID) (*seismov1.AggregateStatus, error) {
+	return f.status, nil
+}
+
+func TestProcessAddsServiceHealth(t *testing.T) {
+	q, is, _ := newFixture(t, 1)
+	health := &fakeHealth{
+		metrics: &seismov1.AggregateMetrics{Agents: []*seismov1.AgentMetrics{{
+			AgentId:  "agent-1",
+			Services: []*seismov1.ServiceMetrics{{Service: "api", Lines: 10, ErrorLines: 1}},
+		}}},
+	}
+	p := NewProcessor(q, is, q.router, &fakeLocks{}, nil, time.Minute, nil, fakeLinker{}, health)
+
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	body := is.drafts[0].Body
+	if !strings.Contains(body, "### Service health") || !strings.Contains(body, "1/10 (10.0%)") {
+		t.Errorf("body missing service health: %q", body)
+	}
+}
+
 func TestProcessAddsServerLogs(t *testing.T) {
 	q, is, _ := newFixture(t, 1)
 	q.report.OccurredAt = time.Date(2026, 10, 21, 14, 0, 0, 0, time.UTC)
 	logs := &fakeLogs{}
-	p := NewProcessor(q, is, q.router, &fakeLocks{}, logs, 2*time.Minute, nil)
+	p := NewProcessor(q, is, q.router, &fakeLocks{}, logs, 2*time.Minute, nil, fakeLinker{}, nil)
 
 	if err := p.Process(context.Background(), q.report.ID); err != nil {
 		t.Fatal(err)
@@ -347,7 +440,7 @@ func TestProcessAddsServerLogs(t *testing.T) {
 func TestProcessWithoutServerLogs(t *testing.T) {
 	for _, err := range []error{coordinator.ErrNotAttached, errors.New("NATS is down")} {
 		q, is, _ := newFixture(t, 1)
-		p := NewProcessor(q, is, q.router, &fakeLocks{}, &fakeLogs{err: err}, time.Minute, nil)
+		p := NewProcessor(q, is, q.router, &fakeLocks{}, &fakeLogs{err: err}, time.Minute, nil, fakeLinker{}, nil)
 		if err := p.Process(context.Background(), q.report.ID); err != nil {
 			t.Fatalf("logs failing with %v failed the report: %v", err, err)
 		}

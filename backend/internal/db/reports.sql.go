@@ -35,6 +35,62 @@ func (q *Queries) CreateReportDelivery(ctx context.Context, arg CreateReportDeli
 	return err
 }
 
+const deleteExpiredReports = `-- name: DeleteExpiredReports :execrows
+DELETE FROM reports
+USING apps
+WHERE reports.app_id = apps.id
+  AND reports.occurred_at < now() - make_interval(days => COALESCE(apps.retention_days, $1::int))
+`
+
+// Deletes reports older than their app's retention period, falling back to
+// the operator's default (sqlc.arg(default_days)) for apps that don't set
+// their own.
+func (q *Queries) DeleteExpiredReports(ctx context.Context, defaultDays int32) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredReports, defaultDays)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteReportByReportID = `-- name: DeleteReportByReportID :execrows
+DELETE FROM reports
+WHERE app_id = $1 AND report_id = $2
+`
+
+type DeleteReportByReportIDParams struct {
+	AppID    uuid.UUID `json:"app_id"`
+	ReportID uuid.UUID `json:"report_id"`
+}
+
+// Attachments cascade; report_deliveries and the issues they point to are
+// left as they are.
+func (q *Queries) DeleteReportByReportID(ctx context.Context, arg DeleteReportByReportIDParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteReportByReportID, arg.AppID, arg.ReportID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteReportsByInstallation = `-- name: DeleteReportsByInstallation :execrows
+DELETE FROM reports
+WHERE app_id = $1 AND installation_id = $2
+`
+
+type DeleteReportsByInstallationParams struct {
+	AppID          uuid.UUID `json:"app_id"`
+	InstallationID uuid.UUID `json:"installation_id"`
+}
+
+func (q *Queries) DeleteReportsByInstallation(ctx context.Context, arg DeleteReportsByInstallationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteReportsByInstallation, arg.AppID, arg.InstallationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getIssueOccurrences = `-- name: GetIssueOccurrences :one
 WITH grouped AS (
     SELECT d.report_id FROM report_deliveries d WHERE d.issue_id = $1::uuid
@@ -93,6 +149,25 @@ func (q *Queries) GetReport(ctx context.Context, id uuid.UUID) (Report, error) {
 		&i.QueuedAt,
 		&i.Payload,
 		&i.ProcessedAt,
+	)
+	return i, err
+}
+
+const getReportAttachment = `-- name: GetReportAttachment :one
+SELECT report_id, name, content_type, data, created_at, id FROM report_attachments
+WHERE id = $1
+`
+
+func (q *Queries) GetReportAttachment(ctx context.Context, id uuid.UUID) (ReportAttachment, error) {
+	row := q.db.QueryRow(ctx, getReportAttachment, id)
+	var i ReportAttachment
+	err := row.Scan(
+		&i.ReportID,
+		&i.Name,
+		&i.ContentType,
+		&i.Data,
+		&i.CreatedAt,
+		&i.ID,
 	)
 	return i, err
 }
@@ -193,25 +268,30 @@ func (q *Queries) InsertReportAttachment(ctx context.Context, arg InsertReportAt
 	return err
 }
 
-const listReportAttachmentNames = `-- name: ListReportAttachmentNames :many
-SELECT name FROM report_attachments
+const listReportAttachments = `-- name: ListReportAttachments :many
+SELECT id, name FROM report_attachments
 WHERE report_id = $1
 ORDER BY name
 `
 
-func (q *Queries) ListReportAttachmentNames(ctx context.Context, reportID uuid.UUID) ([]string, error) {
-	rows, err := q.db.Query(ctx, listReportAttachmentNames, reportID)
+type ListReportAttachmentsRow struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+func (q *Queries) ListReportAttachments(ctx context.Context, reportID uuid.UUID) ([]ListReportAttachmentsRow, error) {
+	rows, err := q.db.Query(ctx, listReportAttachments, reportID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	var items []ListReportAttachmentsRow
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+		var i ListReportAttachmentsRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
 			return nil, err
 		}
-		items = append(items, name)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

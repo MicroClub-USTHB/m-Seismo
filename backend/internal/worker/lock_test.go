@@ -2,20 +2,16 @@ package worker
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/testenv"
 )
 
-// This test needs Postgres. It is skipped unless SEISMO_TEST_DATABASE_URL
-// is set.
 func TestPGLocks(t *testing.T) {
-	url := os.Getenv("SEISMO_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("SEISMO_TEST_DATABASE_URL not set")
-	}
+	url := testenv.DatabaseURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, url)

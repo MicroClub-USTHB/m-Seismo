@@ -1,7 +1,6 @@
-\restrict dbmate
 
--- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
--- Dumped by pg_dump version 18.6
+-- Dumped from database version 17.11
+-- Dumped by pg_dump version 18.1 (Homebrew)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -147,7 +146,9 @@ CREATE TABLE public.apps (
     platform public.app_platform NOT NULL,
     bundle_id text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    retention_days integer,
+    CONSTRAINT apps_retention_days_check CHECK (((retention_days IS NULL) OR (retention_days > 0)))
 );
 
 
@@ -172,6 +173,21 @@ CREATE TABLE public.crashlytics_connections (
     google_email text NOT NULL,
     refresh_token bytea NOT NULL,
     apps text[] DEFAULT '{}'::text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: issue_templates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_templates (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    project_id uuid NOT NULL,
+    name text NOT NULL,
+    title_template text NOT NULL,
+    body_template text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -266,7 +282,8 @@ CREATE TABLE public.report_attachments (
     name text NOT NULL,
     content_type text NOT NULL,
     data bytea NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL
 );
 
 
@@ -319,6 +336,7 @@ CREATE TABLE public.routing_rules (
     milestone text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    issue_template_id uuid,
     CONSTRAINT routing_rules_category_check CHECK ((category = ANY (ARRAY['bug'::text, 'crash'::text, 'ui'::text, 'other'::text]))),
     CONSTRAINT routing_rules_position_check CHECK (("position" >= 0)),
     CONSTRAINT routing_rules_severity_check CHECK ((severity = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))
@@ -415,6 +433,14 @@ ALTER TABLE ONLY public.crashlytics_connections
 
 
 --
+-- Name: issue_templates issue_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_templates
+    ADD CONSTRAINT issue_templates_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: issues issues_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -487,6 +513,14 @@ ALTER TABLE ONLY public.provider_connections
 
 
 --
+-- Name: report_attachments report_attachments_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_attachments
+    ADD CONSTRAINT report_attachments_id_key UNIQUE (id);
+
+
+--
 -- Name: report_attachments report_attachments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -553,6 +587,13 @@ CREATE INDEX app_projects_project_id_idx ON public.app_projects USING btree (pro
 --
 
 CREATE INDEX apps_owner_id_idx ON public.apps USING btree (owner_id);
+
+
+--
+-- Name: issue_templates_project_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_templates_project_id_idx ON public.issue_templates USING btree (project_id);
 
 
 --
@@ -718,6 +759,14 @@ ALTER TABLE ONLY public.crashlytics_connections
 
 
 --
+-- Name: issue_templates issue_templates_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_templates
+    ADD CONSTRAINT issue_templates_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
 -- Name: issues issues_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -822,6 +871,14 @@ ALTER TABLE ONLY public.routing_rules
 
 
 --
+-- Name: routing_rules routing_rules_issue_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.routing_rules
+    ADD CONSTRAINT routing_rules_issue_template_id_fkey FOREIGN KEY (issue_template_id) REFERENCES public.issue_templates(id) ON DELETE SET NULL;
+
+
+--
 -- Name: routing_rules routing_rules_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -841,7 +898,6 @@ ALTER TABLE ONLY public.routing_rules
 -- PostgreSQL database dump complete
 --
 
-\unrestrict dbmate
 
 
 --
@@ -863,4 +919,7 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261023090000'),
     ('20261024090000'),
     ('20261026090000'),
-    ('20261029090000');
+    ('20261029090000'),
+    ('20261030160000'),
+    ('20261030170000'),
+    ('20261030180000');

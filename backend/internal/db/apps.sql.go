@@ -14,7 +14,7 @@ import (
 const createApp = `-- name: CreateApp :one
 INSERT INTO apps (owner_id, name, platform, bundle_id)
 VALUES ($1, $2, $3, $4)
-RETURNING id, owner_id, name, platform, bundle_id, created_at, updated_at
+RETURNING id, owner_id, name, platform, bundle_id, created_at, updated_at, retention_days
 `
 
 type CreateAppParams struct {
@@ -40,6 +40,7 @@ func (q *Queries) CreateApp(ctx context.Context, arg CreateAppParams) (App, erro
 		&i.BundleID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RetentionDays,
 	)
 	return i, err
 }
@@ -121,7 +122,7 @@ func (q *Queries) GetActiveAppKeyByHash(ctx context.Context, arg GetActiveAppKey
 }
 
 const getApp = `-- name: GetApp :one
-SELECT id, owner_id, name, platform, bundle_id, created_at, updated_at FROM apps
+SELECT id, owner_id, name, platform, bundle_id, created_at, updated_at, retention_days FROM apps
 WHERE id = $1 AND owner_id = $2
 `
 
@@ -141,6 +142,7 @@ func (q *Queries) GetApp(ctx context.Context, arg GetAppParams) (App, error) {
 		&i.BundleID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RetentionDays,
 	)
 	return i, err
 }
@@ -235,7 +237,7 @@ func (q *Queries) ListAppProjects(ctx context.Context, appID uuid.UUID) ([]Proje
 }
 
 const listApps = `-- name: ListApps :many
-SELECT id, owner_id, name, platform, bundle_id, created_at, updated_at FROM apps
+SELECT id, owner_id, name, platform, bundle_id, created_at, updated_at, retention_days FROM apps
 WHERE owner_id = $1
 ORDER BY created_at DESC
 `
@@ -257,6 +259,7 @@ func (q *Queries) ListApps(ctx context.Context, ownerID uuid.UUID) ([]App, error
 			&i.BundleID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RetentionDays,
 		); err != nil {
 			return nil, err
 		}
@@ -311,17 +314,19 @@ UPDATE apps
 SET name = $3,
     platform = $4,
     bundle_id = $5,
+    retention_days = $6,
     updated_at = now()
 WHERE id = $1 AND owner_id = $2
-RETURNING id, owner_id, name, platform, bundle_id, created_at, updated_at
+RETURNING id, owner_id, name, platform, bundle_id, created_at, updated_at, retention_days
 `
 
 type UpdateAppParams struct {
-	ID       uuid.UUID   `json:"id"`
-	OwnerID  uuid.UUID   `json:"owner_id"`
-	Name     string      `json:"name"`
-	Platform AppPlatform `json:"platform"`
-	BundleID string      `json:"bundle_id"`
+	ID            uuid.UUID   `json:"id"`
+	OwnerID       uuid.UUID   `json:"owner_id"`
+	Name          string      `json:"name"`
+	Platform      AppPlatform `json:"platform"`
+	BundleID      string      `json:"bundle_id"`
+	RetentionDays *int32      `json:"retention_days"`
 }
 
 func (q *Queries) UpdateApp(ctx context.Context, arg UpdateAppParams) (App, error) {
@@ -331,6 +336,7 @@ func (q *Queries) UpdateApp(ctx context.Context, arg UpdateAppParams) (App, erro
 		arg.Name,
 		arg.Platform,
 		arg.BundleID,
+		arg.RetentionDays,
 	)
 	var i App
 	err := row.Scan(
@@ -341,6 +347,7 @@ func (q *Queries) UpdateApp(ctx context.Context, arg UpdateAppParams) (App, erro
 		&i.BundleID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RetentionDays,
 	)
 	return i, err
 }

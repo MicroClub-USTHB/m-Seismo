@@ -146,6 +146,22 @@ type WorkerConfig struct {
 	MaxAttempts int
 }
 
+// AttachmentsConfig controls the private, expiring links issues show for a
+// report's attachments (FR-48). Links are signed with auth.jwt_secret, so
+// there is no separate key to configure.
+type AttachmentsConfig struct {
+	// LinkTTL is how long a link stays valid after it is built.
+	LinkTTL time.Duration
+}
+
+// RetentionConfig controls the daily sweep that deletes reports older than
+// their app's retention period.
+type RetentionConfig struct {
+	// DefaultDays is the retention period for apps that don't set their
+	// own retention_days.
+	DefaultDays int
+}
+
 // CoordinatorConfig controls the gRPC server the log coordinator attaches
 // to, and the server logs the worker asks it for.
 type CoordinatorConfig struct {
@@ -194,6 +210,8 @@ type Config struct {
 	Limits         LimitsConfig
 	Ingest         IngestConfig
 	Worker         WorkerConfig
+	Attachments    AttachmentsConfig
+	Retention      RetentionConfig
 	Coordinator    CoordinatorConfig
 	CrashProviders CrashProvidersConfig
 	Crash          CrashConfig

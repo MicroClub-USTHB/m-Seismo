@@ -141,13 +141,14 @@ func (ns NullTracker) Value() (driver.Value, error) {
 }
 
 type App struct {
-	ID        uuid.UUID   `json:"id"`
-	OwnerID   uuid.UUID   `json:"owner_id"`
-	Name      string      `json:"name"`
-	Platform  AppPlatform `json:"platform"`
-	BundleID  string      `json:"bundle_id"`
-	CreatedAt time.Time   `json:"created_at"`
-	UpdatedAt time.Time   `json:"updated_at"`
+	ID            uuid.UUID   `json:"id"`
+	OwnerID       uuid.UUID   `json:"owner_id"`
+	Name          string      `json:"name"`
+	Platform      AppPlatform `json:"platform"`
+	BundleID      string      `json:"bundle_id"`
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
+	RetentionDays *int32      `json:"retention_days"`
 }
 
 type AppCrashProvider struct {
@@ -214,6 +215,16 @@ type Issue struct {
 	ProviderConnectionID *uuid.UUID `json:"provider_connection_id"`
 }
 
+type IssueTemplate struct {
+	ID            uuid.UUID `json:"id"`
+	ProjectID     uuid.UUID `json:"project_id"`
+	Name          string    `json:"name"`
+	TitleTemplate string    `json:"title_template"`
+	BodyTemplate  string    `json:"body_template"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type Owner struct {
 	ID           uuid.UUID `json:"id"`
 	Email        string    `json:"email"`
@@ -274,6 +285,7 @@ type ReportAttachment struct {
 	ContentType string    `json:"content_type"`
 	Data        []byte    `json:"data"`
 	CreatedAt   time.Time `json:"created_at"`
+	ID          uuid.UUID `json:"id"`
 }
 
 type ReportDelivery struct {
@@ -297,6 +309,7 @@ type RoutingRule struct {
 	Milestone           *string    `json:"milestone"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
+	IssueTemplateID     *uuid.UUID `json:"issue_template_id"`
 }
 
 type SchemaMigration struct {

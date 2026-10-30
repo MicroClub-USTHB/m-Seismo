@@ -11,6 +11,27 @@ FAIL_FIRST_N = int(sys.argv[1]) if len(sys.argv) > 1 else 0
 request_count = 0
 
 
+def parse_multipart(content_type, body):
+    """Returns (report json or None, screenshot bytes or None)."""
+    if "boundary=" not in content_type:
+        return None, None
+    boundary = content_type.split("boundary=", 1)[1].encode()
+    report = screenshot = None
+    for part in body.split(b"--" + boundary):
+        head, sep, data = part.partition(b"\r\n\r\n")
+        if not sep:
+            continue
+        data = data[:-2] if data.endswith(b"\r\n") else data
+        if b'name="report"' in head:
+            try:
+                report = json.loads(data)
+            except ValueError:
+                pass
+        elif b'name="screenshot"' in head:
+            screenshot = data
+    return report, screenshot
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         global request_count
@@ -19,26 +40,26 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
 
-        project_key = self.headers.get("X-Seismo-Project-Key", "<missing>")
+        auth = self.headers.get("Authorization", "<missing>")
+        report, screenshot = parse_multipart(self.headers.get("Content-Type", ""), body)
 
         if request_count <= FAIL_FIRST_N:
-            print(f"[{request_count}] {self.path} project-key={project_key} -> 503 (forced failure)", flush=True)
+            print(f"[{request_count}] {self.path} auth={auth} -> 503 (forced failure)", flush=True)
             self.send_response(503)
             self.end_headers()
             return
 
-        try:
-            parsed = json.loads(body)
-            title = parsed.get("title", "<no title>")
-            description = parsed.get("description", "")
-        except Exception:
-            title, description = "<unparseable>", ""
-
-        print(f"[{request_count}] {self.path} project-key={project_key} title={title!r} description={description!r}", flush=True)
-        self.send_response(200)
+        user_input = (report or {}).get("user_input", {})
+        print(
+            f"[{request_count}] {self.path} auth={auth} id={(report or {}).get('id')} "
+            f"trigger={(report or {}).get('trigger')} title={user_input.get('title')!r} "
+            f"screenshot={'yes' if screenshot else 'no'}",
+            flush=True,
+        )
+        self.send_response(202)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(b'{"status":"ok"}')
+        self.wfile.write(json.dumps({"id": (report or {}).get("id"), "status": "accepted"}).encode())
 
     def log_message(self, format, *args):
         pass  # quiet; we print our own lines above

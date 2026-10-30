@@ -1,6 +1,6 @@
 -- name: CreateRoutingRule :one
-INSERT INTO routing_rules (project_id, position, app_id, severity, category, project_repository_id, labels, assignees, milestone)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO routing_rules (project_id, position, app_id, severity, category, project_repository_id, labels, assignees, milestone, issue_template_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING *;
 
 -- name: ListRoutingRules :many
@@ -22,6 +22,7 @@ SET position = $3,
     labels = $8,
     assignees = $9,
     milestone = $10,
+    issue_template_id = $11,
     updated_at = now()
 WHERE id = $1 AND project_id = $2
 RETURNING *;
@@ -32,11 +33,13 @@ WHERE id = $1 AND project_id = $2;
 
 -- name: ListRoutingRulesForApp :many
 -- The rules of every project the app reports into, in the order they are
--- tried, with the repository each one sends to.
-SELECT rr.*, pr.repository
+-- tried, with the repository each one sends to and its template's content,
+-- when it has one.
+SELECT rr.*, pr.repository, it.title_template, it.body_template
 FROM routing_rules rr
 JOIN app_projects ap ON ap.project_id = rr.project_id
 JOIN project_repositories pr ON pr.id = rr.project_repository_id
+LEFT JOIN issue_templates it ON it.id = rr.issue_template_id
 WHERE ap.app_id = $1
 ORDER BY rr.project_id, rr.position, rr.created_at;
 

@@ -113,6 +113,12 @@ func Load(configPath string) (*Config, error) {
 			Concurrency: v.GetInt("worker.concurrency"),
 			MaxAttempts: v.GetInt("worker.max_attempts"),
 		},
+		Attachments: AttachmentsConfig{
+			LinkTTL: v.GetDuration("attachments.link_ttl"),
+		},
+		Retention: RetentionConfig{
+			DefaultDays: v.GetInt("retention.default_days"),
+		},
 		Coordinator: CoordinatorConfig{
 			Enabled:             v.GetBool("coordinator.enabled"),
 			Addr:                v.GetString("coordinator.addr"),
@@ -182,6 +188,12 @@ func (c *Config) validate() error {
 	}
 	if c.Worker.Concurrency < 1 || c.Worker.MaxAttempts < 1 {
 		return fmt.Errorf("worker.concurrency and worker.max_attempts must be at least 1")
+	}
+	if c.Retention.DefaultDays < 1 || c.Retention.DefaultDays > math.MaxInt32 {
+		return fmt.Errorf("retention.default_days must be between 1 and %d", math.MaxInt32)
+	}
+	if c.Attachments.LinkTTL <= 0 {
+		return fmt.Errorf("attachments.link_ttl must be positive")
 	}
 	if err := c.Coordinator.validate(c.Env); err != nil {
 		return err

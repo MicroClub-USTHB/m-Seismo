@@ -12,6 +12,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issuetemplate"
 	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
 )
 
@@ -31,9 +32,15 @@ const (
 type reportInfo struct {
 	ID             uuid.UUID
 	InstallationID uuid.UUID
-	Screenshot     bool
+	// ScreenshotURL is the private, expiring link to the report's
+	// screenshot, empty when it sent none.
+	ScreenshotURL string
 	// ServerLogs is the coordinator's answer, nil when there is none.
 	ServerLogs *seismov1.AggregateResult
+	// Health is the service health snapshot (error rate, restarts,
+	// configured CPU and memory, deployed version), empty when there is
+	// none.
+	Health     []healthRow
 	CrashEvent *crashprovider.Event
 }
 
@@ -59,48 +66,10 @@ func render(r *ingest.Report, info reportInfo) issue.Draft {
 		}
 	}
 
-	writeSteps(&b, r)
-
-	if r.Crash != nil || r.Sentry != nil {
-		b.WriteString("### Crash\n\n")
-		if c := r.Crash; c != nil {
-			fmt.Fprintf(&b, "**%s**", text(c.Type))
-			if c.Reason != "" {
-				b.WriteString(": " + text(c.Reason))
-			}
-			b.WriteString("\n\n")
-			frames := c.StackTrace
-			if len(frames) > maxStackFrames {
-				frames = append(frames[:maxStackFrames:maxStackFrames], fmt.Sprintf("... %d more frames", len(c.StackTrace)-maxStackFrames))
-			}
-			b.WriteString(code(strings.Join(frames, "\n")))
-			b.WriteString("\n")
-		} else if event := info.CrashEvent; event != nil && event.Title != "" {
-			b.WriteString("**" + text(event.Title) + "**\n\n")
-			if len(event.StackTrace) > 0 {
-				b.WriteString(code(strings.Join(event.StackTrace[:min(len(event.StackTrace), maxStackFrames)], "\n")) + "\n")
-			}
-		}
-		if ref := r.Sentry; ref != nil {
-			fmt.Fprintf(&b, "**Sentry event:** `%s`\n\n", text(ref.EventID))
-			if event := info.CrashEvent; event != nil && event.URL != "" {
-				// The URL comes only from the validated per-app provider configuration.
-				fmt.Fprintf(&b, "[View in Sentry](%s)\n\n", event.URL)
-			}
-		}
-	}
-
-	writeEnvironment(&b, r)
-
-	if logs := last(r.Logs, maxLogLines); len(logs) > 0 {
-		fmt.Fprintf(&b, "### Logs (last %d)\n\n", len(logs))
-		lines := make([]string, len(logs))
-		for i, l := range logs {
-			lines[i] = strings.TrimSpace(fmt.Sprintf("%s %s %s", l.Timestamp, strings.ToUpper(l.Level), l.Message))
-		}
-		b.WriteString(code(strings.Join(lines, "\n")))
-		b.WriteString("\n")
-	}
+	b.WriteString(stepsSection(r))
+	b.WriteString(crashSection(r, info))
+	b.WriteString(environmentSection(r))
+	b.WriteString(logsSection(r))
 
 	// Bodies are never put in the issue, even when the SDK captured them.
 	if reqs := last(r.NetworkRequests, maxRequests); len(reqs) > 0 {
@@ -121,14 +90,7 @@ func render(r *ingest.Report, info reportInfo) issue.Draft {
 		b.WriteString("\n")
 	}
 
-	renderServerLogs(&b, info.ServerLogs)
-
-	if info.Screenshot {
-		b.WriteString("_A screenshot was sent with this report and is kept in m-Seismo._\n\n")
-	}
-
-	b.WriteString("---\n")
-	fmt.Fprintf(&b, "<sub>Opened by m-Seismo · report `%s` · installation `%s`</sub>\n", info.ID, info.InstallationID)
+	b.WriteString(footer(info))
 
 	return issue.Draft{
 		Title: truncate(title(r), maxTitle, "…"),
@@ -136,24 +98,64 @@ func render(r *ingest.Report, info reportInfo) issue.Draft {
 	}
 }
 
-func writeSteps(b *strings.Builder, r *ingest.Report) {
-	steps := last(r.Breadcrumbs, maxSteps)
-	if len(steps) == 0 {
-		return
+// stepsSection renders the "Steps to reproduce" markdown, empty when the
+// report has no breadcrumbs.
+func stepsSection(r *ingest.Report) string {
+	var b strings.Builder
+	if steps := last(r.Breadcrumbs, maxSteps); len(steps) > 0 {
+		b.WriteString("### Steps to reproduce\n\n")
+		for i, s := range steps {
+			fmt.Fprintf(&b, "%d. %s _(%s)_\n", i+1, text(s.Message), s.Kind)
+		}
+		b.WriteString("\n")
 	}
-	b.WriteString("### Steps to reproduce\n\n")
-	for i, s := range steps {
-		fmt.Fprintf(b, "%d. %s _(%s)_\n", i+1, text(s.Message), s.Kind)
-	}
-	b.WriteString("\n")
+	return b.String()
 }
 
-func writeEnvironment(b *strings.Builder, r *ingest.Report) {
+// crashSection renders the "Crash" markdown, empty when the report has
+// neither a native crash nor a linked Sentry event.
+func crashSection(r *ingest.Report, info reportInfo) string {
+	var b strings.Builder
+	if r.Crash == nil && r.Sentry == nil {
+		return ""
+	}
+	b.WriteString("### Crash\n\n")
+	if c := r.Crash; c != nil {
+		fmt.Fprintf(&b, "**%s**", text(c.Type))
+		if c.Reason != "" {
+			b.WriteString(": " + text(c.Reason))
+		}
+		b.WriteString("\n\n")
+		frames := c.StackTrace
+		if len(frames) > maxStackFrames {
+			frames = append(frames[:maxStackFrames:maxStackFrames], fmt.Sprintf("... %d more frames", len(c.StackTrace)-maxStackFrames))
+		}
+		b.WriteString(code(strings.Join(frames, "\n")))
+		b.WriteString("\n")
+	} else if event := info.CrashEvent; event != nil && event.Title != "" {
+		b.WriteString("**" + text(event.Title) + "**\n\n")
+		if len(event.StackTrace) > 0 {
+			b.WriteString(code(strings.Join(event.StackTrace[:min(len(event.StackTrace), maxStackFrames)], "\n")) + "\n")
+		}
+	}
+	if ref := r.Sentry; ref != nil {
+		fmt.Fprintf(&b, "**Sentry event:** `%s`\n\n", text(ref.EventID))
+		if event := info.CrashEvent; event != nil && event.URL != "" {
+			// The URL comes only from the validated per-app provider configuration.
+			fmt.Fprintf(&b, "[View in Sentry](%s)\n\n", event.URL)
+		}
+	}
+	return b.String()
+}
+
+// environmentSection renders the "Environment" table.
+func environmentSection(r *ingest.Report) string {
+	var b strings.Builder
 	b.WriteString("### Environment\n\n")
 	b.WriteString("| | |\n|---|---|\n")
 	row := func(k, v string) {
 		if v != "" {
-			fmt.Fprintf(b, "| %s | %s |\n", k, cell(v))
+			fmt.Fprintf(&b, "| %s | %s |\n", k, cell(v))
 		}
 	}
 	if d := r.Device; d != nil {
@@ -181,6 +183,61 @@ func writeEnvironment(b *strings.Builder, r *ingest.Report) {
 		row("Experiment "+k, r.Experiments[k])
 	}
 	b.WriteString("\n")
+	return b.String()
+}
+
+// logsSection renders the "Logs" markdown, empty when the report has none.
+func logsSection(r *ingest.Report) string {
+	var b strings.Builder
+	if logs := last(r.Logs, maxLogLines); len(logs) > 0 {
+		fmt.Fprintf(&b, "### Logs (last %d)\n\n", len(logs))
+		lines := make([]string, len(logs))
+		for i, l := range logs {
+			lines[i] = strings.TrimSpace(fmt.Sprintf("%s %s %s", l.Timestamp, strings.ToUpper(l.Level), l.Message))
+		}
+		b.WriteString(code(strings.Join(lines, "\n")))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// footer renders what every issue ends with, templated or not: server
+// logs, the screenshot link and the "Opened by m-Seismo" line.
+func footer(info reportInfo) string {
+	var b strings.Builder
+	renderServerLogs(&b, info.ServerLogs)
+	renderHealth(&b, info.Health)
+	if info.ScreenshotURL != "" {
+		fmt.Fprintf(&b, "[Screenshot](%s) _(link expires; only people with access to this issue should open it)_\n\n", info.ScreenshotURL)
+	}
+	b.WriteString("---\n")
+	fmt.Fprintf(&b, "<sub>Opened by m-Seismo · report `%s` · installation `%s`</sub>\n", info.ID, info.InstallationID)
+	return b.String()
+}
+
+// templateData is what a project's custom issue template (FR-50) can use.
+func templateData(r *ingest.Report, info reportInfo) issuetemplate.TemplateData {
+	return issuetemplate.TemplateData{
+		Title:       title(r),
+		Steps:       stepsSection(r),
+		Crash:       crashSection(r, info),
+		Environment: environmentSection(r),
+		Logs:        logsSection(r),
+	}
+}
+
+// renderWithTemplate renders titleTpl and bodyTpl (FR-50) against the
+// report, appending the same footer render would. The caller falls back
+// to render on error, so a bad template never loses the issue.
+func renderWithTemplate(titleTpl, bodyTpl string, r *ingest.Report, info reportInfo) (issue.Draft, error) {
+	t, body, err := issuetemplate.Render(titleTpl, bodyTpl, templateData(r, info))
+	if err != nil {
+		return issue.Draft{}, fmt.Errorf("worker: render issue template: %w", err)
+	}
+	return issue.Draft{
+		Title: truncate(oneLine(t), maxTitle, "…"),
+		Body:  truncate(body+footer(info), maxBody, "\n\n_(truncated)_"),
+	}, nil
 }
 
 // title is the reporter's title, or one made from the report.

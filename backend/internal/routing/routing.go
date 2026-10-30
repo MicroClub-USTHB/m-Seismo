@@ -49,6 +49,11 @@ type Route struct {
 	Milestone           string
 	// RuleID is the rule that matched, nil for the default repository.
 	RuleID *uuid.UUID
+	// TitleTemplate and BodyTemplate are the matched rule's issue
+	// template, both nil when it has none (or none matched): the default
+	// layout is used.
+	TitleTemplate *string
+	BodyTemplate  *string
 }
 
 // Queries is the part of db.Querier the router uses.
@@ -96,6 +101,8 @@ func (r *Router) Routes(ctx context.Context, f Facts) ([]Route, error) {
 			Assignees:           rule.Assignees,
 			Milestone:           deref(rule.Milestone),
 			RuleID:              &id,
+			TitleTemplate:       rule.TitleTemplate,
+			BodyTemplate:        rule.BodyTemplate,
 		}
 		order = append(order, rule.ProjectID)
 	}

@@ -46,11 +46,12 @@ func renderOccurrence(r *ingest.Report, info reportInfo, n occurrences) string {
 	if c := r.Crash; c != nil && c.Reason != "" {
 		fmt.Fprintf(&b, "**%s**: %s\n\n", text(c.Type), text(c.Reason))
 	}
-	writeSteps(&b, r)
-	writeEnvironment(&b, r)
+	b.WriteString(stepsSection(r))
+	b.WriteString(environmentSection(r))
 	renderServerLogs(&b, info.ServerLogs)
-	if info.Screenshot {
-		b.WriteString("_A screenshot was sent with this report and is kept in m-Seismo._\n\n")
+	renderHealth(&b, info.Health)
+	if info.ScreenshotURL != "" {
+		fmt.Fprintf(&b, "[Screenshot](%s) _(link expires; only people with access to this issue should open it)_\n\n", info.ScreenshotURL)
 	}
 
 	b.WriteString("---\n")

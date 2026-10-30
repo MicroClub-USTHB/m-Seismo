@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -44,10 +45,18 @@ type App struct {
 	BundleID  string         `json:"bundle_id"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
+	// RetentionDays overrides the operator's default retention period for
+	// this app; nil means the default applies.
+	RetentionDays *int `json:"retention_days"`
 }
 
 func toApp(a db.App) App {
-	return App{ID: a.ID, Name: a.Name, Platform: a.Platform, BundleID: a.BundleID, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt}
+	out := App{ID: a.ID, Name: a.Name, Platform: a.Platform, BundleID: a.BundleID, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt}
+	if a.RetentionDays != nil {
+		days := int(*a.RetentionDays)
+		out.RetentionDays = &days
+	}
+	return out
 }
 
 // Key is an SDK key. Secret is only set in the response that creates it.
@@ -159,6 +168,9 @@ type UpdateInput struct {
 	Name     *string         `json:"name"`
 	Platform *db.AppPlatform `json:"platform"`
 	BundleID *string         `json:"bundle_id"`
+	// RetentionDays, when set, overrides the operator's default retention
+	// period for this app; must be positive.
+	RetentionDays *int `json:"retention_days"`
 }
 
 func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateInput) (App, error) {
@@ -166,7 +178,7 @@ func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateIn
 	if err != nil {
 		return App{}, err
 	}
-	params := db.UpdateAppParams{ID: a.ID, OwnerID: ownerID, Name: a.Name, Platform: a.Platform, BundleID: a.BundleID}
+	params := db.UpdateAppParams{ID: a.ID, OwnerID: ownerID, Name: a.Name, Platform: a.Platform, BundleID: a.BundleID, RetentionDays: a.RetentionDays}
 	if in.Name != nil {
 		if params.Name, err = validateName(*in.Name); err != nil {
 			return App{}, err
@@ -182,6 +194,13 @@ func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateIn
 		if params.BundleID, err = validateBundleID(*in.BundleID); err != nil {
 			return App{}, err
 		}
+	}
+	if in.RetentionDays != nil {
+		if *in.RetentionDays <= 0 || *in.RetentionDays > math.MaxInt32 {
+			return App{}, apperr.Invalid("retention_days must be positive")
+		}
+		days := int32(*in.RetentionDays)
+		params.RetentionDays = &days
 	}
 	updated, err := s.q.UpdateApp(ctx, params)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 	"go.uber.org/fx"
 
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/attachment"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/coordinator"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
@@ -20,8 +21,10 @@ var Module = fx.Module("worker",
 		func(s *issue.Service) Issues { return s },
 		func(pool *pgxpool.Pool) Locks { return pgLocks{pool: pool} },
 		func(s *crashprovider.Service) CrashResolver { return s },
-		func(q Queries, is Issues, r *routing.Router, l Locks, c *coordinator.Client, cr CrashResolver, cfg *config.Config) *Processor {
-			return NewProcessor(q, is, r, l, c, cfg.Coordinator.Window, cr)
+		func(s *attachment.Service) AttachmentLinker { return s },
+		func(c *coordinator.Client) ServiceHealth { return c },
+		func(q Queries, is Issues, r *routing.Router, l Locks, c *coordinator.Client, cr CrashResolver, cfg *config.Config, links AttachmentLinker, health ServiceHealth) *Processor {
+			return NewProcessor(q, is, r, l, c, cfg.Coordinator.Window, cr, links, health)
 		},
 	),
 	fx.Invoke(register),
