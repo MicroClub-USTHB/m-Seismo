@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 )
 
 // Deleter removes expired reports. Implemented by db.Querier.
@@ -20,7 +21,13 @@ type Service struct {
 }
 
 func NewService(q Deleter, defaultDays int) *Service {
-	return &Service{q: q, defaultDays: int32(defaultDays)}
+	days := defaultDays
+	if days < 0 {
+		days = 0
+	} else if days > math.MaxInt32 {
+		days = math.MaxInt32
+	}
+	return &Service{q: q, defaultDays: int32(days)}
 }
 
 // Sweep deletes every report (and, through the cascade, its attachments)

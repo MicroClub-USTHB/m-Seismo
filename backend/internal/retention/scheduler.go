@@ -14,13 +14,15 @@ type Sweeper interface {
 	Sweep(ctx context.Context) (int64, error)
 }
 
-// Scheduler runs a Sweeper on a fixed interval, until Stop.
+// Scheduler runs a Sweeper on a fixed interval, until Stop. Each sweep
+// outlives the request that started the scheduler, so it runs on its own
+// background context rather than one tied to Start's caller.
 type Scheduler struct {
 	sweep    Sweeper
 	interval time.Duration
 
-	stop chan struct{}
-	done chan struct{}
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 func NewScheduler(sweep Sweeper, interval time.Duration) *Scheduler {
@@ -28,31 +30,35 @@ func NewScheduler(sweep Sweeper, interval time.Duration) *Scheduler {
 }
 
 func (s *Scheduler) Start(context.Context) error {
-	s.stop = make(chan struct{})
+	base, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
 	s.done = make(chan struct{})
-	go s.run()
+	go s.run(base)
 	return nil
 }
 
-func (s *Scheduler) Stop(context.Context) error {
-	if s.stop == nil {
+func (s *Scheduler) Stop(ctx context.Context) error {
+	if s.cancel == nil {
 		return nil
 	}
-	close(s.stop)
-	<-s.done
+	s.cancel()
+	select {
+	case <-s.done:
+	case <-ctx.Done():
+	}
 	return nil
 }
 
-func (s *Scheduler) run() {
+func (s *Scheduler) run(ctx context.Context) {
 	defer close(s.done)
 	t := time.NewTicker(s.interval)
 	defer t.Stop()
 	for {
 		select {
-		case <-s.stop:
+		case <-ctx.Done():
 			return
 		case <-t.C:
-			if _, err := s.sweep.Sweep(context.Background()); err != nil {
+			if _, err := s.sweep.Sweep(ctx); err != nil {
 				slog.Error("retention: sweep failed", "err", err)
 			}
 		}

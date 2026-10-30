@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -195,7 +196,7 @@ func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateIn
 		}
 	}
 	if in.RetentionDays != nil {
-		if *in.RetentionDays <= 0 {
+		if *in.RetentionDays <= 0 || *in.RetentionDays > math.MaxInt32 {
 			return App{}, apperr.Invalid("retention_days must be positive")
 		}
 		days := int32(*in.RetentionDays)
