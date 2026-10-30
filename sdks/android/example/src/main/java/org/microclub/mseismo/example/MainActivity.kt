@@ -46,12 +46,32 @@ class MainActivity : Activity() {
             text = "Report a bug"
             setOnClickListener { MSeismo.showReportScreen(this@MainActivity) }
         }
+        val recordError = Button(this).apply {
+            text = "Record an error"
+            setOnClickListener {
+                try {
+                    error("Coupon code not found")
+                } catch (e: IllegalStateException) {
+                    val id = MSeismo.recordError(e)
+                    result.text = if (id == null) "m-Seismo is off, see logcat" else "Sent error report $id"
+                }
+            }
+        }
+        val crash = Button(this).apply {
+            text = "Crash the app"
+            setOnClickListener {
+                MSeismo.breadcrumb(BreadcrumbKind.TAP, "Crash the app button")
+                throw IllegalStateException("Test crash from the example app")
+            }
+        }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 48, 48, 48)
             addView(status)
             addView(reportBug)
             addView(send)
+            addView(recordError)
+            addView(crash)
             addView(result)
         }
         setContentView(FrameLayout(this).apply {

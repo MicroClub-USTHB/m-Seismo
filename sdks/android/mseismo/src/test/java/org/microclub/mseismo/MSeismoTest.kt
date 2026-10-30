@@ -230,4 +230,57 @@ class MSeismoTest {
     }
 
     private val valid = Configuration(endpoint = "https://seismo.example.com", appKey = "msk_test")
+
+    private val queueDir get() = File(app.noBackupFilesDir, "mseismo-queue")
+
+    @Test
+    fun aCrashIsSavedWithItsContextAndSentOnTheNextLaunch() {
+        val sent = CountDownLatch(1)
+        var json = JSONObject()
+        MSeismo.send = { _, _, reportJson, _ ->
+            JSONObject(reportJson).takeIf { it.getString("trigger") == "crash" }?.let { json = it; sent.countDown() }
+            SendResult.Accepted
+        }
+        MSeismo.configure(app, valid)
+        MSeismo.configure(app, valid) // twice: still one report per crash
+        MSeismo.breadcrumb(BreadcrumbKind.TAP, "Pay button")
+
+        crash(IllegalStateException("no account for ali@example.com"))
+
+        assertEquals("saved right away, one file", 1, queueDir.listFiles { f -> f.name.endsWith(".json") }!!.size)
+        MSeismo.configure(app, valid) // the next launch
+        assertTrue(sent.await(5, TimeUnit.SECONDS))
+        assertTrue(json.getBoolean("auto_submitted"))
+        assertEquals("java.lang.IllegalStateException", json.getJSONObject("crash").getString("type"))
+        assertEquals("no account for [REDACTED]", json.getJSONObject("crash").getString("reason"))
+        assertTrue("what happened before the crash", json.getJSONArray("breadcrumbs").toString().contains("Pay button"))
+    }
+
+    @Test
+    fun aCrashWhileTheSdkIsOffSavesNothing() {
+        MSeismo.configure(app, valid)
+        MSeismo.configure(app, Configuration(endpoint = "not a url", appKey = "nope"))
+
+        crash(IllegalStateException("boom"))
+
+        assertTrue(queueDir.listFiles().isNullOrEmpty())
+    }
+
+    @Test
+    fun recordErrorSendsANonFatalReportRightAway() {
+        val sent = CountDownLatch(1)
+        var json = JSONObject()
+        MSeismo.send = { _, _, reportJson, _ ->
+            JSONObject(reportJson).takeIf { it.getString("trigger") == "non_fatal" }?.let { json = it; sent.countDown() }
+            SendResult.Accepted
+        }
+        MSeismo.configure(app, valid)
+
+        val id = MSeismo.recordError(IllegalArgumentException("bad coupon"))
+
+        assertTrue(sent.await(5, TimeUnit.SECONDS))
+        assertEquals(id, json.getString("id"))
+        assertTrue(json.getBoolean("auto_submitted"))
+        assertEquals("bad coupon", json.getJSONObject("crash").getString("reason"))
+    }
 }

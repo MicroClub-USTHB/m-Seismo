@@ -192,4 +192,15 @@ class OfflineQueueTest {
         assertNull(q.drain(answer(SendResult.Accepted)))
         assertEquals(2, sent.size)
     }
+
+    // An app that crashes on every launch, before the queue can send: the crash path must not fill the phone.
+    @Test
+    fun crashesSavedFromAnyThreadKeepTheQueueUnderItsLimit() {
+        val dir = File(folder.root, "queue")
+        listOf("a", "b", "c").forEachIndexed { i, id ->
+            OfflineQueue.write(dir, id, """{"id":"$id"}""", maxReports = 2)
+            File(dir, "$id.json").setLastModified(1_000L * (i + 1))
+        }
+        assertEquals(listOf("b.json", "c.json"), saved())
+    }
 }

@@ -55,6 +55,18 @@ screen, override the `mseismo_*` strings in your own `values-xx/strings.xml`
 and keep the same number of items in `mseismo_categories` and
 `mseismo_severities`.
 
+### Crashes
+
+When your app crashes, m-Seismo saves a crash report on the spot, with the
+exception, its stack trace and the context below, then lets the crash go on
+as usual, so Crashlytics still gets it (FR-08). The report is sent the next
+time the app opens, with no screen and nothing for the user to do. Errors you
+catch yourself can be sent right away with `MSeismo.recordError(e)` (FR-09).
+
+Only crashes in Kotlin or Java code are caught; native (NDK) crashes and ANRs
+are not. Release builds shrunk with R8 send obfuscated stack traces, as they
+do to Crashlytics.
+
 Each report also carries context, already redacted on the device:
 
 - **Device**: OS, model, language, battery, free memory, network type and

@@ -20,6 +20,9 @@ internal object MaxChars {
     const val OS_VERSION = 32
     const val MODEL = 64
     const val LOCALE = 35
+    const val CRASH_TYPE = 256
+    const val CRASH_REASON = 4_000
+    const val STACK_FRAME = 1_000
 }
 
 public enum class Category { BUG, CRASH, UI, OTHER }
@@ -27,6 +30,24 @@ public enum class Category { BUG, CRASH, UI, OTHER }
 public enum class Severity { LOW, MEDIUM, HIGH, CRITICAL }
 
 internal enum class Trigger { SHAKE, SCREENSHOT, LONG_PRESS, MANUAL, CRASH, NON_FATAL }
+
+internal data class Crash(val type: String, val reason: String?, val stackTrace: List<String>) {
+    companion object {
+        private const val MAX_FRAMES = 512
+
+        fun of(error: Throwable): Crash {
+            val lines = mutableListOf<String>()
+            val seen = HashSet<Throwable>() // a cause chain can loop
+            var current: Throwable? = error
+            while (current != null && seen.add(current) && lines.size < MAX_FRAMES) {
+                if (current !== error) lines += "Caused by: $current"
+                current.stackTrace.mapTo(lines) { it.toString() }
+                current = current.cause
+            }
+            return Crash(error.javaClass.name, error.message, lines.take(MAX_FRAMES).ifEmpty { listOf(error.toString()) })
+        }
+    }
+}
 
 internal data class UserInput(
     val title: String? = null,
@@ -51,6 +72,7 @@ internal data class Report(
     val breadcrumbs: List<Breadcrumb> = emptyList(),
     val networkRequests: List<NetworkRequest> = emptyList(),
     val bodiesCaptured: Boolean = false,
+    val crash: Crash? = null,
 ) {
     // Limits applied again here: redaction can make text longer.
     fun toJson(): String = JSONObject().apply {
@@ -83,6 +105,13 @@ internal data class Report(
             device.networkType?.let { put("network_type", it) }
             device.orientation?.let { put("orientation", it) }
         })
+        crash?.let { crash ->
+            put("crash", JSONObject().apply {
+                put("type", crash.type.limit(MaxChars.CRASH_TYPE))
+                crash.reason?.let { put("reason", it.limit(MaxChars.CRASH_REASON)) }
+                put("stack_trace", JSONArray(crash.stackTrace.map { it.limit(MaxChars.STACK_FRAME) }))
+            })
+        }
         if (logs.isNotEmpty()) put("logs", JSONArray(logs.takeLast(500).map {
             JSONObject().put("timestamp", timestamp(it.timestampMillis)).put("message", it.message.limit(MaxChars.LOG_MESSAGE))
         }))

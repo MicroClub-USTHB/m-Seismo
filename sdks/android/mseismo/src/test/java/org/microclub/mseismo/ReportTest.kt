@@ -153,6 +153,38 @@ class ReportTest {
         assertEquals(huge.id, JSONObject(json).getString("id"))
     }
 
+    @Test
+    fun crashFollowsTheSpecSchema() {
+        val crash = report.copy(trigger = Trigger.CRASH, autoSubmitted = true, userInput = null, crash = Crash.of(IllegalStateException("cart is empty")))
+        val json = JSONObject(crash.toJson()).getJSONObject("crash")
+        val schema = JSONObject(File("../../../spec/report.schema.json").readText()).getJSONObject("properties").getJSONObject("crash")
+
+        assertFieldsAllowed(json, schema.getJSONObject("properties"), schema.getJSONArray("required"))
+        assertEquals("java.lang.IllegalStateException", json.getString("type"))
+        assertEquals("cart is empty", json.getString("reason"))
+        assertTrue(json.getJSONArray("stack_trace").getString(0).startsWith("org.microclub.mseismo.ReportTest.crashFollowsTheSpecSchema"))
+    }
+
+    @Test
+    fun crashStackListsItsCausesAndStopsAtTheLimit() {
+        val cause = IllegalArgumentException("bad id")
+        val error = RuntimeException("could not load the cart", cause)
+        cause.initCause(error) // a loop: must not run forever
+
+        val stack = Crash.of(error).stackTrace
+        assertTrue("Caused by: java.lang.IllegalArgumentException: bad id" in stack)
+        assertEquals(1, stack.count { it.startsWith("Caused by:") })
+
+        val deep = RuntimeException("deep").apply { stackTrace = Array(2_000) { StackTraceElement("A", "f", "A.kt", it) } }
+        assertEquals(512, Crash.of(deep).stackTrace.size)
+    }
+
+    @Test
+    fun aCrashWithoutAStackStillHasOneLine() {
+        val error = RuntimeException("no stack").apply { stackTrace = emptyArray() }
+        assertEquals(listOf("java.lang.RuntimeException: no stack"), Crash.of(error).stackTrace)
+    }
+
     private fun assertFieldsAllowed(json: JSONObject, allowed: JSONObject, required: JSONArray) {
         for (i in 0 until required.length()) assertTrue("missing ${required.getString(i)}", json.has(required.getString(i)))
         json.keys().forEach { assertTrue("$it is not in the schema", allowed.has(it)) }

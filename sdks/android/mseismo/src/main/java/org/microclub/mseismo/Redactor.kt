@@ -32,6 +32,7 @@ internal class Redactor(
         networkRequests = report.networkRequests.map {
             it.copy(url = redact(it.url), requestBody = it.requestBody?.let(::redact), responseBody = it.responseBody?.let(::redact))
         },
+        crash = report.crash?.let { it.copy(reason = it.reason?.let(::redact), stackTrace = it.stackTrace.map(::redact)) },
     )
 
     companion object {

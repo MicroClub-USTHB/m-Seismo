@@ -64,6 +64,10 @@ public object MSeismo {
             worker.execute { safely { drain() } }
             watchNetwork(application)
             watchLifecycle(application)
+            if (!catchingCrashes) {
+                catchCrashes(::saveCrash)
+                catchingCrashes = true
+            }
         } catch (t: Throwable) {
             this.configuration = null
             app = null
@@ -120,6 +124,7 @@ public object MSeismo {
     private var nextDrain: ScheduledFuture<*>? = null
     private var watchingNetwork = false
     private var watchedLifecycleOf: Application? = null
+    private var catchingCrashes = false
 
     private val drafts = ConcurrentHashMap<String, Draft>()
 
@@ -135,8 +140,11 @@ public object MSeismo {
         severity: Severity? = null,
     ): String? = submit(Trigger.MANUAL, UserInput(title, description, category, severity))
 
-    private fun submit(trigger: Trigger, userInput: UserInput): String? = try {
-        draft(trigger)?.also { sendDraft(it, userInput, screenshot = null) }?.id
+    @JvmStatic
+    public fun recordError(error: Throwable): String? = submit(Trigger.NON_FATAL, userInput = null, error)
+
+    private fun submit(trigger: Trigger, userInput: UserInput?, error: Throwable? = null): String? = try {
+        draft(trigger)?.also { sendDraft(it, userInput, screenshot = null, crash = error?.let(Crash::of)) }?.id
     } catch (t: Throwable) {
         Log.e(TAG, "report failed", t)
         null
@@ -202,46 +210,67 @@ public object MSeismo {
         )
     }
 
-    private fun sendDraft(draft: Draft, userInput: UserInput, screenshot: Bitmap?) {
-        val input = userInput.takeIf { it != UserInput() }
+    private fun sendDraft(draft: Draft, userInput: UserInput?, screenshot: Bitmap?, crash: Crash? = null) {
         worker.execute {
             safely {
                 val device = Device.current(draft.app)
                 val jpeg = screenshot?.toJpeg()?.takeIf { it.size <= MAX_SCREENSHOT_BYTES }
                 deliver(draft.app, draft.config, draft.id, jpeg) { installationId, release ->
-                    Report(
-                        id = draft.id,
-                        installationId = installationId,
-                        sessionId = sessionId,
-                        occurredAtMillis = draft.occurredAt,
-                        environment = draft.config.environment,
-                        release = release,
-                        trigger = draft.trigger,
-                        autoSubmitted = false,
-                        userInput = input,
-                        device = device,
-                        logs = draft.logs,
-                        breadcrumbs = draft.breadcrumbs,
-                        networkRequests = draft.requests,
-                        bodiesCaptured = draft.config.captureNetworkBodies,
-                    )
+                    reportOf(draft, installationId, release, device, userInput, crash)
                 }
             }
         }
     }
 
+    // On the crashing thread, not the worker: the app closes right after this returns.
+    private fun saveCrash(error: Throwable) {
+        val draft = draft(Trigger.CRASH) ?: return
+        val (installationId, release) = idsFor(draft.app, draft.config) ?: run {
+            Log.w(TAG, "crash not saved: installation ID or release unavailable")
+            return
+        }
+        val report = reportOf(draft, installationId, release, Device.current(draft.app), userInput = null, Crash.of(error))
+        OfflineQueue.write(queueDir(draft.app), draft.id, jsonOf(draft.config, report))
+        Log.i(TAG, "crash saved as report ${draft.id}, sent on the next launch")
+    }
+
+    private fun reportOf(draft: Draft, installationId: String, release: Release, device: Device, userInput: UserInput?, crash: Crash?) =
+        Report(
+            id = draft.id,
+            installationId = installationId,
+            sessionId = sessionId,
+            occurredAtMillis = draft.occurredAt,
+            environment = draft.config.environment,
+            release = release,
+            trigger = draft.trigger,
+            autoSubmitted = crash != null, // crashes are sent without the report screen
+            userInput = userInput?.takeIf { it != UserInput() },
+            device = device,
+            logs = draft.logs,
+            breadcrumbs = draft.breadcrumbs,
+            networkRequests = draft.requests,
+            bodiesCaptured = draft.config.captureNetworkBodies,
+            crash = crash,
+        )
+
+    private fun idsFor(app: Application, config: Configuration): Pair<String, Release>? {
+        val installationId = installationIdCache.get(app) ?: return null
+        val release = config.release ?: releaseCache.get(app) ?: return null
+        return installationId to release
+    }
+
+    private fun jsonOf(config: Configuration, report: Report): String =
+        Redactor(config.redactionRules, config.redactionAllowList, config.redactionDenyList).redact(report).toJsonUnder()
+
     // Uses the app and configuration from when report() was called, even if configure() runs again meanwhile.
     // build gets the installation ID and release, which are read here, off the caller's thread.
     private fun deliver(app: Application, config: Configuration, id: String, screenshot: ByteArray?, build: (String, Release) -> Report) {
-        val installationId = installationIdCache.get(app)
-        val release = config.release ?: releaseCache.get(app)
-        if (installationId == null || release == null) {
+        val (installationId, release) = idsFor(app, config) ?: run {
             // Storage hiccup: retry in 10 s.
             worker.schedule({ safely { deliver(app, config, id, screenshot, build) } }, 10, TimeUnit.SECONDS)
             return
         }
-        val redactor = Redactor(config.redactionRules, config.redactionAllowList, config.redactionDenyList)
-        val json = redactor.redact(build(installationId, release)).toJsonUnder()
+        val json = jsonOf(config, build(installationId, release))
         try {
             queueFor(app).add(id, json, screenshot)
         } catch (e: Exception) {
@@ -252,8 +281,10 @@ public object MSeismo {
         drain()
     }
 
+    private fun queueDir(app: Application) = File(app.noBackupFilesDir, "mseismo-queue")
+
     private fun queueFor(app: Application): OfflineQueue {
-        val dir = File(app.noBackupFilesDir, "mseismo-queue")
+        val dir = queueDir(app)
         return queue?.takeIf { it.dir == dir } ?: OfflineQueue(dir).also { queue = it }
     }
 

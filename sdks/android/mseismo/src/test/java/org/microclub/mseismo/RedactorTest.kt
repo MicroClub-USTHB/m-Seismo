@@ -59,4 +59,19 @@ class RedactorTest {
         val json = redactor.redact(report).toString()
         assertEquals(false, email in json)
     }
+
+    // Stack lines are redacted too, for the messages in "Caused by:". The rules must leave the frames readable.
+    @Test
+    fun stackFramesAreLeftIntact() {
+        val frames = listOf(
+            "org.microclub.mseismo.example.MainActivity.onCreate\$lambda\$5\$0(MainActivity.kt:65)",
+            "android.view.View.performClick(View.java:8083)",
+            "com.android.internal.os.ZygoteInit.main(ZygoteInit.java:972)",
+            "a.b.c.d(SourceFile:1234567)", // R8: short names, big line numbers
+            "x0.a\$b.invokeSuspend(Unknown Source:12)",
+            "java.lang.reflect.Method.invoke(Native Method)",
+        )
+        assertEquals(frames, frames.map(redactor::redact))
+        assertEquals("Caused by: java.lang.IllegalStateException: no account for [REDACTED]", redactor.redact("Caused by: java.lang.IllegalStateException: no account for ali@example.com"))
+    }
 }

@@ -27,6 +27,7 @@ public class JavaApiTest {
         MSeismo.report();
         MSeismo.report("title");
         MSeismo.report("title", "description", Category.BUG, Severity.HIGH);
+        MSeismo.recordError(new IllegalStateException("from Java"));
         MSeismo.showReportScreen(Robolectric.buildActivity(Activity.class).setup().get());
         MSeismo.getSessionId();
         MSeismo.getSDK_VERSION();

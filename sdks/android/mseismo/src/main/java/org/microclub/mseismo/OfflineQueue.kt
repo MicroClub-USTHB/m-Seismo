@@ -8,13 +8,13 @@ import kotlin.math.min
 import kotlin.random.Random
 
 // Reports waiting to be sent: <id>.json, plus <id>.jpg when there is a screenshot.
-// Kept until the backend accepts or rejects them. One thread only.
+// Kept until the backend accepts or rejects them. An instance is for one thread only; write() works from any.
 internal class OfflineQueue(
     val dir: File,
     // Monotonic, so changing the phone's clock can't stall retries.
     private val now: () -> Long = SystemClock::elapsedRealtime,
     private val random: Random = Random.Default,
-    private val maxReports: Int = 100,
+    private val maxReports: Int = MAX_REPORTS,
 ) {
     // notBefore: the backend's Retry-After.
     private class Backoff(var attempts: Int, var nextTryAt: Long, var notBefore: Long)
@@ -33,16 +33,12 @@ internal class OfflineQueue(
     fun add(id: String, reportJson: String, screenshotJpeg: ByteArray? = null) {
         dir.mkdirs()
         if (screenshotJpeg != null) save(File(dir, "$id.jpg")) { it.writeBytes(screenshotJpeg) }
-        save(File(dir, "$id.json")) { it.writeText(reportJson) }
-        files().dropLast(maxReports).forEach {
-            Log.w(MSeismo.TAG, "queue full: report ${it.nameWithoutExtension} dropped")
-            forget(it)
-        }
+        write(dir, id, reportJson, maxReports)
     }
 
     // Returns ms until the next retry, or null if none. send returns null when the SDK is off.
     fun drain(send: (reportJson: String, screenshotJpeg: ByteArray?) -> SendResult?): Long? {
-        val files = files()
+        val files = reportsIn(dir)
         // Forget retries for reports deleted elsewhere (e.g. by another process of the app).
         backoffs.keys.retainAll(files.map { it.nameWithoutExtension }.toSet())
         for (file in files) {
@@ -89,21 +85,38 @@ internal class OfflineQueue(
         return capMs / 2 + random.nextLong(capMs / 2 + 1)
     }
 
-    private fun files(): List<File> =
-        dir.listFiles { f -> f.name.endsWith(".json") }.orEmpty().sortedWith(compareBy({ it.lastModified() }, { it.name }))
-
-    // Rename is atomic, so a crash mid-write never leaves a half-written file under its real name.
-    private fun save(file: File, write: (File) -> Unit) {
-        val tmp = File(dir, "${file.name}.tmp")
-        write(tmp)
-        check(tmp.renameTo(file)) { "could not save ${file.name}" }
+    private fun forget(file: File) {
+        delete(file)
+        backoffs.remove(file.nameWithoutExtension)
     }
 
-    private fun screenshotOf(report: File) = File(dir, "${report.nameWithoutExtension}.jpg")
+    companion object {
+        const val MAX_REPORTS = 100
 
-    private fun forget(file: File) {
-        file.delete()
-        screenshotOf(file).delete()
-        backoffs.remove(file.nameWithoutExtension)
+        fun write(dir: File, id: String, reportJson: String, maxReports: Int = MAX_REPORTS) {
+            dir.mkdirs()
+            save(File(dir, "$id.json")) { it.writeText(reportJson) }
+            reportsIn(dir).dropLast(maxReports).forEach {
+                Log.w(MSeismo.TAG, "queue full: report ${it.nameWithoutExtension} dropped")
+                delete(it)
+            }
+        }
+
+        private fun reportsIn(dir: File): List<File> =
+            dir.listFiles { f -> f.name.endsWith(".json") }.orEmpty().sortedWith(compareBy({ it.lastModified() }, { it.name }))
+
+        private fun screenshotOf(report: File) = File(report.parentFile, "${report.nameWithoutExtension}.jpg")
+
+        private fun delete(report: File) {
+            report.delete()
+            screenshotOf(report).delete()
+        }
+
+        // Rename is atomic, so a crash mid-write never leaves a half-written file under its real name.
+        private fun save(file: File, write: (File) -> Unit) {
+            val tmp = File(file.parentFile, "${file.name}.tmp")
+            write(tmp)
+            check(tmp.renameTo(file)) { "could not save ${file.name}" }
+        }
     }
 }
