@@ -18,7 +18,6 @@ import (
 // webhook of its own. GitHub doesn't implement WebhookManager at all,
 // which Ensure must treat as a no-op rather than an error.
 type fakeWebhookManager struct {
-	tracker  db.Tracker
 	created  []issue.Connection
 	hook     Webhook
 	err      error
