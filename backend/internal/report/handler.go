@@ -21,11 +21,12 @@ func NewHandler(svc *Service, require httpx.AuthMiddleware) *Handler {
 	return &Handler{svc: svc, require: require}
 }
 
+// Mount registers full paths directly (not r.Route("/apps/{appID}", ...)):
+// that would Mount a second sub-router at the same pattern app.Handler
+// already owns, which shadows its own routes under /apps/{appID}.
 func (h *Handler) Mount(r chi.Router) {
-	r.With(h.require).Route("/apps/{appID}", func(r chi.Router) {
-		r.Delete("/reports/{reportID}", h.deleteReport)
-		r.Delete("/installations/{installationID}/reports", h.deleteByInstallation)
-	})
+	r.With(h.require).Delete("/apps/{appID}/reports/{reportID}", h.deleteReport)
+	r.With(h.require).Delete("/apps/{appID}/installations/{installationID}/reports", h.deleteByInstallation)
 }
 
 func (h *Handler) deleteReport(w http.ResponseWriter, r *http.Request) {
