@@ -244,12 +244,14 @@ type Project struct {
 }
 
 type ProjectRepository struct {
-	ID         uuid.UUID `json:"id"`
-	ProjectID  uuid.UUID `json:"project_id"`
-	Repository string    `json:"repository"`
-	IsDefault  bool      `json:"is_default"`
-	CreatedAt  time.Time `json:"created_at"`
-	Tracker    Tracker   `json:"tracker"`
+	ID                uuid.UUID `json:"id"`
+	ProjectID         uuid.UUID `json:"project_id"`
+	Repository        string    `json:"repository"`
+	IsDefault         bool      `json:"is_default"`
+	CreatedAt         time.Time `json:"created_at"`
+	Tracker           Tracker   `json:"tracker"`
+	WebhookExternalID *string   `json:"webhook_external_id"`
+	WebhookSecret     []byte    `json:"webhook_secret"`
 }
 
 type ProviderConnection struct {
