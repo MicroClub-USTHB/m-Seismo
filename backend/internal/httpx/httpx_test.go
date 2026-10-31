@@ -112,3 +112,73 @@ func TestUpstreamRetryAfterIsClassified(t *testing.T) {
 		t.Errorf("status %d, Retry-After %q; want 429 and 10", rec.Code, rec.Header().Get("Retry-After"))
 	}
 }
+
+// ownerRoutes owns "/apps/{appID}" the way the app package does: a nested
+// r.Route("/apps", func(r) { r.Route("/{appID}", ...) }).
+type ownerRoutes struct{}
+
+func (ownerRoutes) Mount(r chi.Router) {
+	r.Route("/apps", func(r chi.Router) {
+		r.Route("/{appID}", func(r chi.Router) {
+			r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte("app:" + chi.URLParam(r, "appID")))
+			})
+			r.Get("/keys", func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte("keys:" + chi.URLParam(r, "appID")))
+			})
+		})
+	})
+}
+
+// addOnBadRoutes reproduces the #94 regression: a second package, wanting
+// to add a route under the same /apps/{appID} another package already
+// owns, calls r.Route on the exact same pattern. chi mounts a second
+// sub-router there, which shadows ownerRoutes' own routes entirely.
+type addOnBadRoutes struct{}
+
+func (addOnBadRoutes) Mount(r chi.Router) {
+	r.Route("/apps/{appID}", func(r chi.Router) {
+		r.Delete("/reports/{reportID}", func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("deleted"))
+		})
+	})
+}
+
+// addOnGoodRoutes is the fix: register full paths directly, so chi adds
+// methods to the existing node instead of mounting a competing sub-router.
+type addOnGoodRoutes struct{}
+
+func (addOnGoodRoutes) Mount(r chi.Router) {
+	r.Delete("/apps/{appID}/reports/{reportID}", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("deleted"))
+	})
+}
+
+func TestMountingASecondRouteGroupAtAnOwnedPrefixShadowsIt(t *testing.T) {
+	r := NewRouter(routerParams{Routes: []Routes{ownerRoutes{}, addOnBadRoutes{}}}, &config.Config{})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/a1/keys", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("this test documents the #94 regression: GET /apps/{id}/keys status = %d, want 404 (shadowed) — if this now passes, chi's behavior changed and the warning in report.Handler.Mount can be dropped", rec.Code)
+	}
+}
+
+// TestAppRoutesSurviveAnAddOnPackage guards the fix: another package's
+// routes under the same /apps/{appID} prefix must not shadow the owner's.
+func TestAppRoutesSurviveAnAddOnPackage(t *testing.T) {
+	r := NewRouter(routerParams{Routes: []Routes{ownerRoutes{}, addOnGoodRoutes{}}}, &config.Config{})
+
+	for _, tt := range []struct{ method, path, want string }{
+		{http.MethodGet, "/api/v1/apps/a1", "app:a1"},
+		{http.MethodGet, "/api/v1/apps/a1/keys", "keys:a1"},
+		{http.MethodDelete, "/api/v1/apps/a1/reports/r1", "deleted"},
+	} {
+		req := httptest.NewRequest(tt.method, tt.path, nil)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || rec.Body.String() != tt.want {
+			t.Errorf("%s %s: status %d, body %q; want 200 %q", tt.method, tt.path, rec.Code, rec.Body.String(), tt.want)
+		}
+	}
+}
