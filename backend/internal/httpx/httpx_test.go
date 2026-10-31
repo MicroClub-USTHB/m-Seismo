@@ -121,10 +121,10 @@ func (ownerRoutes) Mount(r chi.Router) {
 	r.Route("/apps", func(r chi.Router) {
 		r.Route("/{appID}", func(r chi.Router) {
 			r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-				_, _ = w.Write([]byte("app:" + chi.URLParam(r, "appID")))
+				_, _ = w.Write([]byte("app:" + chi.URLParam(r, "appID"))) //nolint:gosec // G705: test fixture, echoing a path param back is the point
 			})
 			r.Get("/keys", func(w http.ResponseWriter, r *http.Request) {
-				_, _ = w.Write([]byte("keys:" + chi.URLParam(r, "appID")))
+				_, _ = w.Write([]byte("keys:" + chi.URLParam(r, "appID"))) //nolint:gosec // G705: test fixture, echoing a path param back is the point
 			})
 		})
 	})
