@@ -27,17 +27,23 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider/oauth"
 )
 
-// Module registers the GitLab provider. It is always available: each app
-// registers its own OAuth application (client ID and secret) before it can
-// connect, through provider.CredentialStore, instead of the deployment
-// sharing one configured in gitlab.client_id/client_secret.
+// Module registers the GitLab provider and its webhook. It is always
+// available: each app registers its own OAuth application (client ID and
+// secret) before it can connect, through provider.CredentialStore, instead
+// of the deployment sharing one configured in gitlab.client_id/client_secret.
 var Module = fx.Module("gitlab",
-	fx.Provide(provider.AsProvider(FromConfig)),
+	fx.Provide(
+		provider.AsProvider(FromConfig),
+		func(q db.Querier) IssueStates { return q },
+		func(q db.Querier) WebhookSecrets { return q },
+		httpx.AsRoutes(NewWebhookHandler),
+	),
 )
 
 // FromConfig builds the provider from the deployment-wide GitLab instance
@@ -50,6 +56,7 @@ func FromConfig(cfg *config.Config, store provider.SecretStore, creds provider.C
 		APIURL:           c.APIURL,
 		RedirectURL:      c.RedirectURL,
 		MaxRateLimitWait: c.MaxRateLimitWait,
+		WebhookURL:       strings.TrimRight(cfg.Server.PublicURL, "/") + "/api/v1/webhooks/gitlab",
 	}, store, creds)
 	if err != nil {
 		return nil, err
@@ -65,6 +72,9 @@ type Options struct {
 	// RedirectURL is the OAuth callback registered on every app's GitLab
 	// application: {public_url}/api/v1/providers/gitlab/callback.
 	RedirectURL string
+	// WebhookURL is where a project's Issue Hook delivers:
+	// {public_url}/api/v1/webhooks/gitlab.
+	WebhookURL string
 	// MaxRateLimitWait: see oauth.Client.
 	MaxRateLimitWait time.Duration
 	// PageSize is how many projects are listed per request (default 100).
@@ -254,6 +264,40 @@ func (p *Provider) Opener(_ context.Context, c issue.Connection) (issue.Opener, 
 	return &opener{p: p, auth: p.tokens.For(c.ID, c.AppID)}, nil
 }
 
+// CreateWebhook implements provider.WebhookManager: registers an Issue
+// Hook for close/reopen, checked with X-Gitlab-Token (FR-56).
+func (p *Provider) CreateWebhook(ctx context.Context, c issue.Connection, repository string) (provider.Webhook, error) {
+	if err := p.ValidateRepository(repository); err != nil {
+		return provider.Webhook{}, err
+	}
+	token, err := provider.RandomSecret()
+	if err != nil {
+		return provider.Webhook{}, err
+	}
+	req := map[string]any{
+		"url":                     p.opts.WebhookURL,
+		"token":                   token,
+		"issues_events":           true,
+		"enable_ssl_verification": true,
+	}
+	var created struct {
+		ID int `json:"id"`
+	}
+	if _, err := p.api.Do(ctx, p.tokens.For(c.ID, c.AppID), http.MethodPost, projectPath(repository)+"/hooks", req, &created); err != nil {
+		return provider.Webhook{}, fmt.Errorf("gitlab: create webhook on %s: %w", repository, err)
+	}
+	return provider.Webhook{ExternalID: strconv.Itoa(created.ID), Secret: token}, nil
+}
+
+// DeleteWebhook implements provider.WebhookManager.
+func (p *Provider) DeleteWebhook(ctx context.Context, c issue.Connection, repository string, hook provider.Webhook) error {
+	path := projectPath(repository) + "/hooks/" + url.PathEscape(hook.ExternalID)
+	if _, err := p.api.Do(ctx, p.tokens.For(c.ID, c.AppID), http.MethodDelete, path, nil, nil); err != nil {
+		return fmt.Errorf("gitlab: delete webhook %s on %s: %w", hook.ExternalID, repository, err)
+	}
+	return nil
+}
+
 // projectPath is the API path of a project, addressed by its URL-encoded
 // full path as GitLab allows ("group%2Fproject").
 func projectPath(repository string) string {
@@ -267,4 +311,7 @@ func withSlash(s string) string {
 	return s + "/"
 }
 
-var _ provider.Provider = (*Provider)(nil)
+var (
+	_ provider.Provider       = (*Provider)(nil)
+	_ provider.WebhookManager = (*Provider)(nil)
+)

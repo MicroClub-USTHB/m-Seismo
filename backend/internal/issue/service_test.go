@@ -116,7 +116,7 @@ func TestOpenForApp(t *testing.T) {
 		conns: map[uuid.UUID][]db.ProviderConnection{appID: {gh, newConn(appID, db.TrackerGitlab, "9", "group")}},
 	}
 	op := &fakeOpener{fail: map[string]bool{"octo/down": true}}
-	svc := NewService(q, &fakeSource{opener: op})
+	svc := NewService(q, &fakeSource{opener: op}, nil)
 
 	results, err := svc.OpenForApp(context.Background(), appID, Draft{
 		Title:       "Crash on login",
@@ -163,7 +163,7 @@ func TestOpenForAppAllFail(t *testing.T) {
 		targets: []db.ListIssueTargetsForAppRow{newTarget("octo/down", db.TrackerGithub)},
 		conns:   map[uuid.UUID][]db.ProviderConnection{appID: {newConn(appID, db.TrackerGithub, "42", "octo")}},
 	}
-	svc := NewService(q, &fakeSource{opener: &fakeOpener{fail: map[string]bool{"octo/down": true}}})
+	svc := NewService(q, &fakeSource{opener: &fakeOpener{fail: map[string]bool{"octo/down": true}}}, nil)
 
 	results, err := svc.OpenForApp(context.Background(), appID, Draft{Title: "x"})
 	if err == nil {
@@ -175,14 +175,14 @@ func TestOpenForAppAllFail(t *testing.T) {
 }
 
 func TestOpenForAppNoTargets(t *testing.T) {
-	svc := NewService(&fakeQuerier{}, &fakeSource{opener: &fakeOpener{}})
+	svc := NewService(&fakeQuerier{}, &fakeSource{opener: &fakeOpener{}}, nil)
 	if _, err := svc.OpenForApp(context.Background(), uuid.New(), Draft{Title: "x"}); !errors.Is(err, ErrNoTargets) {
 		t.Fatalf("err = %v, want ErrNoTargets", err)
 	}
 }
 
 func TestOpenRequiresTitle(t *testing.T) {
-	svc := NewService(&fakeQuerier{}, &fakeSource{opener: &fakeOpener{}})
+	svc := NewService(&fakeQuerier{}, &fakeSource{opener: &fakeOpener{}}, nil)
 	if _, err := svc.OpenForApp(context.Background(), uuid.New(), Draft{}); err == nil {
 		t.Fatal("want error for empty title")
 	}
@@ -200,7 +200,7 @@ func TestOpenForAppWithoutConnection(t *testing.T) {
 		conns: map[uuid.UUID][]db.ProviderConnection{appID: {newConn(appID, db.TrackerGithub, "42", "octo")}},
 	}
 	op := &fakeOpener{}
-	svc := NewService(q, &fakeSource{opener: op})
+	svc := NewService(q, &fakeSource{opener: op}, nil)
 
 	results, err := svc.OpenForApp(context.Background(), appID, Draft{Title: "x"})
 	if err != nil {
@@ -228,7 +228,7 @@ func TestEachAppUsesItsOwnConnection(t *testing.T) {
 		conns:   map[uuid.UUID][]db.ProviderConnection{appA: {connA}, appB: {connB}},
 	}
 	src := &fakeSource{opener: &fakeOpener{}}
-	svc := NewService(q, src)
+	svc := NewService(q, src, nil)
 
 	for _, app := range []uuid.UUID{appA, appB} {
 		if _, err := svc.OpenForApp(context.Background(), app, Draft{Title: "x"}); err != nil {
@@ -251,7 +251,7 @@ func TestOpenInRepository(t *testing.T) {
 		targets: []db.ListIssueTargetsForAppRow{tg},
 		conns:   map[uuid.UUID][]db.ProviderConnection{appID: {conn}},
 	}
-	svc := NewService(q, &fakeSource{opener: &fakeOpener{}})
+	svc := NewService(q, &fakeSource{opener: &fakeOpener{}}, nil)
 
 	res, err := svc.OpenInRepository(context.Background(), appID, tg.ProjectRepositoryID, Draft{Title: "x"})
 	if err != nil {
@@ -273,7 +273,7 @@ func TestOpenInRepositoryWithoutConnection(t *testing.T) {
 		targets: []db.ListIssueTargetsForAppRow{tg},
 		conns:   map[uuid.UUID][]db.ProviderConnection{appID: {}},
 	}
-	svc := NewService(q, &fakeSource{opener: &fakeOpener{}})
+	svc := NewService(q, &fakeSource{opener: &fakeOpener{}}, nil)
 
 	if _, err := svc.OpenInRepository(context.Background(), appID, tg.ProjectRepositoryID, Draft{Title: "x"}); !errors.Is(err, ErrNoConnection) {
 		t.Fatalf("err = %v, want ErrNoConnection", err)
@@ -290,7 +290,7 @@ func TestTargets(t *testing.T) {
 		},
 		conns: map[uuid.UUID][]db.ProviderConnection{appID: {conn}},
 	}
-	svc := NewService(q, &fakeSource{opener: &fakeOpener{}})
+	svc := NewService(q, &fakeSource{opener: &fakeOpener{}}, nil)
 
 	ts, err := svc.Targets(context.Background(), appID)
 	if err != nil {
@@ -304,7 +304,7 @@ func TestTargets(t *testing.T) {
 		t.Errorf("gitlab target = %+v", ts[1])
 	}
 
-	empty, err := NewService(&fakeQuerier{}, &fakeSource{}).Targets(context.Background(), appID)
+	empty, err := NewService(&fakeQuerier{}, &fakeSource{}, nil).Targets(context.Background(), appID)
 	if err != nil || empty == nil || len(empty) != 0 {
 		t.Errorf("no targets = %v, %v; want an empty slice", empty, err)
 	}
@@ -324,7 +324,7 @@ func TestRateLimitedConnectionIsSkipped(t *testing.T) {
 		}},
 	}
 	op := &fakeOpener{limited: map[string]bool{"octo/limited": true}}
-	svc := NewService(q, &fakeSource{opener: op})
+	svc := NewService(q, &fakeSource{opener: op}, nil)
 
 	results, err := svc.OpenForApp(context.Background(), appID, Draft{Title: "x"})
 	if err != nil {

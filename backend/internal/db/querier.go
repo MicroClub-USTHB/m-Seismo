@@ -78,6 +78,10 @@ type Querier interface {
 	ListOwners(ctx context.Context) ([]Owner, error)
 	ListProjectApps(ctx context.Context, projectID uuid.UUID) ([]App, error)
 	ListProjectRepositories(ctx context.Context, projectID uuid.UUID) ([]ProjectRepository, error)
+	// The same tracker repository can be linked to more than one project, each
+	// with its own webhook and secret; a delivery is checked against all of
+	// them.
+	ListProjectRepositoryWebhookSecrets(ctx context.Context, arg ListProjectRepositoryWebhookSecretsParams) ([]ListProjectRepositoryWebhookSecretsRow, error)
 	ListProjects(ctx context.Context, ownerID uuid.UUID) ([]Project, error)
 	ListReportAttachments(ctx context.Context, reportID uuid.UUID) ([]ListReportAttachmentsRow, error)
 	ListReportDeliveries(ctx context.Context, reportID uuid.UUID) ([]ReportDelivery, error)
@@ -101,6 +105,7 @@ type Querier interface {
 	// external_id, e.g. after the tracker said it was closed. References are
 	// compared without case, like GitHub compares repository names.
 	SetIssueStateByExternalID(ctx context.Context, arg SetIssueStateByExternalIDParams) (int64, error)
+	SetProjectRepositoryWebhook(ctx context.Context, arg SetProjectRepositoryWebhookParams) error
 	UnlinkAppProject(ctx context.Context, arg UnlinkAppProjectParams) (int64, error)
 	UnlinkProjectRepository(ctx context.Context, arg UnlinkProjectRepositoryParams) (int64, error)
 	UpdateApp(ctx context.Context, arg UpdateAppParams) (App, error)
