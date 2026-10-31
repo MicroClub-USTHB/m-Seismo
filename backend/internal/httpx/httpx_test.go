@@ -121,10 +121,10 @@ func (ownerRoutes) Mount(r chi.Router) {
 	r.Route("/apps", func(r chi.Router) {
 		r.Route("/{appID}", func(r chi.Router) {
 			r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-				w.Write([]byte("app:" + chi.URLParam(r, "appID")))
+				_, _ = w.Write([]byte("app:" + chi.URLParam(r, "appID")))
 			})
 			r.Get("/keys", func(w http.ResponseWriter, r *http.Request) {
-				w.Write([]byte("keys:" + chi.URLParam(r, "appID")))
+				_, _ = w.Write([]byte("keys:" + chi.URLParam(r, "appID")))
 			})
 		})
 	})
@@ -139,7 +139,7 @@ type addOnBadRoutes struct{}
 func (addOnBadRoutes) Mount(r chi.Router) {
 	r.Route("/apps/{appID}", func(r chi.Router) {
 		r.Delete("/reports/{reportID}", func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte("deleted"))
+			_, _ = w.Write([]byte("deleted"))
 		})
 	})
 }
@@ -150,7 +150,7 @@ type addOnGoodRoutes struct{}
 
 func (addOnGoodRoutes) Mount(r chi.Router) {
 	r.Delete("/apps/{appID}/reports/{reportID}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("deleted"))
+		_, _ = w.Write([]byte("deleted"))
 	})
 }
 
