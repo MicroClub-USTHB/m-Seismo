@@ -31,17 +31,23 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider/oauth"
 )
 
-// Module registers the Bitbucket provider. It is always available: each
-// app registers its own OAuth consumer (key and secret) before it can
-// connect, through provider.CredentialStore, instead of the deployment
-// sharing one configured in bitbucket.client_id/client_secret.
+// Module registers the Bitbucket provider and its webhook. It is always
+// available: each app registers its own OAuth consumer (key and secret)
+// before it can connect, through provider.CredentialStore, instead of the
+// deployment sharing one configured in bitbucket.client_id/client_secret.
 var Module = fx.Module("bitbucket",
-	fx.Provide(provider.AsProvider(FromConfig)),
+	fx.Provide(
+		provider.AsProvider(FromConfig),
+		func(q db.Querier) IssueStates { return q },
+		func(q db.Querier) WebhookSecrets { return q },
+		httpx.AsRoutes(NewWebhookHandler),
+	),
 )
 
 // FromConfig builds the provider from the deployment-wide Bitbucket
@@ -54,6 +60,7 @@ func FromConfig(cfg *config.Config, store provider.SecretStore, creds provider.C
 		APIURL:           c.APIURL,
 		RedirectURL:      c.RedirectURL,
 		MaxRateLimitWait: c.MaxRateLimitWait,
+		WebhookURL:       strings.TrimRight(cfg.Server.PublicURL, "/") + "/api/v1/webhooks/bitbucket",
 	}, store, creds)
 	if err != nil {
 		return nil, err
@@ -69,6 +76,9 @@ type Options struct {
 	// RedirectURL is the consumer's callback URL, shared by every app:
 	// {public_url}/api/v1/providers/bitbucket/callback.
 	RedirectURL string
+	// WebhookURL is where a repository's webhook delivers:
+	// {public_url}/api/v1/webhooks/bitbucket.
+	WebhookURL string
 	// MaxRateLimitWait: see oauth.Client.
 	MaxRateLimitWait time.Duration
 	// PageSize is how many repositories are listed per request (default
@@ -256,6 +266,46 @@ func (p *Provider) Opener(_ context.Context, c issue.Connection) (issue.Opener, 
 	return &opener{p: p, auth: p.tokens.For(c.ID, c.AppID)}, nil
 }
 
+// CreateWebhook implements provider.WebhookManager: registers a webhook
+// for issue:updated, signed with a secret (checked via X-Hub-Signature,
+// FR-56).
+func (p *Provider) CreateWebhook(ctx context.Context, c issue.Connection, repository string) (provider.Webhook, error) {
+	path, err := repoPath(repository)
+	if err != nil {
+		return provider.Webhook{}, err
+	}
+	secret, err := provider.RandomSecret()
+	if err != nil {
+		return provider.Webhook{}, err
+	}
+	req := map[string]any{
+		"description": "m-Seismo",
+		"url":         p.opts.WebhookURL,
+		"active":      true,
+		"events":      []string{"issue:updated"},
+		"secret":      secret,
+	}
+	var created struct {
+		UUID string `json:"uuid"`
+	}
+	if _, err := p.api.Do(ctx, p.tokens.For(c.ID, c.AppID), http.MethodPost, path+"/hooks", req, &created); err != nil {
+		return provider.Webhook{}, fmt.Errorf("bitbucket: create webhook on %s: %w", repository, err)
+	}
+	return provider.Webhook{ExternalID: created.UUID, Secret: secret}, nil
+}
+
+// DeleteWebhook implements provider.WebhookManager.
+func (p *Provider) DeleteWebhook(ctx context.Context, c issue.Connection, repository string, hook provider.Webhook) error {
+	path, err := repoPath(repository)
+	if err != nil {
+		return err
+	}
+	if _, err := p.api.Do(ctx, p.tokens.For(c.ID, c.AppID), http.MethodDelete, path+"/hooks/"+url.PathEscape(hook.ExternalID), nil, nil); err != nil {
+		return fmt.Errorf("bitbucket: delete webhook %s on %s: %w", hook.ExternalID, repository, err)
+	}
+	return nil
+}
+
 // repoPath is the API path of workspace/repo_slug.
 func repoPath(repository string) (string, error) {
 	ws, slug, ok := strings.Cut(repository, "/")
@@ -272,4 +322,7 @@ func withSlash(s string) string {
 	return s + "/"
 }
 
-var _ provider.Provider = (*Provider)(nil)
+var (
+	_ provider.Provider       = (*Provider)(nil)
+	_ provider.WebhookManager = (*Provider)(nil)
+)

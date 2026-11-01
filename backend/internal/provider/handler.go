@@ -29,6 +29,8 @@ var Module = fx.Module("provider",
 		NewDBSecretStore,
 		NewDBCredentialStore,
 		NewService,
+		NewWebhookService,
+		func(s *WebhookService) issue.Webhooks { return s },
 		httpx.AsRoutes(NewHandler),
 	),
 )

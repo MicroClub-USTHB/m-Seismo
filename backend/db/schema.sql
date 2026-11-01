@@ -237,7 +237,9 @@ CREATE TABLE public.project_repositories (
     repository text NOT NULL,
     is_default boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    tracker public.tracker NOT NULL
+    tracker public.tracker NOT NULL,
+    webhook_external_id text,
+    webhook_secret bytea
 );
 
 
@@ -922,4 +924,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261029090000'),
     ('20261030160000'),
     ('20261030170000'),
-    ('20261030180000');
+    ('20261030180000'),
+    ('20261031090000');

@@ -27,7 +27,9 @@ SELECT
     pr.id AS project_repository_id,
     pr.project_id,
     pr.tracker,
-    pr.repository
+    pr.repository,
+    pr.webhook_external_id,
+    pr.webhook_secret
 FROM project_repositories pr
 JOIN app_projects ap ON ap.project_id = pr.project_id
 WHERE pr.id = $1 AND ap.app_id = $2
@@ -43,6 +45,8 @@ type GetIssueTargetRow struct {
 	ProjectID           uuid.UUID `json:"project_id"`
 	Tracker             Tracker   `json:"tracker"`
 	Repository          string    `json:"repository"`
+	WebhookExternalID   *string   `json:"webhook_external_id"`
+	WebhookSecret       []byte    `json:"webhook_secret"`
 }
 
 // One project repository, provided the app is linked to its project. The
@@ -55,12 +59,14 @@ func (q *Queries) GetIssueTarget(ctx context.Context, arg GetIssueTargetParams) 
 		&i.ProjectID,
 		&i.Tracker,
 		&i.Repository,
+		&i.WebhookExternalID,
+		&i.WebhookSecret,
 	)
 	return i, err
 }
 
 const getProjectRepository = `-- name: GetProjectRepository :one
-SELECT id, project_id, repository, is_default, created_at, tracker FROM project_repositories
+SELECT id, project_id, repository, is_default, created_at, tracker, webhook_external_id, webhook_secret FROM project_repositories
 WHERE id = $1 AND project_id = $2
 `
 
@@ -79,6 +85,8 @@ func (q *Queries) GetProjectRepository(ctx context.Context, arg GetProjectReposi
 		&i.IsDefault,
 		&i.CreatedAt,
 		&i.Tracker,
+		&i.WebhookExternalID,
+		&i.WebhookSecret,
 	)
 	return i, err
 }
@@ -86,7 +94,7 @@ func (q *Queries) GetProjectRepository(ctx context.Context, arg GetProjectReposi
 const linkProjectRepository = `-- name: LinkProjectRepository :one
 INSERT INTO project_repositories (project_id, tracker, repository, is_default)
 VALUES ($1, $2, $3, $4)
-RETURNING id, project_id, repository, is_default, created_at, tracker
+RETURNING id, project_id, repository, is_default, created_at, tracker, webhook_external_id, webhook_secret
 `
 
 type LinkProjectRepositoryParams struct {
@@ -111,6 +119,8 @@ func (q *Queries) LinkProjectRepository(ctx context.Context, arg LinkProjectRepo
 		&i.IsDefault,
 		&i.CreatedAt,
 		&i.Tracker,
+		&i.WebhookExternalID,
+		&i.WebhookSecret,
 	)
 	return i, err
 }
@@ -120,7 +130,9 @@ SELECT
     pr.id AS project_repository_id,
     pr.project_id,
     pr.tracker,
-    pr.repository
+    pr.repository,
+    pr.webhook_external_id,
+    pr.webhook_secret
 FROM app_projects ap
 JOIN project_repositories pr ON pr.project_id = ap.project_id AND pr.is_default
 WHERE ap.app_id = $1
@@ -132,6 +144,8 @@ type ListIssueTargetsForAppRow struct {
 	ProjectID           uuid.UUID `json:"project_id"`
 	Tracker             Tracker   `json:"tracker"`
 	Repository          string    `json:"repository"`
+	WebhookExternalID   *string   `json:"webhook_external_id"`
+	WebhookSecret       []byte    `json:"webhook_secret"`
 }
 
 // The default repository of every project linked to the app.
@@ -149,6 +163,8 @@ func (q *Queries) ListIssueTargetsForApp(ctx context.Context, appID uuid.UUID) (
 			&i.ProjectID,
 			&i.Tracker,
 			&i.Repository,
+			&i.WebhookExternalID,
+			&i.WebhookSecret,
 		); err != nil {
 			return nil, err
 		}
@@ -161,7 +177,7 @@ func (q *Queries) ListIssueTargetsForApp(ctx context.Context, appID uuid.UUID) (
 }
 
 const listProjectRepositories = `-- name: ListProjectRepositories :many
-SELECT id, project_id, repository, is_default, created_at, tracker FROM project_repositories
+SELECT id, project_id, repository, is_default, created_at, tracker, webhook_external_id, webhook_secret FROM project_repositories
 WHERE project_id = $1
 ORDER BY created_at
 `
@@ -182,7 +198,47 @@ func (q *Queries) ListProjectRepositories(ctx context.Context, projectID uuid.UU
 			&i.IsDefault,
 			&i.CreatedAt,
 			&i.Tracker,
+			&i.WebhookExternalID,
+			&i.WebhookSecret,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectRepositoryWebhookSecrets = `-- name: ListProjectRepositoryWebhookSecrets :many
+SELECT id, webhook_secret FROM project_repositories
+WHERE tracker = $1 AND repository = $2 AND webhook_secret IS NOT NULL
+`
+
+type ListProjectRepositoryWebhookSecretsParams struct {
+	Tracker    Tracker `json:"tracker"`
+	Repository string  `json:"repository"`
+}
+
+type ListProjectRepositoryWebhookSecretsRow struct {
+	ID            uuid.UUID `json:"id"`
+	WebhookSecret []byte    `json:"webhook_secret"`
+}
+
+// The same tracker repository can be linked to more than one project, each
+// with its own webhook and secret; a delivery is checked against all of
+// them.
+func (q *Queries) ListProjectRepositoryWebhookSecrets(ctx context.Context, arg ListProjectRepositoryWebhookSecretsParams) ([]ListProjectRepositoryWebhookSecretsRow, error) {
+	rows, err := q.db.Query(ctx, listProjectRepositoryWebhookSecrets, arg.Tracker, arg.Repository)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProjectRepositoryWebhookSecretsRow
+	for rows.Next() {
+		var i ListProjectRepositoryWebhookSecretsRow
+		if err := rows.Scan(&i.ID, &i.WebhookSecret); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -210,6 +266,24 @@ func (q *Queries) SetDefaultProjectRepository(ctx context.Context, arg SetDefaul
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setProjectRepositoryWebhook = `-- name: SetProjectRepositoryWebhook :exec
+UPDATE project_repositories
+SET webhook_external_id = $2,
+    webhook_secret = $3
+WHERE id = $1
+`
+
+type SetProjectRepositoryWebhookParams struct {
+	ID                uuid.UUID `json:"id"`
+	WebhookExternalID *string   `json:"webhook_external_id"`
+	WebhookSecret     []byte    `json:"webhook_secret"`
+}
+
+func (q *Queries) SetProjectRepositoryWebhook(ctx context.Context, arg SetProjectRepositoryWebhookParams) error {
+	_, err := q.db.Exec(ctx, setProjectRepositoryWebhook, arg.ID, arg.WebhookExternalID, arg.WebhookSecret)
+	return err
 }
 
 const unlinkProjectRepository = `-- name: UnlinkProjectRepository :execrows

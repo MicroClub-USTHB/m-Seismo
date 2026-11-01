@@ -55,6 +55,9 @@ type Target struct {
 	ProjectRepositoryID uuid.UUID
 	Repository          string
 	Tracker             db.Tracker
+	// HasWebhook is true once the repository already has the webhook its
+	// tracker needs (FR-56); Webhooks.Ensure is skipped when it is.
+	HasWebhook bool
 	// Connection is the app's connection for the repository; nil when Err
 	// is set.
 	Connection *Connection
@@ -79,13 +82,21 @@ type Result struct {
 
 // Service opens issues on the trackers behind each project an app reports
 // into, through the app's own connections, and records them.
-type Service struct {
-	q       db.Querier
-	openers OpenerSource
+// Webhooks ensures a project repository has the webhook its tracker needs
+// (FR-56). Implemented by *provider.WebhookService. Best-effort: it must
+// never fail or block opening an issue.
+type Webhooks interface {
+	Ensure(ctx context.Context, c Connection, repository string, projectRepositoryID uuid.UUID, hasWebhook bool)
 }
 
-func NewService(q db.Querier, openers OpenerSource) *Service {
-	return &Service{q: q, openers: openers}
+type Service struct {
+	q        db.Querier
+	openers  OpenerSource
+	webhooks Webhooks
+}
+
+func NewService(q db.Querier, openers OpenerSource, webhooks Webhooks) *Service {
+	return &Service{q: q, openers: openers, webhooks: webhooks}
 }
 
 // Targets resolves where an issue from the app would go: the default
@@ -112,6 +123,7 @@ func (s *Service) Targets(ctx context.Context, appID uuid.UUID) ([]Target, error
 			ProjectRepositoryID: r.ProjectRepositoryID,
 			Repository:          r.Repository,
 			Tracker:             r.Tracker,
+			HasWebhook:          r.WebhookExternalID != nil,
 		}, conns)
 	}
 	return out, nil
@@ -256,6 +268,7 @@ func (s *Service) target(ctx context.Context, appID, projectRepositoryID uuid.UU
 		ProjectRepositoryID: row.ProjectRepositoryID,
 		Repository:          row.Repository,
 		Tracker:             row.Tracker,
+		HasWebhook:          row.WebhookExternalID != nil,
 	}, conns), nil
 }
 
@@ -281,6 +294,9 @@ func (s *Service) open(ctx context.Context, t Target, appID uuid.UUID, d Draft) 
 		return res
 	}
 	res.Ref = ref
+	if s.webhooks != nil {
+		s.webhooks.Ensure(ctx, *t.Connection, t.Repository, t.ProjectRepositoryID, t.HasWebhook)
+	}
 
 	var fingerprint *string
 	if d.Fingerprint != "" {

@@ -78,6 +78,27 @@ type Provider interface {
 	Opener(ctx context.Context, c issue.Connection) (issue.Opener, error)
 }
 
+// Webhook is a tracker-side webhook created on one repository.
+type Webhook struct {
+	// ExternalID identifies the webhook on the tracker (for deleting it
+	// later).
+	ExternalID string
+	// Secret verifies a delivery is genuinely from the tracker (GitLab:
+	// sent back as X-Gitlab-Token; Bitbucket: signs the body, sent as
+	// X-Hub-Signature).
+	Secret string
+}
+
+// WebhookManager creates and deletes the per-repository webhook a tracker
+// needs to tell m-Seismo an issue's state changed (FR-56: issue status
+// from GitLab and Bitbucket). Optional: implemented by gitlab.Provider and
+// bitbucket.Provider. GitHub needs none, its App already has one webhook
+// for every repository it is installed on.
+type WebhookManager interface {
+	CreateWebhook(ctx context.Context, c issue.Connection, repository string) (Webhook, error)
+	DeleteWebhook(ctx context.Context, c issue.Connection, repository string, hook Webhook) error
+}
+
 // AsProvider annotates a constructor returning []Provider so its results
 // join the "providers" group. A slice lets a provider opt out (return nil)
 // when it is not configured.
