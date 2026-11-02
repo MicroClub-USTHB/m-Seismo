@@ -47,11 +47,22 @@ about the format is in `render.go`.
 ## One issue per bug
 
 A report with a crash gets a fingerprint (`internal/dedup`): its platform,
-the crash type and the top 5 frames of the stack trace, without line
-numbers, memory addresses and offsets, hashed. The app version is not part
-of it, so one issue covers every version a bug shows up in. A report
-without a crash has no fingerprint and always opens its own issue: what a
-reporter writes is too loose to group on without merging different bugs.
+the crash type and the top 5 frames of the app in the stack trace, without
+line numbers, memory addresses and offsets, hashed. Frames of the system,
+of frameworks and of the SDK are left out, since they are the same for many
+bugs. With nothing but those frames, the top 5 of them are used; without a
+trace, the reason without its numbers. The app version is not part of it,
+so one issue covers every version a bug shows up in.
+
+A report without a crash has no fingerprint and always opens its own issue:
+what a reporter writes is too loose to group on without merging different
+bugs.
+
+The frames of a stripped build have no function names, so without their
+offsets different bugs would look the same. Such a stack is hashed with its
+offsets, the app version and the build instead. Offsets mean nothing in
+another build, so the same bug gets one issue per build until the backend
+can symbolicate these stacks.
 
 For each route, when the repository has an open issue with the same
 fingerprint (`issues.fingerprint`, set when m-Seismo opens an issue):
