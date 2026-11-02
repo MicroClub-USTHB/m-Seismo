@@ -91,6 +91,44 @@ func (q *Queries) DeleteReportsByInstallation(ctx context.Context, arg DeleteRep
 	return result.RowsAffected(), nil
 }
 
+const getIssueOccurrences = `-- name: GetIssueOccurrences :one
+WITH grouped AS (
+    SELECT d.report_id FROM report_deliveries d WHERE d.issue_id = $1::uuid
+    UNION
+    SELECT $2::uuid
+)
+SELECT
+    count(*)::int AS occurrences,
+    count(DISTINCT r.installation_id)::int AS installations,
+    coalesce(
+        array_agg(DISTINCT r.payload -> 'release' ->> 'version')
+            FILTER (WHERE r.payload -> 'release' ->> 'version' IS NOT NULL),
+        '{}'
+    )::text[] AS versions
+FROM grouped g
+JOIN reports r ON r.id = g.report_id
+`
+
+type GetIssueOccurrencesParams struct {
+	IssueID  uuid.UUID `json:"issue_id"`
+	ReportID uuid.UUID `json:"report_id"`
+}
+
+type GetIssueOccurrencesRow struct {
+	Occurrences   int32    `json:"occurrences"`
+	Installations int32    `json:"installations"`
+	Versions      []string `json:"versions"`
+}
+
+// How often an issue's bug was seen: the reports delivered to it plus
+// report_id, the one being delivered now.
+func (q *Queries) GetIssueOccurrences(ctx context.Context, arg GetIssueOccurrencesParams) (GetIssueOccurrencesRow, error) {
+	row := q.db.QueryRow(ctx, getIssueOccurrences, arg.IssueID, arg.ReportID)
+	var i GetIssueOccurrencesRow
+	err := row.Scan(&i.Occurrences, &i.Installations, &i.Versions)
+	return i, err
+}
+
 const getReport = `-- name: GetReport :one
 SELECT id, app_id, report_id, installation_id, session_id, trigger, occurred_at, received_at, queued_at, payload, processed_at FROM reports
 WHERE id = $1

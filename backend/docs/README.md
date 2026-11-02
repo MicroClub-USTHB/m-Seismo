@@ -62,7 +62,7 @@ GitHub App and/or GitLab application or Bitbucket consumer (see
 | FR-46: issue opened automatically | done: the worker opens the issue of every accepted report |
 | FR-49: labels, assignees, milestone | set by routing rules, carried by `Draft`; GitHub resolves milestones by title |
 | FR-51: two-way status | done for GitHub: the App webhook records issues closed or reopened (`issues.state`); GitLab and Bitbucket not yet |
-| FR-55: comment on a duplicate | schema, fingerprint and `Opener.Comment` ready; logic not built |
+| FR-54 / FR-55 / FR-56: one issue per bug | done for crashes: same fingerprint → a comment on the open issue with the reports, installations and versions so far; reports without a crash are not grouped |
 | FR-58 / FR-59: routing, default repository | done: routing rules by app, severity and category, else the default repository; no issue templates yet |
 | Per-app tracker credentials | done: connections belong to apps; `GET /apps/{id}/targets` previews the routing |
 | FR-62: failed-delivery retries | the worker retries with backoff and waits out rate limits; no admin view yet |

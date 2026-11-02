@@ -37,6 +37,10 @@ func (c *capturedIssue) OpenInRepository(_ context.Context, _, _ uuid.UUID, d is
 	return issue.Result{Ref: issue.Ref{ID: "1", URL: "https://github.com/test/repo/issues/1"}}, nil
 }
 
+func (c *capturedIssue) CommentOn(context.Context, uuid.UUID, db.Issue, string) (bool, error) {
+	return true, nil
+}
+
 // Exercise the real queue consumer, report/connection persistence and processor.
 // Only Sentry and the tracker write boundary are simulated.
 func TestSentryReportQueueToIssueIntegration(t *testing.T) {
@@ -138,7 +142,7 @@ func TestSentryReportQueueToIssueIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	sink := &capturedIssue{drafts: make(chan issue.Draft, 8)}
-	w := New(js, NewProcessor(q, sink, routing.NewRouter(q), nil, 0, resolver), 1, 3)
+	w := New(js, NewProcessor(q, sink, routing.NewRouter(q), pgLocks{pool: pool}, nil, 0, resolver, nil, nil), 1, 3)
 	if err := w.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
