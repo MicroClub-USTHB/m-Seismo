@@ -4,15 +4,15 @@ This page explains how m-Seismo reaches GitLab and Bitbucket repositories on
 behalf of an app. It covers the per-app OAuth model, the connect flow, how
 tokens are stored, refreshed and protected, how issues are opened, rate
 limits, configuration, setting up a real GitLab application and Bitbucket
-consumer, and the fakes used in development.
+consumer.
 
 The code lives in three packages:
 
 | Package | Contents |
 |---|---|
 | `internal/provider/oauth` | what both trackers share: the OAuth 2.0 authorization-code flow, the per-connection token source, and a JSON REST client with 401 and 429 handling |
-| `internal/provider/gitlab` | the GitLab provider (REST API v4) and its issue opener; `fakegitlab` is its fake |
-| `internal/provider/bitbucket` | the Bitbucket Cloud provider (REST API 2.0) and its issue opener; `fakebitbucket` is its fake |
+| `internal/provider/gitlab` | the GitLab provider (REST API v4) and its issue opener |
+| `internal/provider/bitbucket` | the Bitbucket Cloud provider (REST API 2.0) and its issue opener |
 
 Only `gitlab` talks to GitLab and only `bitbucket` talks to Bitbucket.
 Everything else sees them through `provider.Provider` and `issue.Opener`,
@@ -29,7 +29,6 @@ exactly like GitHub.
 - [Configuration](#configuration)
 - [Setting up a real GitLab application](#setting-up-a-real-gitlab-application)
 - [Setting up a real Bitbucket consumer](#setting-up-a-real-bitbucket-consumer)
-- [The fakes](#the-fakes)
 - [Failure modes](#failure-modes)
 - [Limitations](#limitations)
 

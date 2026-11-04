@@ -364,9 +364,9 @@ WARN github rate limit: giving up installation=14974346 secondary=false retry_af
 | Primary quota exhausted | same, `Wait` ≈ time to reset; later calls fail without contacting GitHub | `429` until the reset |
 | Too many test issues for the app | — | `429 too many test issues for this app; retry later` + `Retry-After` |
 
-The fake GitHub in the dev stack simulates both limits (`octo-org/slow-down`
-and `octo-org/exhausted`). `scripts/api/issues.sh` checks every row of this
-table.
+`internal/provider/github` tests both limits against an `httptest` server.
+`scripts/api/issues.sh` checks every row of this table in fake mode only, so
+those checks are skipped against a real GitHub App.
 
 ## Configuration
 

@@ -24,7 +24,7 @@ See [crash-providers.md](crash-providers.md) for per-app Sentry/Crashlytics sele
 | 11 | [files.md](files.md) | find out what a specific file does |
 | 12 | [extending.md](extending.md) | add a tracker, a resource, a query or a setting |
 | 13 | [testing.md](testing.md) | run and write tests (unit, API scripts, e2e) |
-| 14 | [test-scripts.md](test-scripts.md) | the bash API test suite: every `lib.sh` function, the state file, token handling and the fakes' contracts |
+| 14 | [test-scripts.md](test-scripts.md) | the bash API test suite: every `lib.sh` function, the state file and token handling |
 
 The local stack (Docker Compose: Postgres, Redis, NATS and the backend) is
 described in [deploy/README.md](../../deploy/README.md); it needs a real

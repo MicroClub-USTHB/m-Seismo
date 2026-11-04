@@ -3,11 +3,13 @@
 #
 # Environment:
 #   API_URL           backend API base           (default http://localhost:8080/api/v1)
-#   FAKE_GITHUB_URL   fake GitHub, for checks    (default http://localhost:9090)
-#   FAKE_GITLAB_URL   fake GitLab, for checks    (default http://localhost:9091)
-#   FAKE_BITBUCKET_URL fake Bitbucket, for checks (default http://localhost:9092)
-#   GITHUB_MODE       fake | real                (default fake)
-#   GITHUB_TEST_REPO  repository to open issues in (default octo-org/seismo-test; required for real)
+#   GITHUB_MODE       real | fake                (default real; fake needs fake
+#                     trackers, which the dev stack no longer has)
+#   GITHUB_TEST_REPO  repository a real GitHub App can open issues in; the
+#                     GitHub scripts skip themselves when it is empty
+#   FAKE_GITHUB_URL   fake GitHub, fake mode only (default http://localhost:9090)
+#   FAKE_GITLAB_URL   fake GitLab, fake mode only (default http://localhost:9091)
+#   FAKE_BITBUCKET_URL fake Bitbucket, fake mode only (default http://localhost:9092)
 #   STATE_FILE        where the token and IDs are saved (default scripts/api/.env.test)
 #   VERBOSE=1         print every request and response
 #
@@ -25,8 +27,12 @@ BASE_URL="${API_URL%/api/v1}"
 FAKE_GITHUB_URL="${FAKE_GITHUB_URL:-http://localhost:9090}"
 FAKE_GITLAB_URL="${FAKE_GITLAB_URL:-http://localhost:9091}"
 FAKE_BITBUCKET_URL="${FAKE_BITBUCKET_URL:-http://localhost:9092}"
-GITHUB_MODE="${GITHUB_MODE:-fake}"
-GITHUB_TEST_REPO="${GITHUB_TEST_REPO:-octo-org/seismo-test}"
+GITHUB_MODE="${GITHUB_MODE:-real}"
+if [[ $GITHUB_MODE == fake ]]; then
+  GITHUB_TEST_REPO="${GITHUB_TEST_REPO:-octo-org/seismo-test}"
+else
+  GITHUB_TEST_REPO="${GITHUB_TEST_REPO:-}"
+fi
 STATE_FILE="${STATE_FILE:-$LIB_DIR/.env.test}"
 VERBOSE="${VERBOSE:-0}"
 
@@ -370,7 +376,7 @@ ensure_app() {
 # ---------------------------------------------------------------- GitHub --
 
 # fake_install_id prints a fresh installation ID on octo-org for the fake
-# GitHub (IDs from 100000000 up are on other-org; see cmd/fakegithub).
+# GitHub (IDs from 100000000 up are on other-org).
 fake_install_id() { echo $((RANDOM * 1000 + RANDOM % 1000 + 1)); }
 
 # github_connect APP_ID [INSTALLATION_ID] runs the connect flow for the app
@@ -519,6 +525,13 @@ fake_issue_count() {
 fake_stat() {
   http GET "$FAKE_GITHUB_URL/_fake/stats"
   jget ".$1"
+}
+
+# require_github_repo: returns 0 when GITHUB_TEST_REPO is set; otherwise
+# records a skip. Scripts that need a real GitHub App start with
+# require_github_repo || { summary; exit 0; }
+require_github_repo() {
+  [[ -n $GITHUB_TEST_REPO ]] || { skip "GitHub checks (set GITHUB_TEST_REPO to a repository the GitHub App can access)"; return 1; }
 }
 
 # require_fake DESC: returns 0 in fake mode; otherwise records a skip.
