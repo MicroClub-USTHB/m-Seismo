@@ -138,7 +138,7 @@ func TestSentryReportQueueToIssueIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	sink := &capturedIssue{drafts: make(chan issue.Draft, 8)}
-	w := New(js, NewProcessor(q, sink, routing.NewRouter(q), nil, 0, resolver), 1, 3)
+	w := New(js, NewProcessor(q, sink, routing.NewRouter(q), nil, 0, resolver, fakeLinker{}, nil), 1, 3)
 	if err := w.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
