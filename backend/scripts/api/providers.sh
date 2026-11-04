@@ -5,11 +5,11 @@
 # owners, repository listing, and linking repositories to projects
 # (tracker + name, defaults, isolation).
 #
-#   backend/scripts/api/providers.sh                       # fake GitHub
-#   GITHUB_MODE=real GITHUB_TEST_REPO=me/repo backend/scripts/api/providers.sh
+#   GITHUB_TEST_REPO=me/repo backend/scripts/api/providers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 wait_for_server
 ensure_token
+require_github_repo || { summary; exit 0; }
 
 run=$(rand)
 create_app "Connections A $run"

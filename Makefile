@@ -2,9 +2,11 @@
         backend-build backend-test backend-fmt backend-fmt-check \
         agent-build agent-test agent-fmt agent-fmt-check backend-lint agent-lint \
         test-integration agent-integration db-up db-down db-status sqlc-generate \
-        dev-up dev-down dev-reset dev-logs api-test api-test-fresh
+        dev-up dev-down dev-reset dev-logs server-up server-down server-reset server-logs \
+        api-test api-test-fresh
 
 COMPOSE_DEV := docker compose -f deploy/compose.dev.yml
+COMPOSE_SERVER := $(COMPOSE_DEV) -f deploy/compose.server.yml
 
 check: backend-check agent-check
 
@@ -16,7 +18,7 @@ backend-check: backend-fmt-check backend-lint backend-build backend-test
 
 agent-check: agent-fmt-check agent-lint agent-build agent-test
 
-# Local stack: Postgres, Redis, NATS, migrations, fake GitHub, backend on :8080.
+# Local stack: Postgres, Redis, NATS, migrations, backend on :8080.
 dev-up:
 	$(COMPOSE_DEV) up --build -d --wait
 
@@ -29,6 +31,21 @@ dev-reset:
 
 dev-logs:
 	$(COMPOSE_DEV) logs -f backend
+
+# The same stack on a server: nothing published beyond 127.0.0.1, production
+# mode, secrets from deploy/.env (see deploy/README.md).
+server-up:
+	$(COMPOSE_SERVER) up --build -d --wait
+
+server-down:
+	$(COMPOSE_SERVER) down
+
+# Also deletes the database and NATS volumes.
+server-reset:
+	$(COMPOSE_SERVER) down -v
+
+server-logs:
+	$(COMPOSE_SERVER) logs -f backend
 
 # End-to-end API tests against the running stack (see backend/scripts/api).
 api-test:

@@ -46,7 +46,7 @@ group. GitLab and Bitbucket share the OAuth and REST plumbing in
 ## Running
 
 The quickest way is the Docker dev stack, which includes Postgres, Redis,
-NATS, migrations, a fake GitHub and the backend. From the repository root:
+NATS, migrations and the backend. From the repository root:
 
 ```sh
 make dev-up      # http://localhost:8080
