@@ -2,7 +2,8 @@
         backend-build backend-test backend-fmt backend-fmt-check \
         agent-build agent-test agent-fmt agent-fmt-check backend-lint agent-lint \
         test-integration agent-integration db-up db-down db-status sqlc-generate \
-        dev-up dev-down dev-reset dev-logs api-test api-test-fresh
+        dev-up dev-down dev-reset dev-logs api-test api-test-fresh \
+        flutter-check flutter-pigeon
 
 COMPOSE_DEV := docker compose -f deploy/compose.dev.yml
 
@@ -83,3 +84,14 @@ backend-lint:
 
 agent-lint:
 	cd agent && cargo clippy --locked --all-targets -- -D warnings
+
+# Flutter SDK (not part of the default check target).
+flutter-check:
+	cd sdks/flutter && flutter pub get
+	cd sdks/flutter && dart format --set-exit-if-changed lib test pigeons example/lib example/integration_test
+	cd sdks/flutter && flutter analyze
+	cd sdks/flutter && flutter test
+
+flutter-pigeon:
+	cd sdks/flutter && dart run pigeon --input pigeons/messages.dart
+	cd sdks/flutter && dart format lib/src/messages.g.dart
