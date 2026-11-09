@@ -59,7 +59,7 @@ func (h *Handler) listReports(w http.ResponseWriter, r *http.Request) {
 
 	limit := int32(20)
 	if limitStr := q.Get("limit"); limitStr != "" {
-		if n, err := strconv.Atoi(limitStr); err == nil && n > 0 {
+		if n, err := strconv.ParseInt(limitStr, 10, 32); err == nil && n > 0 {
 			limit = int32(n)
 		}
 	}

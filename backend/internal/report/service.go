@@ -110,7 +110,7 @@ func (s *Service) ListReports(ctx context.Context, ownerID, appID uuid.UUID, p L
 	}
 
 	var nextCursor *time.Time
-	if int32(len(rows)) > limit {
+	if len(rows) > int(limit) {
 		nextCursor = &rows[limit-1].OccurredAt
 		rows = rows[:limit]
 	}

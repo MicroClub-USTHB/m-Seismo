@@ -111,7 +111,7 @@ func (f *fakeQuerier) ListReports(_ context.Context, arg db.ListReportsParams) (
 			}
 		}
 	}
-	if int32(len(res)) > arg.Limit {
+	if len(res) > int(arg.Limit) {
 		res = res[:arg.Limit]
 	}
 	return res, nil
