@@ -6,11 +6,11 @@ m-Seismo is an open-source internal tool from MicroClub that turns mobile and we
 - `spec/`: contracts shared by every component (report schema, ingestion API, SDK conformance cases)
 - `backend/`: Go service for ingestion, enrichment, deduplication and GitHub publishing
 - `agent/`: Rust agent that collects and redacts server logs and diagnostics on demand
-- `sdks/`: iOS SDK and web reporting adapter; Android, Flutter and React Native SDKs are planned
+- `sdks/`: native iOS and web SDKs, plus the iOS-first Flutter bridge; Android and React Native SDKs are planned
 - `deploy/`: local development stack and deployment configuration
 
 ## Status
-Backend management, report ingestion, automatic GitHub issue publishing, and per-app Sentry event resolution are implemented. The Crashlytics export adapter remains pending. See [crash-provider setup](backend/docs/crash-providers.md).
+Backend management, report ingestion, automatic GitHub issue publishing, and per-app Sentry event resolution are implemented. The Crashlytics export adapter remains pending. The iOS SDK, web SDK, and an iOS-first Flutter bridge are available under `sdks/`; the Flutter bridge depends on a local checkout of the native iOS SDK. See [crash-provider setup](backend/docs/crash-providers.md).
 
 ## Make commands
 
@@ -19,3 +19,5 @@ Run these commands from the repository root.
 - `make fmt`: format the Go backend and Rust agent.
 - `make lint`: run the Go and Rust linters.
 - `make check`: check formatting and linting, then build and test the Go backend and Rust agent.
+- `make flutter-check`: format-check, analyze, and unit-test the Flutter bridge (requires Flutter).
+- `make flutter-pigeon`: regenerate the Pigeon bridge files.
