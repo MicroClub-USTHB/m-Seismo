@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Issue service: opens issues through POST /apps/{id}/test-issue, which
 # calls issue.Service.OpenForApp exactly as a real report would, then checks
-# the issues on the tracker side (fake GitHub) and the failure modes. Every
+# the failure modes (and, in fake mode, the issues on the tracker side). Every
 # issue is opened through the reporting app's own connection, so this also
 # covers how targets are resolved per app (GET /apps/{id}/targets).
 #
-#   backend/scripts/api/issues.sh                          # fake GitHub
-#   GITHUB_MODE=real GITHUB_TEST_REPO=me/repo backend/scripts/api/issues.sh
+#   GITHUB_TEST_REPO=me/repo backend/scripts/api/issues.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 wait_for_server
 ensure_token
+require_github_repo || { summary; exit 0; }
 ensure_github_connection || { summary; exit 1; }
 # The saved app's connection is attached to the apps created below, so a
 # real GitHub App is installed once and reused.

@@ -71,3 +71,10 @@ DELETE FROM reports
 USING apps
 WHERE reports.app_id = apps.id
   AND reports.occurred_at < now() - make_interval(days => COALESCE(apps.retention_days, sqlc.arg(default_days)::int));
+
+
+-- name: ListReportAttachmentsWithData :many
+SELECT name, content_type, data FROM report_attachments
+WHERE report_id = $1
+ORDER BY name;
+

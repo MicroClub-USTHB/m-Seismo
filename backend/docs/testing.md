@@ -30,7 +30,8 @@ bound only to localhost, applies all migrations, and runs:
   the exact event ID, resolved stack and Sentry URL. The tracker write boundary
   and Sentry API are simulated.
 - Go vet and the six dependency-free web adapter tests.
-- Every existing API script against a compiled backend and fake GitHub.
+- The API scripts that need no tracker (`auth`, `owners`, `projects`, `apps`,
+  `routing`) against a compiled backend.
 
 Only external Sentry and GitHub are simulated. No vendor credentials are needed.
 Containers, backend processes, temporary keys and test state are removed even
@@ -89,7 +90,8 @@ go test -tags e2e -run TestOpenForAppE2E .   # full stack; see below
 `backend/scripts/api/` holds bash and curl scripts that exercise every
 endpoint over HTTP: CRUD, validation, owner isolation, bearer-token handling,
 the GitHub connect flow and the issue service. They run against the dev
-stack, whose fake GitHub makes the GitHub parts fully automatic:
+stack. The GitHub parts need a real GitHub App and `GITHUB_TEST_REPO`, and
+skip themselves without it (see `scripts/api/README.md`):
 
 ```sh
 make dev-up     # deploy/compose.dev.yml
@@ -113,8 +115,8 @@ token handling and real-GitHub mode.
 | `provider/github` | install URL, verified install, repositories, `Covers`, `ValidateRepository`, opener, rate limits | `httptest.Server` imitating github.com and api.github.com; real RSA key; checks auth headers |
 | `provider` (secrets) | token saved on connect; OAuth connections refuse attach; `NewDBSecretStore` encrypts and binds each ciphertext to its connection | in-memory `SecretStore`; fake `connection_secrets` queries with a real `secrets.Cipher` |
 | `provider/oauth` | authorize URL; code exchange with body and Basic client credentials; refresh before expiry with rotation and save; 20 concurrent requests → one refresh; renew after 401; revoked grant; 429 waited / fast-fail / past deadline / never-wait; GitLab and Bitbucket error bodies; token never sent to another host | `httptest` token and API servers; in-memory store |
-| `provider/gitlab` | install URL; code exchange and user; denied / missing / bad codes; projects across pages; subgroup paths (URL-encoded); `ValidateRepository` and `Covers`; open with labels, milestone and assignees; comment; `IsOpen`; refresh and rotation; revoked grant; two apps of one user; 500; 429 short and long | the in-process `fakegitlab` |
-| `provider/bitbucket` | the same for Bitbucket, plus: HTTP Basic client auth, `next`-link pagination, labels in the body, open/closed state mapping, a repository without an issue tracker | the in-process `fakebitbucket` |
+| `provider/gitlab` | install URL; code exchange and user; denied / missing / bad codes; projects across pages; subgroup paths (URL-encoded); `ValidateRepository` and `Covers`; open with labels, milestone and assignees; comment; `IsOpen`; refresh and rotation; revoked grant; two apps of one user; 500; 429 short and long | an `httptest` server in the test |
+| `provider/bitbucket` | the same for Bitbucket, plus: HTTP Basic client auth, `next`-link pagination, labels in the body, open/closed state mapping, a repository without an issue tracker | an `httptest` server in the test |
 | `secrets` | seal/open round trip, random nonces, wrong row / key / tampering refused, keyless cipher, development key fallback, config decoding | — |
 | `config` | GitLab and Bitbucket settings, derived redirect URLs, encryption key required outside development | environment variables |
 | `app` | key lifecycle, platform validation | fake `Querier` |
@@ -147,8 +149,8 @@ token path, including JWT signing with a generated RSA key.
 - **Broader Go-level DB coverage.** Report persistence and crash-provider
   connections now have real PostgreSQL tests. Other domain SQL behavior, such
   as repository-default constraints, is exercised by the API scripts.
-- **A real GitHub App** is only exercised manually (`GITHUB_MODE=real`) or
-  by the `e2e` Go test.
+- **A real GitHub App** is only exercised manually (`GITHUB_TEST_REPO`
+  set for the API scripts) or by the `e2e` Go test.
 
 ## The e2e test
 
