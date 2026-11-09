@@ -86,9 +86,12 @@ type Querier interface {
 	ListReportAttachments(ctx context.Context, reportID uuid.UUID) ([]ListReportAttachmentsRow, error)
 	ListReportAttachmentsWithData(ctx context.Context, reportID uuid.UUID) ([]ListReportAttachmentsWithDataRow, error)
 	ListReportDeliveries(ctx context.Context, reportID uuid.UUID) ([]ReportDelivery, error)
+	// Fetches the created issue URLs and delivery details directly by client report_id.
+	ListReportDeliveriesByReportID(ctx context.Context, arg ListReportDeliveriesByReportIDParams) ([]ReportDelivery, error)
 	// The projects that already got the report's issue, whichever of their
 	// repositories it went to.
 	ListReportDeliveryProjects(ctx context.Context, reportID uuid.UUID) ([]uuid.UUID, error)
+	ListReports(ctx context.Context, arg ListReportsParams) ([]Report, error)
 	ListRoutingRules(ctx context.Context, projectID uuid.UUID) ([]RoutingRule, error)
 	// The rules of every project the app reports into, in the order they are
 	// tried, with the repository each one sends to and its template's content,
