@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createReportDelivery = `-- name: CreateReportDelivery :exec
@@ -324,6 +325,46 @@ func (q *Queries) ListReportDeliveries(ctx context.Context, reportID uuid.UUID) 
 	return items, nil
 }
 
+const listReportDeliveriesByReportID = `-- name: ListReportDeliveriesByReportID :many
+SELECT d.report_id, d.project_repository_id, d.issue_id, d.url, d.created_at
+FROM report_deliveries d
+JOIN reports r ON r.id = d.report_id
+WHERE r.app_id = $1 AND r.report_id = $2
+ORDER BY d.created_at ASC
+`
+
+type ListReportDeliveriesByReportIDParams struct {
+	AppID    uuid.UUID `json:"app_id"`
+	ReportID uuid.UUID `json:"report_id"`
+}
+
+// Fetches the created issue URLs and delivery details directly by client report_id.
+func (q *Queries) ListReportDeliveriesByReportID(ctx context.Context, arg ListReportDeliveriesByReportIDParams) ([]ReportDelivery, error) {
+	rows, err := q.db.Query(ctx, listReportDeliveriesByReportID, arg.AppID, arg.ReportID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReportDelivery
+	for rows.Next() {
+		var i ReportDelivery
+		if err := rows.Scan(
+			&i.ReportID,
+			&i.ProjectRepositoryID,
+			&i.IssueID,
+			&i.Url,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listReportDeliveryProjects = `-- name: ListReportDeliveryProjects :many
 SELECT DISTINCT pr.project_id
 FROM report_deliveries d
@@ -346,6 +387,63 @@ func (q *Queries) ListReportDeliveryProjects(ctx context.Context, reportID uuid.
 			return nil, err
 		}
 		items = append(items, project_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReports = `-- name: ListReports :many
+SELECT id, app_id, report_id, installation_id, session_id, trigger, occurred_at, received_at, queued_at, payload, processed_at FROM reports
+WHERE app_id = $1
+  AND ($2::timestamptz IS NULL OR occurred_at < $2)
+  AND (
+    $3::boolean IS NULL
+    OR ($3::boolean = true AND processed_at IS NOT NULL)
+    OR ($3::boolean = false AND processed_at IS NULL)
+  )
+ORDER BY occurred_at DESC
+LIMIT $4
+`
+
+type ListReportsParams struct {
+	AppID       uuid.UUID          `json:"app_id"`
+	Cursor      pgtype.Timestamptz `json:"cursor"`
+	IsProcessed *bool              `json:"is_processed"`
+	Limit       int32              `json:"limit"`
+}
+
+func (q *Queries) ListReports(ctx context.Context, arg ListReportsParams) ([]Report, error) {
+	rows, err := q.db.Query(ctx, listReports,
+		arg.AppID,
+		arg.Cursor,
+		arg.IsProcessed,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Report
+	for rows.Next() {
+		var i Report
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.ReportID,
+			&i.InstallationID,
+			&i.SessionID,
+			&i.Trigger,
+			&i.OccurredAt,
+			&i.ReceivedAt,
+			&i.QueuedAt,
+			&i.Payload,
+			&i.ProcessedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

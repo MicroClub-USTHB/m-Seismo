@@ -78,3 +78,23 @@ SELECT name, content_type, data FROM report_attachments
 WHERE report_id = $1
 ORDER BY name;
 
+-- name: ListReports :many
+SELECT * FROM reports
+WHERE app_id = $1
+  AND (sqlc.narg('cursor')::timestamptz IS NULL OR occurred_at < sqlc.narg('cursor'))
+  AND (
+    sqlc.narg('is_processed')::boolean IS NULL
+    OR (sqlc.narg('is_processed')::boolean = true AND processed_at IS NOT NULL)
+    OR (sqlc.narg('is_processed')::boolean = false AND processed_at IS NULL)
+  )
+ORDER BY occurred_at DESC
+LIMIT sqlc.arg('limit');
+
+-- name: ListReportDeliveriesByReportID :many
+-- Fetches the created issue URLs and delivery details directly by client report_id.
+SELECT d.report_id, d.project_repository_id, d.issue_id, d.url, d.created_at
+FROM report_deliveries d
+JOIN reports r ON r.id = d.report_id
+WHERE r.app_id = $1 AND r.report_id = $2
+ORDER BY d.created_at ASC;
+
