@@ -88,7 +88,7 @@ WHERE app_id = $1
     OR (sqlc.narg('is_processed')::boolean = false AND processed_at IS NULL)
   )
 ORDER BY occurred_at DESC
-LIMIT sqlc.arg('limit');a
+LIMIT sqlc.arg('limit');
 
 -- name: ListReportDeliveriesByReportID :many
 -- Fetches the created issue URLs and delivery details directly by client report_id.
