@@ -10,20 +10,224 @@ import (
 	"io"
 	"mime"
 	"path/filepath"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/queue"
 )
 
 type Service struct {
-	q db.Querier
+	q   db.Querier
+	pub queue.Publisher
 }
 
-func NewService(q db.Querier) *Service {
-	return &Service{q: q}
+func NewService(q db.Querier, pub queue.Publisher) *Service {
+	return &Service{q: q, pub: pub}
+}
+
+type ListReportsParams struct {
+	Status string
+	Cursor *time.Time
+	Limit  int32
+}
+
+type ListReportsResult struct {
+	Reports    []ReportSummary `json:"reports"`
+	NextCursor *time.Time      `json:"next_cursor,omitempty"`
+}
+
+type ReportSummary struct {
+	ReportID       uuid.UUID `json:"report_id"`
+	InstallationID uuid.UUID `json:"installation_id"`
+	SessionID      string    `json:"session_id"`
+	Trigger        string    `json:"trigger"`
+	OccurredAt     time.Time `json:"occurred_at"`
+	Status         string    `json:"status"`
+	IssueURLs      []string  `json:"issue_urls"`
+}
+
+type ReportDetail struct {
+	ID             uuid.UUID        `json:"id"`
+	AppID          uuid.UUID        `json:"app_id"`
+	ReportID       uuid.UUID        `json:"report_id"`
+	InstallationID uuid.UUID        `json:"installation_id"`
+	SessionID      string           `json:"session_id"`
+	Trigger        string           `json:"trigger"`
+	OccurredAt     time.Time        `json:"occurred_at"`
+	ReceivedAt     time.Time        `json:"received_at"`
+	ProcessedAt    *time.Time       `json:"processed_at,omitempty"`
+	Status         string           `json:"status"`
+	Payload        []byte           `json:"payload"`
+	Deliveries     []ReportDelivery `json:"deliveries"`
+}
+
+type ReportDelivery struct {
+	ProjectRepositoryID uuid.UUID `json:"project_repository_id"`
+	URL                 string    `json:"url"`
+	CreatedAt           time.Time `json:"created_at"`
+}
+
+func (s *Service) ListReports(ctx context.Context, ownerID, appID uuid.UUID, p ListReportsParams) (ListReportsResult, error) {
+	if _, err := s.getApp(ctx, ownerID, appID); err != nil {
+		return ListReportsResult{}, err
+	}
+
+	var isProcessed *bool
+	switch p.Status {
+	case "delivered":
+		t := true
+		isProcessed = &t
+	case "failed":
+		f := false
+		isProcessed = &f
+	default:
+		isProcessed = nil
+	}
+
+	var cursor pgtype.Timestamptz
+	if p.Cursor != nil {
+		cursor = pgtype.Timestamptz{Time: *p.Cursor, Valid: true}
+	}
+
+	limit := p.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+
+	rows, err := s.q.ListReports(ctx, db.ListReportsParams{
+		AppID:       appID,
+		Cursor:      cursor,
+		IsProcessed: isProcessed,
+		Limit:       limit + 1,
+	})
+	if err != nil {
+		return ListReportsResult{}, err
+	}
+
+	var nextCursor *time.Time
+	if int32(len(rows)) > limit {
+		nextCursor = &rows[limit-1].OccurredAt
+		rows = rows[:limit]
+	}
+
+	reports := make([]ReportSummary, len(rows))
+	for i, r := range rows {
+		status := "failed"
+		if r.ProcessedAt != nil {
+			status = "delivered"
+		}
+
+		deliveries, err := s.q.ListReportDeliveries(ctx, r.ID)
+		if err != nil {
+			return ListReportsResult{}, err
+		}
+
+		issueURLs := make([]string, 0, len(deliveries))
+		for _, d := range deliveries {
+			if d.Url != "" {
+				issueURLs = append(issueURLs, d.Url)
+			}
+		}
+
+		reports[i] = ReportSummary{
+			ReportID:       r.ReportID,
+			InstallationID: r.InstallationID,
+			SessionID:      r.SessionID,
+			Trigger:        r.Trigger,
+			OccurredAt:     r.OccurredAt,
+			Status:         status,
+			IssueURLs:      issueURLs,
+		}
+	}
+
+	return ListReportsResult{
+		Reports:    reports,
+		NextCursor: nextCursor,
+	}, nil
+}
+
+func (s *Service) GetReport(ctx context.Context, ownerID, appID, reportID uuid.UUID) (ReportDetail, error) {
+	if _, err := s.getApp(ctx, ownerID, appID); err != nil {
+		return ReportDetail{}, err
+	}
+
+	rep, err := s.q.GetReportByReportID(ctx, db.GetReportByReportIDParams{
+		AppID:    appID,
+		ReportID: reportID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ReportDetail{}, apperr.NotFound("report not found")
+		}
+		return ReportDetail{}, err
+	}
+
+	deliveries, err := s.q.ListReportDeliveries(ctx, rep.ID)
+	if err != nil {
+		return ReportDetail{}, err
+	}
+
+	delList := make([]ReportDelivery, len(deliveries))
+	for i, d := range deliveries {
+		delList[i] = ReportDelivery{
+			ProjectRepositoryID: d.ProjectRepositoryID,
+			URL:                 d.Url,
+			CreatedAt:           d.CreatedAt,
+		}
+	}
+
+	status := "failed"
+	if rep.ProcessedAt != nil {
+		status = "delivered"
+	}
+
+	return ReportDetail{
+		ID:             rep.ID,
+		AppID:          rep.AppID,
+		ReportID:       rep.ReportID,
+		InstallationID: rep.InstallationID,
+		SessionID:      rep.SessionID,
+		Trigger:        rep.Trigger,
+		OccurredAt:     rep.OccurredAt,
+		ReceivedAt:     rep.ReceivedAt,
+		ProcessedAt:    rep.ProcessedAt,
+		Status:         status,
+		Payload:        rep.Payload,
+		Deliveries:     delList,
+	}, nil
+}
+
+func (s *Service) RetryReport(ctx context.Context, ownerID, appID, reportID uuid.UUID) error {
+	if _, err := s.getApp(ctx, ownerID, appID); err != nil {
+		return err
+	}
+
+	rep, err := s.q.GetReportByReportID(ctx, db.GetReportByReportIDParams{
+		AppID:    appID,
+		ReportID: reportID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apperr.NotFound("report not found")
+		}
+		return err
+	}
+
+	if s.pub != nil {
+		if err := s.pub.ReportAccepted(ctx, queue.ReportAccepted{
+			ID:    rep.ID,
+			AppID: rep.AppID,
+		}); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (s *Service) Bundle(ctx context.Context, ownerID, appID, reportID uuid.UUID, w io.Writer) error {

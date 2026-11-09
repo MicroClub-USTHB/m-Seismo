@@ -47,7 +47,7 @@ func TestHandlerBundle(t *testing.T) {
 		},
 	}
 
-	svc := NewService(q)
+	svc := NewService(q, nil)
 	require := httpx.NewAuthMiddleware(tokenVerifier{owner: owner})
 	h := NewHandler(svc, require)
 

@@ -70,6 +70,53 @@ func (f *fakeQuerier) ListReportDeliveries(_ context.Context, reportID uuid.UUID
 	return f.deliveries[reportID], nil
 }
 
+func (f *fakeQuerier) ListReportDeliveriesByReportID(_ context.Context, arg db.ListReportDeliveriesByReportIDParams) ([]db.ReportDelivery, error) {
+	if arg.AppID != f.app.ID {
+		return nil, nil
+	}
+	r, ok := f.reports[arg.ReportID]
+	if !ok {
+		return nil, nil
+	}
+	return f.deliveries[r.ID], nil
+}
+
+func (f *fakeQuerier) ListReports(_ context.Context, arg db.ListReportsParams) ([]db.Report, error) {
+	if arg.AppID != f.app.ID {
+		return nil, nil
+	}
+	var res []db.Report
+	for _, r := range f.reports {
+		if r.AppID != arg.AppID {
+			continue
+		}
+		if arg.Cursor.Valid && !r.OccurredAt.Before(arg.Cursor.Time) {
+			continue
+		}
+		if arg.IsProcessed != nil {
+			if *arg.IsProcessed && r.ProcessedAt == nil {
+				continue
+			}
+			if !*arg.IsProcessed && r.ProcessedAt != nil {
+				continue
+			}
+		}
+		res = append(res, r)
+	}
+	// Sort by OccurredAt descending
+	for i := 0; i < len(res)-1; i++ {
+		for j := i + 1; j < len(res); j++ {
+			if res[j].OccurredAt.After(res[i].OccurredAt) {
+				res[i], res[j] = res[j], res[i]
+			}
+		}
+	}
+	if int32(len(res)) > arg.Limit {
+		res = res[:arg.Limit]
+	}
+	return res, nil
+}
+
 func (f *fakeQuerier) DeleteReportByReportID(_ context.Context, arg db.DeleteReportByReportIDParams) (int64, error) {
 	if arg.AppID != f.app.ID || f.deleted == nil || !f.deleted[arg.ReportID] {
 		return 0, nil
@@ -120,7 +167,7 @@ func TestDeleteByInstallation(t *testing.T) {
 		app:            db.App{ID: uuid.New(), OwnerID: owner},
 		byInstallation: map[uuid.UUID]int64{installationID: 3},
 	}
-	svc := NewService(q)
+	svc := NewService(q, nil)
 	ctx := context.Background()
 
 	n, err := svc.DeleteByInstallation(ctx, owner, q.app.ID, installationID)
@@ -369,10 +416,10 @@ func TestListReports(t *testing.T) {
 
 	deliveries := map[uuid.UUID][]db.ReportDelivery{
 		intID1: {
-			{ReportID: intID1, URL: "https://github.com/org/repo/issues/10"},
+			{ReportID: intID1, Url: "https://github.com/org/repo/issues/10"},
 		},
 		intID3: {
-			{ReportID: intID3, URL: "https://github.com/org/repo/issues/12"},
+			{ReportID: intID3, Url: "https://github.com/org/repo/issues/12"},
 		},
 	}
 
@@ -527,7 +574,7 @@ func TestGetReport(t *testing.T) {
 				{
 					ReportID:            internalID,
 					ProjectRepositoryID: repoID,
-					URL:                 issueURL,
+					Url:                 issueURL,
 					CreatedAt:           processedAt,
 				},
 			},
