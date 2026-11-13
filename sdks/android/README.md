@@ -100,13 +100,30 @@ Each report also carries context, already redacted on the device:
 - **Network requests**: the last 50 you pass to
   `MSeismo.recordRequest(url, method, statusCode, durationMs)`, for example
   from an OkHttp interceptor. Request and response bodies are only kept when
-  `Configuration(captureNetworkBodies = true)`.
+  `Configuration(captureNetworkBodies = true)` or after
+  `MSeismo.setCapturesNetworkBodies(true)`.
 
 Before anything leaves the phone, emails, phone numbers, card numbers and
 `Bearer` tokens are replaced with `[REDACTED]`. Change this with
 `redactionRules` (default `Configuration.DEFAULT_REDACTION_RULES`),
 `redactionAllowList` (never redacted) and `redactionDenyList` (always
-redacted).
+redacted). The allow and deny lists can also be changed at runtime with
+`MSeismo.setRedactionAllowList(...)` and `MSeismo.setRedactionDenyList(...)`.
+
+Each report also carries the active feature flags, experiments and
+Crashlytics installation ID when the app sets them:
+
+```kotlin
+MSeismo.featureFlags = mapOf(
+    "new_checkout" to FlagValue.BooleanValue(true),
+    "rollout" to FlagValue.NumberValue(0.5),
+)
+MSeismo.experiments = mapOf("checkout_flow" to "v2")
+MSeismo.crashlyticsInstallationId = installationsId
+```
+
+The SDK copies these values when a report is created, so changing them later
+does not alter a report already in flight.
 
 Reports are saved on the device (`no_backup/mseismo-queue`, one file per
 report) before they are sent, and kept until the backend accepts or rejects
@@ -126,10 +143,50 @@ MSeismo.report(
 )
 ```
 
+`MSeismo.submit(...)` sends a complete report, including a JPEG screenshot
+captured by the app, crash details and the caller's own report ID, timestamp
+and session ID:
+
+```kotlin
+MSeismo.submit(
+    trigger = Trigger.CRASH,
+    title = "Checkout crash",
+    screenshotJpeg = jpegBytes,          // kept as-is, dropped above 8 MB
+    crash = Crash("java.lang.RuntimeException", "boom", stackFrames),
+    occurredAtMillis = occurredAt,
+    id = reportId,
+    sessionId = sessionId,
+)
+```
+
+For `Trigger.CRASH` and `Trigger.NON_FATAL`, `crash` is required and an empty
+stack trace gets a single placeholder frame. `submit` returns the report ID,
+or `null` when the SDK is off or the report cannot be created; it never
+throws. `MSeismo.showReportScreen(activity, trigger)` opens the report screen
+with a caller-chosen trigger instead of always using `MANUAL`.
+
 `configure` never throws. If the configuration is invalid it logs the reason
-(`adb logcat -s MSeismo`) and the SDK stays off. `endpoint` must be `https://`
-in release builds; `http://` is accepted only in debuggable builds, for a
-local backend.
+(`adb logcat -s MSeismo`) and the SDK stays off. Integrations that need the
+validation error can call `configuration.validate(allowHttp)` first;
+`allowHttp` should be true only in debuggable builds. `endpoint` must be
+`https://` in release builds; `http://` is accepted only in debuggable builds,
+for a local backend.
+
+The offline queue can be inspected and retried directly:
+
+```kotlin
+val waiting = MSeismo.pendingReportCount() // 0 before configure
+MSeismo.retryNow()
+```
+
+`MSeismo.newTraceId()` returns a fresh UUID for request tracing, and
+`MSeismo.installationId` is `null` until `configure` succeeds.
+
+For automatic reports, `MSeismo.recordError(message, stackTrace, fatal)`
+stores an error (with its original session and timestamp), and
+`MSeismo.checkForPendingCrash()` submits it on a later launch. Set
+`MSeismo.onAutoReport` to observe native crash and non-fatal reports; the
+callback runs without throwing.
 
 ## Developing
 

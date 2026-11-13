@@ -12,6 +12,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -20,6 +21,8 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.io.File
 import java.time.Duration
+import java.time.Instant
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -30,9 +33,19 @@ class MSeismoTest {
     private val app: Application = ApplicationProvider.getApplicationContext()
     private val realSend = MSeismo.send
 
+    @Before
+    fun cleanQueue() {
+        MSeismo.idleWorkerForTests()
+        queueDir.deleteRecursively()
+        File(app.noBackupFilesDir, "mseismo-pending-error.json").delete()
+    }
+
     @After
     fun restoreSend() {
+        MSeismo.idleWorkerForTests()
         MSeismo.send = realSend
+        MSeismo.resetRuntimeOverrides()
+        queueDir.deleteRecursively()
     }
 
     @Test
@@ -283,6 +296,164 @@ class MSeismoTest {
         assertEquals(id, json.getString("id"))
         assertTrue(json.getBoolean("auto_submitted"))
         assertEquals("bad coupon", json.getJSONObject("crash").getString("reason"))
+    }
+
+    @Test
+    fun submitSendsAFullReportWithScreenshotCrashAndIds() {
+        val sent = CountDownLatch(1)
+        var json = JSONObject()
+        var screenshot: ByteArray? = null
+        MSeismo.send = { _, _, reportJson, jpeg ->
+            json = JSONObject(reportJson)
+            screenshot = jpeg
+            sent.countDown()
+            SendResult.Accepted
+        }
+        MSeismo.configure(app, valid)
+        val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 1, 2, 3)
+        val occurredAt = 1_760_796_192_123L
+        val id = "11111111-1111-4111-8111-111111111111"
+
+        val returned = MSeismo.submit(
+            trigger = Trigger.CRASH,
+            title = "Flutter crash",
+            screenshotJpeg = jpeg,
+            crash = Crash("FlutterError", "boom", emptyList()),
+            occurredAtMillis = occurredAt,
+            id = id,
+            sessionId = "session-from-flutter",
+        )
+
+        assertTrue(sent.await(5, TimeUnit.SECONDS))
+        assertEquals(id, returned)
+        assertEquals(id, json.getString("id"))
+        assertEquals("session-from-flutter", json.getString("session_id"))
+        assertEquals("2025-10-18T14:03:12.123Z", json.getString("occurred_at"))
+        assertEquals("crash", json.getString("trigger"))
+        assertTrue(json.getBoolean("auto_submitted"))
+        assertEquals("FlutterError", json.getJSONObject("crash").getString("type"))
+        assertEquals(NO_STACK_TRACE_FRAME, json.getJSONObject("crash").getJSONArray("stack_trace").getString(0))
+        assertEquals(jpeg.toList(), screenshot?.toList())
+    }
+
+    @Test
+    fun submitRequiresCrashDetailsForCrashTriggersAndNeverThrows() {
+        MSeismo.configure(app, valid)
+        assertNull(MSeismo.submit(trigger = Trigger.CRASH))
+        assertNull(MSeismo.submit(trigger = Trigger.NON_FATAL))
+    }
+
+    @Test
+    fun runtimeSettersAffectSubsequentReportsAndRequests() {
+        val sent = CountDownLatch(1)
+        var json = JSONObject()
+        MSeismo.send = { _, _, reportJson, _ -> json = JSONObject(reportJson); sent.countDown(); SendResult.Accepted }
+        MSeismo.configure(app, valid)
+        MSeismo.setCapturesNetworkBodies(true)
+        MSeismo.setRedactionAllowList(listOf("jane@example.com"))
+        MSeismo.setRedactionDenyList(listOf("ProjectX"))
+        MSeismo.featureFlags = mapOf(
+            "beta" to FlagValue.BooleanValue(true),
+            "rollout" to FlagValue.NumberValue(0.5),
+        )
+        MSeismo.experiments = mapOf("checkout" to "v2")
+        MSeismo.crashlyticsInstallationId = "crashlytics-id"
+
+        MSeismo.recordRequest("https://api.example.com", "POST", 200, 5, requestBody = "jane@example.com ProjectX")
+        MSeismo.report(title = "jane@example.com", description = "ProjectX")
+
+        assertTrue(sent.await(5, TimeUnit.SECONDS))
+        assertTrue(json.getBoolean("bodies_captured"))
+        val request = json.getJSONArray("network_requests").getJSONObject(0)
+        assertEquals("jane@example.com [REDACTED]", request.getString("request_body"))
+        assertEquals("jane@example.com", json.getJSONObject("user_input").getString("title"))
+        assertEquals("[REDACTED]", json.getJSONObject("user_input").getString("description"))
+        val flags = json.getJSONObject("feature_flags")
+        assertTrue(flags.getBoolean("beta"))
+        assertEquals(0.5, flags.getDouble("rollout"), 0.0)
+        assertEquals("v2", json.getJSONObject("experiments").getString("checkout"))
+        assertEquals("crashlytics-id", json.getJSONObject("crashlytics").getString("installation_id"))
+    }
+
+    @Test
+    fun pendingReportCountAndRetryNowWorkBeforeAndAfterConfigure() {
+        MSeismo.configure(app, Configuration(endpoint = "not a url", appKey = "nope"))
+        assertEquals(0, MSeismo.pendingReportCount())
+        MSeismo.retryNow()
+
+        val firstTry = CountDownLatch(1)
+        val accepted = CountDownLatch(1)
+        val attempts = AtomicInteger()
+        MSeismo.send = { _, _, _, _ ->
+            if (attempts.getAndIncrement() == 0) {
+                firstTry.countDown()
+                SendResult.Retry("offline")
+            } else {
+                accepted.countDown()
+                SendResult.Accepted
+            }
+        }
+        MSeismo.configure(app, valid)
+
+        val id = MSeismo.report(title = "queued")
+
+        assertTrue(firstTry.await(5, TimeUnit.SECONDS))
+        assertTrue(File(app.noBackupFilesDir, "mseismo-queue/$id.json").exists())
+        assertEquals(1, MSeismo.pendingReportCount())
+
+        MSeismo.retryNow()
+
+        assertTrue(accepted.await(5, TimeUnit.SECONDS))
+        assertEquals(0, MSeismo.pendingReportCount())
+    }
+
+    @Test
+    fun onAutoReportFiresForNativeErrorsAndCrashes() {
+        val seen = CopyOnWriteArrayList<AutoReport>()
+        MSeismo.onAutoReport = { seen += it }
+        MSeismo.send = { _, _, _, _ -> SendResult.Accepted }
+        MSeismo.configure(app, valid)
+
+        MSeismo.recordError(IllegalArgumentException("bad coupon"))
+
+        assertEquals(1, seen.size)
+        assertEquals(Trigger.NON_FATAL, seen[0].trigger)
+        assertEquals("java.lang.IllegalArgumentException", seen[0].crash?.type)
+        assertEquals("bad coupon", seen[0].crash?.reason)
+
+        crash(IllegalStateException("boom"))
+
+        assertEquals(2, seen.size)
+        assertEquals(Trigger.CRASH, seen[1].trigger)
+    }
+
+    @Test
+    fun pendingErrorsKeepTheirSessionAndTimestampUntilChecked() {
+        val sent = CountDownLatch(1)
+        var json = JSONObject()
+        val seen = CopyOnWriteArrayList<AutoReport>()
+        MSeismo.send = { _, _, reportJson, _ ->
+            JSONObject(reportJson).takeIf { it.getString("trigger") == "crash" }?.let { json = it; sent.countDown() }
+            SendResult.Accepted
+        }
+        MSeismo.onAutoReport = { seen += it }
+        MSeismo.configure(app, valid)
+        val session = MSeismo.sessionId
+        val before = System.currentTimeMillis()
+
+        MSeismo.recordError("boom", "frame 1\nframe 2", fatal = true)
+        MSeismo.checkForPendingCrash()
+
+        assertTrue(sent.await(5, TimeUnit.SECONDS))
+        assertEquals("crash", json.getString("trigger"))
+        assertEquals(session, json.getString("session_id"))
+        assertEquals("FlutterError", json.getJSONObject("crash").getString("type"))
+        assertEquals("boom", json.getJSONObject("crash").getString("reason"))
+        assertEquals("frame 1", json.getJSONObject("crash").getJSONArray("stack_trace").getString(0))
+        assertTrue(Instant.parse(json.getString("occurred_at")).toEpochMilli() in before..System.currentTimeMillis())
+        assertEquals(1, seen.size)
+        assertEquals(Trigger.CRASH, seen[0].trigger)
+        assertTrue(!File(app.noBackupFilesDir, "mseismo-pending-error.json").exists())
     }
 
     @Test

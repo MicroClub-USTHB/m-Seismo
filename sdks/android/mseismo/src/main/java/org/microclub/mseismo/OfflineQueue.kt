@@ -19,6 +19,9 @@ internal class OfflineQueue(
     // notBefore: the backend's Retry-After.
     private class Backoff(var attempts: Int, var nextTryAt: Long, var notBefore: Long)
 
+    val pendingCount: Int
+        get() = dir.listFiles { f -> f.name.endsWith(".json") }.orEmpty().size
+
     // In memory: after a restart, everything is retried at once.
     private val backoffs = HashMap<String, Backoff>()
 

@@ -185,6 +185,56 @@ class ReportTest {
         assertEquals(listOf("java.lang.RuntimeException: no stack"), Crash.of(error).stackTrace)
     }
 
+    @Test
+    fun featureFlagsExperimentsAndCrashlyticsAreIncludedWhenSet() {
+        val flagged = report.copy(
+            featureFlags = mapOf(
+                "beta" to FlagValue.BooleanValue(true),
+                "rollout" to FlagValue.NumberValue(0.5),
+                "variant" to FlagValue.StringValue("blue"),
+            ),
+            experiments = mapOf("checkout" to "v2"),
+            crashlyticsInstallationId = "crashlytics-id",
+        )
+        val json = JSONObject(flagged.toJson())
+        val flags = json.getJSONObject("feature_flags")
+        assertTrue(flags.getBoolean("beta"))
+        assertEquals(0.5, flags.getDouble("rollout"), 0.0)
+        assertEquals("blue", flags.getString("variant"))
+        assertEquals("v2", json.getJSONObject("experiments").getString("checkout"))
+        assertEquals("crashlytics-id", json.getJSONObject("crashlytics").getString("installation_id"))
+
+        val plain = JSONObject(report.toJson())
+        assertFalse(plain.has("feature_flags"))
+        assertFalse(plain.has("experiments"))
+        assertFalse(plain.has("crashlytics"))
+    }
+
+    @Test
+    fun featureFlagsAndExperimentsAreCapped() {
+        val flags = (1..205).associate { it.toString() to FlagValue.NumberValue(it.toDouble()) }
+        val experiments = (1..105).associate { "experiment-$it" to "v".repeat(200) }
+        val json = JSONObject(report.copy(featureFlags = flags, experiments = experiments).toJson())
+
+        assertEquals(MAX_FEATURE_FLAGS, json.getJSONObject("feature_flags").length())
+        val capped = json.getJSONObject("experiments")
+        assertEquals(MAX_EXPERIMENTS, capped.length())
+        assertTrue(capped.keys().asSequence().all { capped.getString(it).length == MAX_EXPERIMENT_VARIANT })
+    }
+
+    @Test
+    fun anEmptyCrashStackGetsAFrame() {
+        val crash = report.copy(
+            trigger = Trigger.CRASH,
+            autoSubmitted = true,
+            userInput = null,
+            crash = Crash("java.lang.RuntimeException", "boom", emptyList()),
+        )
+        val stack = JSONObject(crash.toJson()).getJSONObject("crash").getJSONArray("stack_trace")
+        assertEquals(1, stack.length())
+        assertEquals(NO_STACK_TRACE_FRAME, stack.getString(0))
+    }
+
     private fun assertFieldsAllowed(json: JSONObject, allowed: JSONObject, required: JSONArray) {
         for (i in 0 until required.length()) assertTrue("missing ${required.getString(i)}", json.has(required.getString(i)))
         json.keys().forEach { assertTrue("$it is not in the schema", allowed.has(it)) }

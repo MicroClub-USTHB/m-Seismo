@@ -25,6 +25,17 @@ class OfflineQueueTest {
     private fun saved() = File(folder.root, "queue").list().orEmpty().sorted()
 
     @Test
+    fun pendingCountCountsReportFilesOnly() {
+        val q = queue()
+        assertEquals(0, q.pendingCount)
+        q.add("a", "{}", byteArrayOf(1))
+        q.add("b", "{}")
+        assertEquals(2, q.pendingCount)
+        q.drain(answer(SendResult.Accepted))
+        assertEquals(0, q.pendingCount)
+    }
+
+    @Test
     fun acceptedReportIsSentAndDeleted() {
         val q = queue()
         q.add("a", """{"id":"a"}""")

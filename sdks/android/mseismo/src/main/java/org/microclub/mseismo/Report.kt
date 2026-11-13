@@ -25,17 +25,23 @@ internal object MaxChars {
     const val STACK_FRAME = 1_000
 }
 
+internal const val NO_STACK_TRACE_FRAME = "(no stack trace available)"
+internal const val MAX_FEATURE_FLAGS = 200
+internal const val MAX_EXPERIMENTS = 100
+internal const val MAX_EXPERIMENT_VARIANT = 128
+internal const val MAX_CRASHLYTICS_ID = 128
+
 public enum class Category { BUG, CRASH, UI, OTHER }
 
 public enum class Severity { LOW, MEDIUM, HIGH, CRITICAL }
 
-internal enum class Trigger { SHAKE, SCREENSHOT, LONG_PRESS, MANUAL, CRASH, NON_FATAL }
+public enum class Trigger { SHAKE, SCREENSHOT, LONG_PRESS, MANUAL, CRASH, NON_FATAL }
 
-internal data class Crash(val type: String, val reason: String?, val stackTrace: List<String>) {
-    companion object {
-        private const val MAX_FRAMES = 512
+public data class Crash(val type: String, val reason: String?, val stackTrace: List<String>) {
+    public companion object {
+        internal const val MAX_FRAMES = 512
 
-        fun of(error: Throwable): Crash {
+        public fun of(error: Throwable): Crash {
             val lines = mutableListOf<String>()
             val seen = HashSet<Throwable>() // a cause chain can loop
             var current: Throwable? = error
@@ -48,6 +54,17 @@ internal data class Crash(val type: String, val reason: String?, val stackTrace:
         }
     }
 }
+
+public data class AutoReport(
+    val id: String,
+    val title: String?,
+    val description: String?,
+    val category: Category?,
+    val severity: Severity?,
+    val trigger: Trigger,
+    val occurredAtMillis: Long,
+    val crash: Crash?,
+)
 
 internal data class UserInput(
     val title: String? = null,
@@ -73,6 +90,9 @@ internal data class Report(
     val networkRequests: List<NetworkRequest> = emptyList(),
     val bodiesCaptured: Boolean = false,
     val crash: Crash? = null,
+    val featureFlags: Map<String, FlagValue> = emptyMap(),
+    val experiments: Map<String, String> = emptyMap(),
+    val crashlyticsInstallationId: String? = null,
 ) {
     // Limits applied again here: redaction can make text longer.
     fun toJson(): String = JSONObject().apply {
@@ -105,11 +125,17 @@ internal data class Report(
             device.networkType?.let { put("network_type", it) }
             device.orientation?.let { put("orientation", it) }
         })
+        featureFlagsJson()?.let { put("feature_flags", it) }
+        experimentsJson()?.let { put("experiments", it) }
+        crashlyticsInstallationId?.takeIf { it.isNotEmpty() }?.let {
+            put("crashlytics", JSONObject().put("installation_id", it.limit(MAX_CRASHLYTICS_ID)))
+        }
         crash?.let { crash ->
             put("crash", JSONObject().apply {
-                put("type", crash.type.limit(MaxChars.CRASH_TYPE))
+                put("type", crash.type.ifEmpty { "unknown" }.limit(MaxChars.CRASH_TYPE))
                 crash.reason?.let { put("reason", it.limit(MaxChars.CRASH_REASON)) }
-                put("stack_trace", JSONArray(crash.stackTrace.map { it.limit(MaxChars.STACK_FRAME) }))
+                val frames = crash.stackTrace.take(Crash.MAX_FRAMES).ifEmpty { listOf(NO_STACK_TRACE_FRAME) }
+                put("stack_trace", JSONArray(frames.map { it.limit(MaxChars.STACK_FRAME) }))
             })
         }
         if (logs.isNotEmpty()) put("logs", JSONArray(logs.takeLast(500).map {
@@ -149,6 +175,40 @@ internal data class Report(
                     else -> return json
                 }
             }
+        }
+    }
+
+    private fun featureFlagsJson(): JSONObject? {
+        val entries = featureFlags.entries
+            .filter { it.key.isNotEmpty() }
+            .filter {
+                when (val value = it.value) {
+                    is FlagValue.NumberValue -> value.value.isFinite()
+                    else -> true
+                }
+            }
+            .sortedBy { it.key }
+            .take(MAX_FEATURE_FLAGS)
+        if (entries.isEmpty()) return null
+        return JSONObject().apply {
+            for ((name, value) in entries) {
+                put(name, when (value) {
+                    is FlagValue.StringValue -> value.value
+                    is FlagValue.NumberValue -> value.value
+                    is FlagValue.BooleanValue -> value.value
+                })
+            }
+        }
+    }
+
+    private fun experimentsJson(): JSONObject? {
+        val entries = experiments.entries
+            .filter { it.key.isNotEmpty() }
+            .sortedBy { it.key }
+            .take(MAX_EXPERIMENTS)
+        if (entries.isEmpty()) return null
+        return JSONObject().apply {
+            for ((name, variant) in entries) put(name, variant.limit(MAX_EXPERIMENT_VARIANT))
         }
     }
 }

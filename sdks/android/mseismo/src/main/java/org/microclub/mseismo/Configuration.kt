@@ -30,7 +30,7 @@ public data class Configuration @JvmOverloads constructor(
     internal val reportsUrl: String
         get() = endpoint.trimEnd('/') + "/api/v1/reports"
 
-    internal fun validate(allowHttp: Boolean) {
+    public fun validate(allowHttp: Boolean) {
         val uri = URI(endpoint)
         val host = uri.host ?: uri.rawAuthority?.substringAfterLast('@')?.substringBefore(':')
         require(!host.isNullOrEmpty()) { "endpoint must be an absolute URL" }

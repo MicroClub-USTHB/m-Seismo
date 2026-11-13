@@ -13,5 +13,10 @@ internal data class Draft(
     val logs: List<LogLine>,
     val breadcrumbs: List<Breadcrumb>,
     val requests: List<NetworkRequest>,
+    val sessionId: String = MSeismo.sessionId,
+    val bodiesCaptured: Boolean = false,
+    val featureFlags: Map<String, FlagValue> = emptyMap(),
+    val experiments: Map<String, String> = emptyMap(),
+    val crashlyticsInstallationId: String? = null,
     val screenshot: Bitmap? = null,
 )
