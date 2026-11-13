@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/triage"
 )
 
 // screenshotAttachmentID is the fixed id ListReportAttachments answers
@@ -406,5 +408,72 @@ func TestProcessSentryOnlyReportIncludesCrashDetailsAndSurvivesProviderFailure(t
 		if q.processed != 1 {
 			t.Fatal("Sentry failure prevented issue publication")
 		}
+	}
+}
+
+func TestProcessAutoTriageFallbackLabels(t *testing.T) {
+	q, is, p := newFixture(t, 1)
+	// Default route in newFixture has empty Labels and Assignees
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	d := is.drafts[0]
+	// Report payload in newFixture has platform "ios"
+	if !slices.Contains(d.Labels, "ios") {
+		t.Errorf("expected draft labels to fall back to suggestion labels %v, got %v", []string{"ios"}, d.Labels)
+	}
+}
+
+type fakeTriager struct {
+	suggestion triage.Suggestion
+	calledWith struct {
+		r    *ingest.Report
+		repo string
+	}
+}
+
+func (f *fakeTriager) TriageReport(_ context.Context, r *ingest.Report, repo string) triage.Suggestion {
+	f.calledWith.r = r
+	f.calledWith.repo = repo
+	return f.suggestion
+}
+
+func TestProcessor_ConcurrentTriageEnrichment(t *testing.T) {
+	q, is, _ := newFixture(t, 1)
+	triager := &fakeTriager{
+		suggestion: triage.Suggestion{
+			Severity:       "critical",
+			SeverityReason: "fatal crash detected",
+			Owner:          "@core-team",
+			OwnerReason:    "matched CODEOWNERS rule '*'",
+			Labels:         []string{"crash", "ios"},
+			Screen:         "CheckoutScreen",
+		},
+	}
+	p := NewProcessor(q, is, q.router, nil, time.Minute, nil, fakeLinker{}, nil, WithTriager(triager))
+
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(is.drafts) == 0 {
+		t.Fatal("expected at least one draft")
+	}
+	body := is.drafts[0].Body
+	if !strings.Contains(body, "Auto-Triage Suggestions") {
+		t.Errorf("expected body to contain 'Auto-Triage Suggestions', got:\n%s", body)
+	}
+	if !strings.Contains(body, "Suggested Owner: @core-team") {
+		t.Errorf("expected body to contain 'Suggested Owner: @core-team', got:\n%s", body)
+	}
+	if !strings.Contains(body, "Suggested Severity: critical") {
+		t.Errorf("expected body to contain 'Suggested Severity: critical', got:\n%s", body)
+	}
+	// Verify that empty route assignees fell back to suggested owner
+	if !slices.Contains(is.drafts[0].Assignees, "core-team") {
+		t.Errorf("expected draft assignees to contain fallback 'core-team', got %v", is.drafts[0].Assignees)
+	}
+	if triager.calledWith.repo != "o/r" {
+		t.Errorf("expected triager to be called with repo 'o/r', got %q", triager.calledWith.repo)
 	}
 }

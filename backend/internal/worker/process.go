@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +20,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/triage"
 )
 
 // Issues opens issues in project repositories. Implemented by
@@ -34,6 +36,12 @@ type Queries interface {
 	ListReportDeliveryProjects(ctx context.Context, reportID uuid.UUID) ([]uuid.UUID, error)
 	CreateReportDelivery(ctx context.Context, arg db.CreateReportDeliveryParams) error
 	MarkReportProcessed(ctx context.Context, id uuid.UUID) error
+}
+
+// Triager produces suggestions for a report targeting a repository.
+// Implemented by *triage.Service.
+type Triager interface {
+	TriageReport(ctx context.Context, r *ingest.Report, repository string) triage.Suggestion
 }
 
 // Router picks where a report's issues go. Implemented by
@@ -88,10 +96,25 @@ type Processor struct {
 	window  time.Duration
 	crashes CrashResolver
 	links   AttachmentLinker
+	triager Triager
 }
 
-func NewProcessor(q Queries, issues Issues, router Router, logs ServerLogs, window time.Duration, crashes CrashResolver, links AttachmentLinker, health ServiceHealth) *Processor {
-	return &Processor{q: q, issues: issues, router: router, logs: logs, window: window, crashes: crashes, links: links, health: health}
+// Option configures optional Processor dependencies.
+type Option func(*Processor)
+
+// WithTriager sets the triager used to enrich reports.
+func WithTriager(t Triager) Option {
+	return func(p *Processor) {
+		p.triager = t
+	}
+}
+
+func NewProcessor(q Queries, issues Issues, router Router, logs ServerLogs, window time.Duration, crashes CrashResolver, links AttachmentLinker, health ServiceHealth, opts ...Option) *Processor {
+	p := &Processor{q: q, issues: issues, router: router, logs: logs, window: window, crashes: crashes, links: links, health: health}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 // Process opens the report's issue in every project its app is linked to,
@@ -162,6 +185,16 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 			slog.WarnContext(ctx, "Sentry details unavailable; retaining crash reference", "report", id)
 		}
 	}
+	repo := ""
+	if len(todo) > 0 {
+		repo = todo[0].Repository
+	}
+	var suggestion triage.Suggestion
+	if p.triager != nil {
+		suggestion = p.triager.TriageReport(ctx, &r, repo)
+	} else {
+		suggestion = triage.Analyze(&r)
+	}
 	info := reportInfo{
 		CrashEvent:     crashEvent,
 		ID:             row.ReportID,
@@ -169,6 +202,7 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 		ScreenshotURL:  p.screenshotURL(attachments),
 		ServerLogs:     p.serverLogs(ctx, row),
 		Health:         p.serviceHealth(ctx, row),
+		Triage:         suggestion,
 	}
 	base := render(&r, info)
 
@@ -183,6 +217,15 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 			}
 		}
 		draft.Labels, draft.Assignees, draft.Milestone = t.Labels, t.Assignees, t.Milestone
+		if len(draft.Labels) == 0 && len(suggestion.Labels) > 0 {
+			draft.Labels = slices.Clone(suggestion.Labels)
+		}
+		if len(draft.Assignees) == 0 && suggestion.Owner != "" {
+			rawOwner := strings.TrimPrefix(suggestion.Owner, "@")
+			if rawOwner != "" {
+				draft.Assignees = []string{rawOwner}
+			}
+		}
 		res, err := p.issues.OpenInRepository(ctx, row.AppID, t.ProjectRepositoryID, draft)
 		if err != nil {
 			var rl *issue.RateLimitError
