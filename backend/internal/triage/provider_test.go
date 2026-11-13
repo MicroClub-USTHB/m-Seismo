@@ -49,6 +49,16 @@ func (m *mockFileFetcher) callCount(repo string) int {
 	return m.calls[repo]
 }
 
+func (m *mockFileFetcher) totalCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	total := 0
+	for _, c := range m.calls {
+		total += c
+	}
+	return total
+}
+
 func (m *mockFileFetcher) FetchFile(ctx context.Context, repo, path string) ([]byte, error) {
 	if m.delay > 0 {
 		select {
