@@ -4,6 +4,9 @@ import 'package:pigeon/pigeon.dart';
   PigeonOptions(
     dartOut: 'lib/src/messages.g.dart',
     swiftOut: 'ios/Classes/Messages.g.swift',
+    kotlinOut:
+        'android/src/main/kotlin/org/microclub/mseismo/flutter/Messages.g.kt',
+    kotlinOptions: KotlinOptions(package: 'org.microclub.mseismo.flutter'),
     dartPackageName: 'm_seismo',
   ),
 )

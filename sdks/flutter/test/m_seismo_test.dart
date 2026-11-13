@@ -190,14 +190,24 @@ void main() {
     await emitted;
   });
 
-  test('every channel-backed member throws on non-iOS platforms', () async {
+  test('channel-backed members are available on Android', () async {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
+
+    await mSeismo.log('android log');
+    expect(host.logs, <String>['android log']);
+
+    await mSeismo.report();
+    expect(host.reportedTrigger, ReportTrigger.manual);
+  });
+
+  test('every channel-backed member throws on unsupported platforms', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
 
     final calls = <Future<void> Function()>[
       () => mSeismo.configure(
             MSeismoConfig(
               baseUrl: 'https://example.com',
-              sdkKey: 'key',
+              sdkKey: 'msk_test',
               environment: 'production',
             ),
           ),
