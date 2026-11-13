@@ -38,6 +38,12 @@ type Queries interface {
 	MarkReportProcessed(ctx context.Context, id uuid.UUID) error
 }
 
+// Triager produces suggestions for a report targeting a repository.
+// Implemented by *triage.Service.
+type Triager interface {
+	TriageReport(ctx context.Context, r *ingest.Report, repository string) triage.Suggestion
+}
+
 // Router picks where a report's issues go. Implemented by
 // *routing.Router.
 type Router interface {
@@ -90,10 +96,25 @@ type Processor struct {
 	window  time.Duration
 	crashes CrashResolver
 	links   AttachmentLinker
+	triager Triager
 }
 
-func NewProcessor(q Queries, issues Issues, router Router, logs ServerLogs, window time.Duration, crashes CrashResolver, links AttachmentLinker, health ServiceHealth) *Processor {
-	return &Processor{q: q, issues: issues, router: router, logs: logs, window: window, crashes: crashes, links: links, health: health}
+// Option configures optional Processor dependencies.
+type Option func(*Processor)
+
+// WithTriager sets the triager used to enrich reports.
+func WithTriager(t Triager) Option {
+	return func(p *Processor) {
+		p.triager = t
+	}
+}
+
+func NewProcessor(q Queries, issues Issues, router Router, logs ServerLogs, window time.Duration, crashes CrashResolver, links AttachmentLinker, health ServiceHealth, opts ...Option) *Processor {
+	p := &Processor{q: q, issues: issues, router: router, logs: logs, window: window, crashes: crashes, links: links, health: health}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 // Process opens the report's issue in every project its app is linked to,
@@ -164,7 +185,16 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 			slog.WarnContext(ctx, "Sentry details unavailable; retaining crash reference", "report", id)
 		}
 	}
-	suggestion := triage.Analyze(&r)
+	repo := ""
+	if len(todo) > 0 {
+		repo = todo[0].Repository
+	}
+	var suggestion triage.Suggestion
+	if p.triager != nil {
+		suggestion = p.triager.TriageReport(ctx, &r, repo)
+	} else {
+		suggestion = triage.Analyze(&r)
+	}
 	info := reportInfo{
 		CrashEvent:     crashEvent,
 		ID:             row.ReportID,
