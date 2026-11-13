@@ -6,11 +6,13 @@ on:
     paths:
       - "sdks/flutter/**"
       - "sdks/ios/**"
+      - "sdks/android/**"
       - ".github/workflows/flutter-ci.yml"
   pull_request:
     paths:
       - "sdks/flutter/**"
       - "sdks/ios/**"
+      - "sdks/android/**"
       - ".github/workflows/flutter-ci.yml"
 
 permissions:
@@ -39,7 +41,10 @@ jobs:
         run: |
           dart run pigeon --input pigeons/messages.dart
           dart format lib/src/messages.g.dart
-          git diff --exit-code -- lib/src/messages.g.dart ios/Classes/Messages.g.swift
+          git diff --exit-code -- \
+            lib/src/messages.g.dart \
+            ios/Classes/Messages.g.swift \
+            android/src/main/kotlin/org/microclub/mseismo/flutter/Messages.g.kt
 
       - name: Check formatting
         run: dart format --set-exit-if-changed lib test pigeons example/lib example/integration_test
@@ -73,3 +78,31 @@ jobs:
 
       - name: Integration test
         run: flutter test integration_test -d "iPhone 17"
+
+  android:
+    name: Android build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/flutter/example
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.44.8"
+          cache: true
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build debug APK
+        run: flutter build apk --debug
