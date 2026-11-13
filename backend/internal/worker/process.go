@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +20,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/triage"
 )
 
 // Issues opens issues in project repositories. Implemented by
@@ -162,6 +164,7 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 			slog.WarnContext(ctx, "Sentry details unavailable; retaining crash reference", "report", id)
 		}
 	}
+	suggestion := triage.Analyze(&r)
 	info := reportInfo{
 		CrashEvent:     crashEvent,
 		ID:             row.ReportID,
@@ -169,6 +172,7 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 		ScreenshotURL:  p.screenshotURL(attachments),
 		ServerLogs:     p.serverLogs(ctx, row),
 		Health:         p.serviceHealth(ctx, row),
+		Triage:         suggestion,
 	}
 	base := render(&r, info)
 
@@ -183,6 +187,15 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 			}
 		}
 		draft.Labels, draft.Assignees, draft.Milestone = t.Labels, t.Assignees, t.Milestone
+		if len(draft.Labels) == 0 && len(suggestion.Labels) > 0 {
+			draft.Labels = slices.Clone(suggestion.Labels)
+		}
+		if len(draft.Assignees) == 0 && suggestion.Owner != "" {
+			rawOwner := strings.TrimPrefix(suggestion.Owner, "@")
+			if rawOwner != "" {
+				draft.Assignees = []string{rawOwner}
+			}
+		}
 		res, err := p.issues.OpenInRepository(ctx, row.AppID, t.ProjectRepositoryID, draft)
 		if err != nil {
 			var rl *issue.RateLimitError

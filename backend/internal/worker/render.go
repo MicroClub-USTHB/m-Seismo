@@ -14,6 +14,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issuetemplate"
 	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/triage"
 )
 
 // Limits on what goes into an issue. GitHub refuses titles over 256
@@ -42,6 +43,7 @@ type reportInfo struct {
 	// none.
 	Health     []healthRow
 	CrashEvent *crashprovider.Event
+	Triage     triage.Suggestion
 }
 
 // render turns a report into the draft of its issue.
@@ -65,6 +67,8 @@ func render(r *ingest.Report, info reportInfo) issue.Draft {
 			b.WriteString("\n\n")
 		}
 	}
+
+	b.WriteString(triageSection(info.Triage))
 
 	b.WriteString(stepsSection(r))
 	b.WriteString(crashSection(r, info))
@@ -96,6 +100,50 @@ func render(r *ingest.Report, info reportInfo) issue.Draft {
 		Title: truncate(title(r), maxTitle, "…"),
 		Body:  truncate(b.String(), maxBody, "\n\n_(truncated)_"),
 	}
+}
+
+// triageSection renders the "Auto-Triage Suggestions" callout block,
+// empty when no suggestions are present.
+func triageSection(s triage.Suggestion) string {
+	if s.Severity == "" && s.Owner == "" && len(s.Labels) == 0 && s.Screen == "" && (s.AISummary == nil || (s.AISummary.Title == "" && s.AISummary.ProbableCause == "")) {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("> [!NOTE]\n")
+	b.WriteString("> 🤖 **Auto-Triage Suggestions**\n")
+	b.WriteString(">\n")
+
+	if s.Severity != "" {
+		b.WriteString("> Suggested Severity: " + s.Severity)
+		if s.SeverityReason != "" {
+			fmt.Fprintf(&b, " (%s)", s.SeverityReason)
+		}
+		b.WriteString("\n")
+	}
+	if s.Owner != "" {
+		b.WriteString("> Suggested Owner: " + s.Owner)
+		if s.OwnerReason != "" {
+			fmt.Fprintf(&b, " (%s)", s.OwnerReason)
+		}
+		b.WriteString("\n")
+	}
+	if len(s.Labels) > 0 {
+		formatted := make([]string, len(s.Labels))
+		for i, l := range s.Labels {
+			formatted[i] = "`" + l + "`"
+		}
+		fmt.Fprintf(&b, "> Suggested Labels: %s\n", strings.Join(formatted, ", "))
+	}
+	if s.Screen != "" {
+		fmt.Fprintf(&b, "> Active Screen: %s\n", s.Screen)
+	}
+	if s.AISummary != nil && s.AISummary.ProbableCause != "" {
+		fmt.Fprintf(&b, "> Probable Cause: %s\n", s.AISummary.ProbableCause)
+	}
+	b.WriteString("\n")
+
+	return b.String()
 }
 
 // stepsSection renders the "Steps to reproduce" markdown, empty when the
@@ -223,6 +271,7 @@ func templateData(r *ingest.Report, info reportInfo) issuetemplate.TemplateData 
 		Crash:       crashSection(r, info),
 		Environment: environmentSection(r),
 		Logs:        logsSection(r),
+		Triage:      triageSection(info.Triage),
 	}
 }
 

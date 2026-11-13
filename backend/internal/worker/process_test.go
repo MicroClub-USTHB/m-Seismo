@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -406,5 +407,18 @@ func TestProcessSentryOnlyReportIncludesCrashDetailsAndSurvivesProviderFailure(t
 		if q.processed != 1 {
 			t.Fatal("Sentry failure prevented issue publication")
 		}
+	}
+}
+
+func TestProcessAutoTriageFallbackLabels(t *testing.T) {
+	q, is, p := newFixture(t, 1)
+	// Default route in newFixture has empty Labels and Assignees
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	d := is.drafts[0]
+	// Report payload in newFixture has platform "ios"
+	if !slices.Contains(d.Labels, "ios") {
+		t.Errorf("expected draft labels to fall back to suggestion labels %v, got %v", []string{"ios"}, d.Labels)
 	}
 }
