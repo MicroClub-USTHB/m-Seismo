@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:m_seismo/m_seismo.dart';
@@ -91,8 +92,12 @@ void main() {
       (candidate) => candidate['id'] == reportId,
     );
 
-    expect(report['platform'], 'ios');
-    expect((report['sdk'] as Map<String, dynamic>)['name'], 'mseismo-ios');
+    final isAndroid = defaultTargetPlatform == TargetPlatform.android;
+    expect(report['platform'], isAndroid ? 'android' : 'ios');
+    expect(
+      (report['sdk'] as Map<String, dynamic>)['name'],
+      isAndroid ? 'mseismo-android' : 'mseismo-ios',
+    );
     expect(report['trigger'], 'manual');
     expect(report['auto_submitted'], isFalse);
     expect(report['id'], reportId);
@@ -214,7 +219,7 @@ void main() {
 MSeismoConfig _config(int port) {
   return MSeismoConfig(
     baseUrl: 'http://127.0.0.1:$port',
-    sdkKey: 'example-project-key',
+    sdkKey: 'msk_flutter_example',
     environment: 'integration',
     release: '0.1.0',
     shakeEnabled: false,

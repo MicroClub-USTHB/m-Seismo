@@ -5,14 +5,13 @@ import 'package:flutter/foundation.dart';
 import 'messages.g.dart';
 
 const String _unsupportedPlatformMessage =
-    'm-Seismo Flutter bridge currently supports iOS only; Android awaits '
-    'the native Kotlin SDK.';
+    'm-Seismo Flutter bridge supports iOS and Android only.';
 
-/// Thin Dart facade over the native m-Seismo iOS SDK.
+/// Thin Dart facade over the native m-Seismo SDKs.
 ///
-/// Every channel-backed member is only available on iOS. The package can be
-/// compiled for other platforms, but calling into it there throws an
-/// [UnsupportedError].
+/// Every channel-backed member is only available on iOS and Android. The
+/// package can be compiled for other platforms, but calling into it there
+/// throws an [UnsupportedError].
 class MSeismo {
   MSeismo._({MSeismoHostApi? hostApi})
       : _hostApi = hostApi ?? MSeismoHostApi() {
@@ -36,19 +35,19 @@ class MSeismo {
 
   /// Connects this app to an m-Seismo project.
   Future<void> configure(MSeismoConfig config) {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.configure(config);
   }
 
   /// Opens the native report sheet.
   Future<void> report({ReportTrigger trigger = ReportTrigger.manual}) {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.report(trigger);
   }
 
   /// Submits a report without opening the native sheet, returning its ID.
   Future<String> submit(ReportDraft draft) {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.submit(draft);
   }
 
@@ -59,83 +58,83 @@ class MSeismo {
     String? stackTrace,
     bool fatal = false,
   }) {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.recordError(message, stackTrace, fatal);
   }
 
   /// Reports a crash or error persisted by a previous launch, if any.
   Future<void> checkForPendingCrash() {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.checkForPendingCrash();
   }
 
   Future<void> log(String message) {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.log(message);
   }
 
   Future<void> breadcrumb(BreadcrumbKind kind, String message) {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.breadcrumb(kind, message);
   }
 
   Future<void> recordNetworkRequest(NetworkRequest request) {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.recordNetworkRequest(request);
   }
 
   Future<void> setCapturesNetworkBodies(bool enabled) {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.setCapturesNetworkBodies(enabled);
   }
 
   Future<void> setFeatureFlags(Map<String, Object?> flags) {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.setFeatureFlags(flags);
   }
 
   Future<void> setExperiments(Map<String, String> experiments) {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.setExperiments(experiments);
   }
 
   Future<void> setCrashlyticsInstallationId(String? id) {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.setCrashlyticsInstallationId(id);
   }
 
   Future<void> setRedactionAllowList(List<String> values) {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.setRedactionAllowList(values);
   }
 
   Future<void> setRedactionDenyList(List<String> values) {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.setRedactionDenyList(values);
   }
 
   Future<int> get pendingReportCount {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.pendingReportCount();
   }
 
   Future<void> retryNow() {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.retryNow();
   }
 
   Future<String> get installationId {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.getInstallationId();
   }
 
   Future<String> get sessionId {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.getSessionId();
   }
 
   Future<String> newTraceId() {
-    _ensureIOS();
+    _ensureSupported();
     return _hostApi.newTraceId();
   }
 
@@ -146,8 +145,9 @@ class MSeismo {
     _autoReports.add(report);
   }
 
-  void _ensureIOS() {
-    if (defaultTargetPlatform != TargetPlatform.iOS) {
+  void _ensureSupported() {
+    if (defaultTargetPlatform != TargetPlatform.iOS &&
+        defaultTargetPlatform != TargetPlatform.android) {
       throw UnsupportedError(_unsupportedPlatformMessage);
     }
   }
