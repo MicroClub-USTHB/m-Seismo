@@ -53,9 +53,20 @@ type AISummary struct {
 	ProbableCause string `json:"probable_cause"`
 }
 
+// Options specifies optional configuration for triage analysis, such as parsed CODEOWNERS.
+type Options struct {
+	Codeowners *Codeowners
+}
+
 // Analyze evaluates an ingested report and returns suggested severity, labels,
 // and screen context based on heuristic rules.
 func Analyze(r *ingest.Report) Suggestion {
+	return AnalyzeWithOptions(r, Options{})
+}
+
+// AnalyzeWithOptions evaluates an ingested report with additional context,
+// including CODEOWNERS for owner resolution.
+func AnalyzeWithOptions(r *ingest.Report, opts Options) Suggestion {
 	if r == nil {
 		return Suggestion{}
 	}
@@ -64,12 +75,20 @@ func Analyze(r *ingest.Report) Suggestion {
 	labels := suggestLabels(r)
 	screen := lastScreen(r)
 
-	return Suggestion{
+	s := Suggestion{
 		Severity:       sev,
 		SeverityReason: sevReason,
 		Labels:         labels,
 		Screen:         screen,
 	}
+
+	if opts.Codeowners != nil {
+		owner, ownerReason := MatchOwner(opts.Codeowners, r, screen)
+		s.Owner = owner
+		s.OwnerReason = ownerReason
+	}
+
+	return s
 }
 
 func suggestSeverity(r *ingest.Report) (string, string) {
