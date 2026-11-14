@@ -94,6 +94,19 @@ CREATE TABLE public.app_crash_providers (
 
 
 --
+-- Name: app_observability_providers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_observability_providers (
+    app_id uuid NOT NULL,
+    provider text NOT NULL,
+    settings jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_observability_providers_provider_check CHECK ((provider = ANY (ARRAY['grafana'::text, 'loki'::text, 'cloudwatch'::text, 'datadog'::text])))
+);
+
+
+--
 -- Name: app_keys; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -360,6 +373,14 @@ CREATE TABLE public.schema_migrations (
 
 ALTER TABLE ONLY public.app_crash_providers
     ADD CONSTRAINT app_crash_providers_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: app_observability_providers app_observability_providers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_observability_providers
+    ADD CONSTRAINT app_observability_providers_pkey PRIMARY KEY (app_id, provider);
 
 
 --
@@ -698,6 +719,14 @@ ALTER TABLE ONLY public.app_crash_providers
 
 
 --
+-- Name: app_observability_providers app_observability_providers_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_observability_providers
+    ADD CONSTRAINT app_observability_providers_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_keys app_keys_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -917,4 +946,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261030160000'),
     ('20261030170000'),
     ('20261030180000'),
-    ('20261031090000');
+    ('20261031090000'),
+    ('20261114100000');

@@ -21,9 +21,11 @@ type Querier interface {
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateReportDelivery(ctx context.Context, arg CreateReportDeliveryParams) error
 	CreateRoutingRule(ctx context.Context, arg CreateRoutingRuleParams) (RoutingRule, error)
+	DeleteAllAppObservabilityProviders(ctx context.Context, appID uuid.UUID) error
 	DeleteApp(ctx context.Context, arg DeleteAppParams) (int64, error)
 	DeleteAppConnection(ctx context.Context, arg DeleteAppConnectionParams) (int64, error)
 	DeleteAppCrashProvider(ctx context.Context, appID uuid.UUID) error
+	DeleteAppObservabilityProvider(ctx context.Context, arg DeleteAppObservabilityProviderParams) error
 	DeleteAppTrackerCredentials(ctx context.Context, arg DeleteAppTrackerCredentialsParams) (int64, error)
 	// Deletes reports older than their app's retention period, falling back to
 	// the operator's default (sqlc.arg(default_days)) for apps that don't set
@@ -41,6 +43,7 @@ type Querier interface {
 	GetApp(ctx context.Context, arg GetAppParams) (App, error)
 	GetAppConnection(ctx context.Context, arg GetAppConnectionParams) (ProviderConnection, error)
 	GetAppCrashProvider(ctx context.Context, appID uuid.UUID) (AppCrashProvider, error)
+	GetAppObservabilityProvider(ctx context.Context, arg GetAppObservabilityProviderParams) (AppObservabilityProvider, error)
 	GetAppTrackerCredentials(ctx context.Context, arg GetAppTrackerCredentialsParams) (AppTrackerCredential, error)
 	GetConnectionSecret(ctx context.Context, providerConnectionID uuid.UUID) ([]byte, error)
 	GetCrashlyticsConnection(ctx context.Context, projectID uuid.UUID) (CrashlyticsConnection, error)
@@ -68,6 +71,7 @@ type Querier interface {
 	ListAppConnections(ctx context.Context, arg ListAppConnectionsParams) ([]ProviderConnection, error)
 	ListAppCrashProviderCredentials(ctx context.Context) ([]ListAppCrashProviderCredentialsRow, error)
 	ListAppKeys(ctx context.Context, arg ListAppKeysParams) ([]AppKey, error)
+	ListAppObservabilityProviders(ctx context.Context, appID uuid.UUID) ([]AppObservabilityProvider, error)
 	ListAppProjects(ctx context.Context, appID uuid.UUID) ([]Project, error)
 	ListApps(ctx context.Context, ownerID uuid.UUID) ([]App, error)
 	ListCrashlyticsConnections(ctx context.Context) ([]CrashlyticsConnection, error)
@@ -99,6 +103,7 @@ type Querier interface {
 	RevokeAppKey(ctx context.Context, arg RevokeAppKeyParams) (int64, error)
 	RotateAppCrashProviderCredentials(ctx context.Context, arg RotateAppCrashProviderCredentialsParams) (int64, error)
 	SetAppCrashProvider(ctx context.Context, arg SetAppCrashProviderParams) (AppCrashProvider, error)
+	SetAppObservabilityProvider(ctx context.Context, arg SetAppObservabilityProviderParams) (AppObservabilityProvider, error)
 	SetCrashlyticsApps(ctx context.Context, arg SetCrashlyticsAppsParams) (int64, error)
 	SetDefaultProjectRepository(ctx context.Context, arg SetDefaultProjectRepositoryParams) (int64, error)
 	SetIssueState(ctx context.Context, arg SetIssueStateParams) error
