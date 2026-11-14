@@ -122,12 +122,12 @@ func TestRender_ReleaseCorrelation(t *testing.T) {
 	}
 
 	rc := &release.CorrelatedRelease{
-		Version:     "2.3.1",
-		Build:       "87",
-		TagName:     "v2.3.1",
-		ReleaseURL:  "https://github.com/org/repo/releases/tag/v2.3.1",
-		CompareURL:  "https://github.com/org/repo/compare/v2.3.0...v2.3.1",
-		CommitURL:   "https://github.com/org/repo/commit/87abcde",
+		Version:    "2.3.1",
+		Build:      "87",
+		TagName:    "v2.3.1",
+		ReleaseURL: "https://github.com/org/repo/releases/tag/v2.3.1",
+		CompareURL: "https://github.com/org/repo/compare/v2.3.0...v2.3.1",
+		CommitURL:  "https://github.com/org/repo/commit/87abcde",
 	}
 
 	body := render(&r, reportInfo{ReleaseCorrelation: rc}).Body
