@@ -1,0 +1,23 @@
+meta {
+  name: Update Me
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/owners/me
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "New Name"
+  }
+}
+
+docs {
+  All fields optional (`name`, `email`, `password`, `current_password`).
+  Changing `email` or `password` requires a correct `current_password`
+  (401 otherwise). 409 on a duplicate email.
+}

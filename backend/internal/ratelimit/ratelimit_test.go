@@ -3,7 +3,7 @@ package ratelimit
 import (
 	"context"
 	"fmt"
-	"os"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/testenv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -12,20 +12,16 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// These tests need Redis. They are skipped unless SEISMO_TEST_REDIS_URL is
-// set, e.g. redis://localhost:6379/0.
+// These tests need Redis: a container, or the server in SEISMO_TEST_REDIS_URL.
 func newTestLimiter(t *testing.T) *Limiter {
 	t.Helper()
-	url := os.Getenv("SEISMO_TEST_REDIS_URL")
-	if url == "" {
-		t.Skip("SEISMO_TEST_REDIS_URL not set")
-	}
+	url := testenv.RedisURL(t)
 	opts, err := redis.ParseURL(url)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rdb := redis.NewClient(opts)
-	t.Cleanup(func() { rdb.Close() })
+	t.Cleanup(func() { _ = rdb.Close() })
 	return New(rdb, fmt.Sprintf("test:ratelimit:%d:", time.Now().UnixNano()))
 }
 

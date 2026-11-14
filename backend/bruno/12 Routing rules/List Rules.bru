@@ -1,0 +1,17 @@
+meta {
+  name: List Rules
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/projects/{{projectId}}/routing-rules
+  body: none
+  auth: inherit
+}
+
+docs {
+  200 `[rule]`, in the order they are tried: `position`, then creation.
+  A report goes to the first rule whose conditions all match, else to the
+  project's default repository. See backend/docs/routing.md.
+}

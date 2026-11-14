@@ -4,21 +4,42 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/coordinator"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/observability"
+	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/release"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
 )
+
+// screenshotAttachmentID is the fixed id ListReportAttachments answers
+// with, so tests can assert on the link fakeLinker built from it.
+var screenshotAttachmentID = uuid.MustParse("00000000-0000-0000-0000-00000000a77a")
+
+// fakeLinker returns a fixed, recognizable URL for any attachment id.
+type fakeLinker struct{}
+
+func (fakeLinker) SignedURL(id uuid.UUID) string {
+	return "https://seismo.example.com/attachments/" + id.String()
+}
 
 type fakeQueries struct {
 	report     *db.Report
-	targets    []db.ListIssueTargetsForAppRow
+	router     *fakeRouter
 	deliveries []db.ReportDelivery
-	processed  int
+	// projectOf is the project of each repository.
+	projectOf map[uuid.UUID]uuid.UUID
+	processed int
 }
 
 func (f *fakeQueries) GetReport(_ context.Context, id uuid.UUID) (db.Report, error) {
@@ -28,16 +49,16 @@ func (f *fakeQueries) GetReport(_ context.Context, id uuid.UUID) (db.Report, err
 	return *f.report, nil
 }
 
-func (f *fakeQueries) ListReportAttachmentNames(context.Context, uuid.UUID) ([]string, error) {
-	return []string{"screenshot"}, nil
+func (f *fakeQueries) ListReportAttachments(context.Context, uuid.UUID) ([]db.ListReportAttachmentsRow, error) {
+	return []db.ListReportAttachmentsRow{{ID: screenshotAttachmentID, Name: ingest.ScreenshotName}}, nil
 }
 
-func (f *fakeQueries) ListIssueTargetsForApp(context.Context, uuid.UUID) ([]db.ListIssueTargetsForAppRow, error) {
-	return f.targets, nil
-}
-
-func (f *fakeQueries) ListReportDeliveries(context.Context, uuid.UUID) ([]db.ReportDelivery, error) {
-	return f.deliveries, nil
+func (f *fakeQueries) ListReportDeliveryProjects(context.Context, uuid.UUID) ([]uuid.UUID, error) {
+	var out []uuid.UUID
+	for _, d := range f.deliveries {
+		out = append(out, f.projectOf[d.ProjectRepositoryID])
+	}
+	return out, nil
 }
 
 func (f *fakeQueries) CreateReportDelivery(_ context.Context, arg db.CreateReportDeliveryParams) error {
@@ -52,6 +73,17 @@ func (f *fakeQueries) MarkReportProcessed(context.Context, uuid.UUID) error {
 	return nil
 }
 
+// fakeRouter routes every report the same way and keeps the facts it got.
+type fakeRouter struct {
+	routes []routing.Route
+	facts  []routing.Facts
+}
+
+func (f *fakeRouter) Routes(_ context.Context, facts routing.Facts) ([]routing.Route, error) {
+	f.facts = append(f.facts, facts)
+	return f.routes, nil
+}
+
 // fakeIssues opens issues, or fails with the error set for a repository.
 type fakeIssues struct {
 	fail   map[uuid.UUID]error
@@ -59,7 +91,7 @@ type fakeIssues struct {
 	drafts []issue.Draft
 }
 
-func (f *fakeIssues) OpenInRepository(_ context.Context, repo uuid.UUID, _ *uuid.UUID, d issue.Draft) (issue.Result, error) {
+func (f *fakeIssues) OpenInRepository(_ context.Context, _, repo uuid.UUID, d issue.Draft) (issue.Result, error) {
 	if err := f.fail[repo]; err != nil {
 		return issue.Result{Err: err}, err
 	}
@@ -68,7 +100,9 @@ func (f *fakeIssues) OpenInRepository(_ context.Context, repo uuid.UUID, _ *uuid
 	return issue.Result{IssueID: uuid.New(), Ref: issue.Ref{ID: "1", URL: "https://github.com/o/r/issues/1"}}, nil
 }
 
-func newFixture(t *testing.T, repos int) (*fakeQueries, *fakeIssues, *Processor) {
+// newFixture routes the report to the default repository of `projects`
+// projects.
+func newFixture(t *testing.T, projects int) (*fakeQueries, *fakeIssues, *Processor) {
 	t.Helper()
 	payload, _ := json.Marshal(map[string]any{
 		"platform": "ios",
@@ -79,15 +113,18 @@ func newFixture(t *testing.T, repos int) (*fakeQueries, *fakeIssues, *Processor)
 			"description": "I tapped pay",
 		},
 	})
-	q := &fakeQueries{report: &db.Report{ID: uuid.New(), AppID: uuid.New(), ReportID: uuid.New(), InstallationID: uuid.New(), Payload: payload}}
-	for i := 0; i < repos; i++ {
-		q.targets = append(q.targets, db.ListIssueTargetsForAppRow{ProjectRepositoryID: uuid.New(), Repository: "o/r"})
+	router := &fakeRouter{}
+	q := &fakeQueries{router: router, projectOf: map[uuid.UUID]uuid.UUID{}, report: &db.Report{ID: uuid.New(), AppID: uuid.New(), ReportID: uuid.New(), InstallationID: uuid.New(), Payload: payload}}
+	for i := 0; i < projects; i++ {
+		route := routing.Route{ProjectID: uuid.New(), ProjectRepositoryID: uuid.New(), Repository: "o/r"}
+		router.routes = append(router.routes, route)
+		q.projectOf[route.ProjectRepositoryID] = route.ProjectID
 	}
 	is := &fakeIssues{fail: map[uuid.UUID]error{}}
-	return q, is, NewProcessor(q, is)
+	return q, is, NewProcessor(q, is, router, nil, time.Minute, nil, fakeLinker{}, nil)
 }
 
-func TestProcessOpensOneIssuePerRepository(t *testing.T) {
+func TestProcessOpensOneIssuePerProject(t *testing.T) {
 	q, is, p := newFixture(t, 2)
 	if err := p.Process(context.Background(), q.report.ID); err != nil {
 		t.Fatal(err)
@@ -108,9 +145,168 @@ func TestProcessOpensOneIssuePerRepository(t *testing.T) {
 	}
 }
 
+func TestProcessUsesTheRoute(t *testing.T) {
+	q, is, p := newFixture(t, 1)
+	route := &q.router.routes[0]
+	route.Labels, route.Assignees, route.Milestone = []string{"bug", "ios"}, []string{"octocat"}, "v2.4"
+
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	if f := q.router.facts[0]; f.AppID != q.report.AppID {
+		t.Errorf("routed with app %s, want %s", f.AppID, q.report.AppID)
+	}
+	if len(is.opened) != 1 || is.opened[0] != route.ProjectRepositoryID {
+		t.Fatalf("opened %v, want the route's repository", is.opened)
+	}
+	d := is.drafts[0]
+	if strings.Join(d.Labels, ",") != "bug,ios" || strings.Join(d.Assignees, ",") != "octocat" || d.Milestone != "v2.4" {
+		t.Errorf("labels %v, assignees %v, milestone %q", d.Labels, d.Assignees, d.Milestone)
+	}
+}
+
+func TestProcessUsesTheRouteIssueTemplate(t *testing.T) {
+	q, is, p := newFixture(t, 1)
+	title, body := "Bug: {{.Title}}", "## Steps\n\n{{.Steps}}\n## Env\n\n{{.Environment}}"
+	q.router.routes[0].TitleTemplate, q.router.routes[0].BodyTemplate = &title, &body
+
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	d := is.drafts[0]
+	if d.Title != "Bug: Pay button does nothing" {
+		t.Errorf("title = %q", d.Title)
+	}
+	if !strings.Contains(d.Body, "## Steps") || !strings.Contains(d.Body, "## Env") {
+		t.Errorf("body = %q", d.Body)
+	}
+	if !strings.Contains(d.Body, "Opened by m-Seismo") {
+		t.Errorf("templated body dropped the footer: %q", d.Body)
+	}
+}
+
+func TestProcessFallsBackToDefaultLayoutOnBadTemplate(t *testing.T) {
+	q, is, p := newFixture(t, 1)
+	title, body := "{{.NotAField}}", "whatever"
+	q.router.routes[0].TitleTemplate, q.router.routes[0].BodyTemplate = &title, &body
+
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	if d := is.drafts[0]; d.Title != "Pay button does nothing" {
+		t.Errorf("title = %q, want the default layout's", d.Title)
+	}
+}
+
+func TestProcessSkipsProjectsAlreadyDelivered(t *testing.T) {
+	q, is, p := newFixture(t, 1)
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// A rule changed since and sends the project's issues to another of
+	// its repositories, but the project already has this report's issue.
+	q.report.ProcessedAt = nil
+	moved := uuid.New()
+	q.projectOf[moved] = q.router.routes[0].ProjectID
+	q.router.routes[0].ProjectRepositoryID = moved
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(is.opened) != 1 {
+		t.Errorf("opened %d issues, want 1", len(is.opened))
+	}
+}
+
+type fakeLogs struct {
+	calls    int
+	from, to time.Time
+	err      error
+}
+
+func (f *fakeLogs) QueryLogs(_ context.Context, _ uuid.UUID, from, to time.Time) (*seismov1.AggregateResult, error) {
+	f.calls++
+	f.from, f.to = from, to
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &seismov1.AggregateResult{Agents: []*seismov1.AgentSection{{AgentId: "prod-1"}}}, nil
+}
+
+// fakeHealth answers every service-health query the same way.
+type fakeHealth struct {
+	metrics *seismov1.AggregateMetrics
+	status  *seismov1.AggregateStatus
+}
+
+func (f *fakeHealth) QueryMetrics(context.Context, uuid.UUID, time.Time, time.Time) (*seismov1.AggregateMetrics, error) {
+	return f.metrics, nil
+}
+
+func (f *fakeHealth) QueryStatus(context.Context, uuid.UUID) (*seismov1.AggregateStatus, error) {
+	return f.status, nil
+}
+
+func TestProcessAddsServiceHealth(t *testing.T) {
+	q, is, _ := newFixture(t, 1)
+	health := &fakeHealth{
+		metrics: &seismov1.AggregateMetrics{Agents: []*seismov1.AgentMetrics{{
+			AgentId:  "agent-1",
+			Services: []*seismov1.ServiceMetrics{{Service: "api", Lines: 10, ErrorLines: 1}},
+		}}},
+	}
+	p := NewProcessor(q, is, q.router, nil, time.Minute, nil, fakeLinker{}, health)
+
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	body := is.drafts[0].Body
+	if !strings.Contains(body, "### Service health") || !strings.Contains(body, "1/10 (10.0%)") {
+		t.Errorf("body missing service health: %q", body)
+	}
+}
+
+func TestProcessAddsServerLogs(t *testing.T) {
+	q, is, _ := newFixture(t, 1)
+	q.report.OccurredAt = time.Date(2026, 10, 21, 14, 0, 0, 0, time.UTC)
+	logs := &fakeLogs{}
+	p := NewProcessor(q, is, q.router, logs, 2*time.Minute, nil, fakeLinker{}, nil)
+
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	if !logs.from.Equal(q.report.OccurredAt.Add(-2*time.Minute)) || !logs.to.Equal(q.report.OccurredAt.Add(2*time.Minute)) {
+		t.Errorf("window = [%s, %s]", logs.from, logs.to)
+	}
+	if !strings.Contains(is.drafts[0].Body, "**Agent `prod-1`**") {
+		t.Errorf("issue has no server logs:\n%s", is.drafts[0].Body)
+	}
+
+	// Nothing left to open: the coordinator is not asked again.
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	if logs.calls != 1 {
+		t.Errorf("asked for logs %d times, want 1", logs.calls)
+	}
+}
+
+func TestProcessWithoutServerLogs(t *testing.T) {
+	for _, err := range []error{coordinator.ErrNotAttached, errors.New("NATS is down")} {
+		q, is, _ := newFixture(t, 1)
+		p := NewProcessor(q, is, q.router, &fakeLogs{err: err}, time.Minute, nil, fakeLinker{}, nil)
+		if err := p.Process(context.Background(), q.report.ID); err != nil {
+			t.Fatalf("logs failing with %v failed the report: %v", err, err)
+		}
+		if len(is.opened) != 1 || strings.Contains(is.drafts[0].Body, "Server logs") {
+			t.Errorf("logs failing with %v: opened %d issues", err, len(is.opened))
+		}
+	}
+}
+
 func TestProcessRetriesOnlyFailedRepositories(t *testing.T) {
 	q, is, p := newFixture(t, 2)
-	failing := q.targets[1].ProjectRepositoryID
+	failing := q.router.routes[1].ProjectRepositoryID
 	is.fail[failing] = errors.New("github is down")
 
 	err := p.Process(context.Background(), q.report.ID)
@@ -133,7 +329,7 @@ func TestProcessRetriesOnlyFailedRepositories(t *testing.T) {
 
 func TestProcessStopsOnRateLimit(t *testing.T) {
 	q, is, p := newFixture(t, 2)
-	is.fail[q.targets[0].ProjectRepositoryID] = &issue.RateLimitError{Tracker: "github", Wait: time.Minute, Err: errors.New("403")}
+	is.fail[q.router.routes[0].ProjectRepositoryID] = &issue.RateLimitError{Tracker: "github", Wait: time.Minute, Err: errors.New("403")}
 
 	err := p.Process(context.Background(), q.report.ID)
 	var rl *issue.RateLimitError
@@ -171,4 +367,231 @@ func assertPermanent(t *testing.T, err error) {
 	if !errors.As(err, &perm) {
 		t.Fatalf("got %v, want a permanent error", err)
 	}
+}
+
+type fakeCrashResolver struct {
+	event *crashprovider.Event
+	err   error
+	app   uuid.UUID
+}
+
+func (f *fakeCrashResolver) ForReport(_ context.Context, app uuid.UUID, _ *ingest.Report) (*crashprovider.Event, error) {
+	f.app = app
+	return f.event, f.err
+}
+func TestProcessSentryOnlyReportIncludesCrashDetailsAndSurvivesProviderFailure(t *testing.T) {
+	for _, unavailable := range []bool{false, true} {
+		q, is, p := newFixture(t, 1)
+		id := strings.Repeat("a", 32)
+		q.report.Payload = []byte(`{"platform":"web","trigger":"crash","sentry":{"event_id":"` + id + `"}}`)
+		resolver := &fakeCrashResolver{event: &crashprovider.Event{EventID: id, URL: "https://sentry.example/organizations/club/issues/?query=" + id, Title: "Unhandled error", StackTrace: []string{"render (app.js:12)"}}}
+		if unavailable {
+			resolver.err = errors.New("provider unavailable")
+			resolver.event.Title = ""
+			resolver.event.StackTrace = nil
+		}
+		p.crashes = resolver
+		if err := p.Process(context.Background(), q.report.ID); err != nil {
+			t.Fatal(err)
+		}
+		if resolver.app != q.report.AppID {
+			t.Fatal("resolver used another app")
+		}
+		for _, text := range []string{"### Crash", id, "[View in Sentry](" + resolver.event.URL + ")"} {
+			if !strings.Contains(is.drafts[0].Body, text) {
+				t.Fatalf("missing %q in issue", text)
+			}
+		}
+		if !unavailable && !strings.Contains(is.drafts[0].Body, "render (app.js:12)") {
+			t.Fatal("resolved stack missing")
+		}
+		if q.processed != 1 {
+			t.Fatal("Sentry failure prevented issue publication")
+		}
+	}
+}
+
+type fakeObservabilityConfig struct {
+	cfg   observability.Config
+	err   error
+	delay time.Duration
+}
+
+func (f *fakeObservabilityConfig) GetConfigForApp(ctx context.Context, _ uuid.UUID) (observability.Config, error) {
+	if f.delay > 0 {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return observability.Config{}, ctx.Err()
+		}
+	}
+	return f.cfg, f.err
+}
+
+type fakeReleaseCorrelator struct {
+	res   *release.CorrelatedRelease
+	err   error
+	delay time.Duration
+}
+
+func (f *fakeReleaseCorrelator) Correlate(ctx context.Context, _ release.CorrelateRequest) (*release.CorrelatedRelease, error) {
+	if f.delay > 0 {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return f.res, f.err
+}
+
+func TestProcess_ObservabilityAndReleaseCorrelation(t *testing.T) {
+	q, is, _ := newFixture(t, 1)
+
+	occurredAt := time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC)
+	payload, _ := json.Marshal(map[string]any{
+		"platform":    "ios",
+		"trigger":     "shake",
+		"session_id":  "sess-42",
+		"occurred_at": occurredAt.Format(time.RFC3339),
+		"release":     map[string]string{"version": "1.4.0", "build": "82"},
+		"user_input": map[string]string{
+			"title": "Bug in checkout",
+		},
+	})
+	q.report.Payload = payload
+	q.report.OccurredAt = occurredAt
+
+	obs := &fakeObservabilityConfig{
+		cfg: observability.Config{
+			Grafana: &observability.GrafanaConfig{
+				BaseURL: "https://grafana.example.com",
+			},
+		},
+	}
+
+	rel := &fakeReleaseCorrelator{
+		res: &release.CorrelatedRelease{
+			Version:    "1.4.0",
+			Build:      "82",
+			ReleaseURL: "https://github.com/o/r/releases/tag/v1.4.0",
+			CompareURL: "https://github.com/o/r/compare/v1.3.0...v1.4.0",
+		},
+	}
+
+	p := NewProcessor(
+		q, is, q.router, nil, time.Minute, nil, fakeLinker{}, nil,
+		WithObservability(obs),
+		WithReleaseCorrelator(rel),
+	)
+
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatalf("Process failed: %v", err)
+	}
+
+	if len(is.drafts) != 1 {
+		t.Fatalf("expected 1 draft, got %d", len(is.drafts))
+	}
+
+	body := is.drafts[0].Body
+
+	// Check observability section
+	if !strings.Contains(body, "### Observability") {
+		t.Errorf("expected observability section in body:\n%s", body)
+	}
+	if !strings.Contains(body, "* [Grafana](https://grafana.example.com/explore") {
+		t.Errorf("expected Grafana link in body:\n%s", body)
+	}
+
+	// Check release correlation row
+	wantRelease := "| Release | 1.4.0 (82) · [Release Notes](https://github.com/o/r/releases/tag/v1.4.0) · [Compare Changes](https://github.com/o/r/compare/v1.3.0...v1.4.0) |"
+	if !strings.Contains(body, wantRelease) {
+		t.Errorf("expected release row in body:\nwant: %s\ngot:\n%s", wantRelease, body)
+	}
+}
+
+func TestProcess_GracefulDegradation(t *testing.T) {
+	t.Run("immediate error", func(t *testing.T) {
+		q, is, _ := newFixture(t, 1)
+
+		payload, _ := json.Marshal(map[string]any{
+			"platform":   "android",
+			"trigger":    "shake",
+			"session_id": "sess-fail",
+			"release":    map[string]string{"version": "1.0.0", "build": "1"},
+			"user_input": map[string]string{
+				"title": "Crash on login",
+			},
+		})
+		q.report.Payload = payload
+
+		obs := &fakeObservabilityConfig{
+			err: errors.New("observability DB failure"),
+		}
+		rel := &fakeReleaseCorrelator{
+			err: errors.New("external git tracker unreachable"),
+		}
+
+		p := NewProcessor(
+			q, is, q.router, nil, time.Minute, nil, fakeLinker{}, nil,
+			WithObservability(obs),
+			WithReleaseCorrelator(rel),
+		)
+
+		if err := p.Process(context.Background(), q.report.ID); err != nil {
+			t.Fatalf("Process failed despite graceful degradation: %v", err)
+		}
+
+		if len(is.drafts) != 1 {
+			t.Fatalf("expected 1 issue opened, got %d", len(is.drafts))
+		}
+		if q.processed != 1 {
+			t.Fatalf("expected report to be marked processed, got %d", q.processed)
+		}
+
+		body := is.drafts[0].Body
+		if strings.Contains(body, "### Observability") {
+			t.Errorf("observability section should be omitted on failure")
+		}
+		wantStandard := "| Release | 1.0.0 (1) |"
+		if !strings.Contains(body, wantStandard) {
+			t.Errorf("expected standard release row fallback:\nwant: %s\ngot:\n%s", wantStandard, body)
+		}
+	})
+
+	t.Run("slow external timeout", func(t *testing.T) {
+		q, is, _ := newFixture(t, 1)
+
+		payload, _ := json.Marshal(map[string]any{
+			"platform":   "android",
+			"trigger":    "shake",
+			"session_id": "sess-slow",
+			"release":    map[string]string{"version": "1.0.0", "build": "1"},
+			"user_input": map[string]string{
+				"title": "Crash on slow",
+			},
+		})
+		q.report.Payload = payload
+
+		obs := &fakeObservabilityConfig{
+			delay: 20 * time.Millisecond,
+		}
+		rel := &fakeReleaseCorrelator{
+			delay: 20 * time.Millisecond,
+		}
+
+		p := NewProcessor(
+			q, is, q.router, nil, time.Minute, nil, fakeLinker{}, nil,
+			WithObservability(obs),
+			WithReleaseCorrelator(rel),
+		)
+
+		if err := p.Process(context.Background(), q.report.ID); err != nil {
+			t.Fatalf("Process failed: %v", err)
+		}
+
+		if len(is.drafts) != 1 {
+			t.Fatalf("expected 1 issue opened, got %d", len(is.drafts))
+		}
+	})
 }

@@ -20,17 +20,22 @@ hands each message to one of them.
 1. Loads the report by the ID in the message. A report that no longer exists
    (deleted with its app, for example) is dropped.
 2. Skips it if `processed_at` is already set.
-3. Lists the targets: the default repository of every project the app is
-   linked to. An app with no target is dropped with a warning.
+3. Routes it (see [routing.md](routing.md)): for every project the app is
+   linked to, the first routing rule that matches picks the repository,
+   labels, assignees and milestone; with no match, the project's default
+   repository. An app with no target is dropped with a warning.
 4. Renders the issue from the report (`render.go`): the reporter's title (or
    one made from the crash or the platform and release), description,
    category and severity, the breadcrumbs as numbered steps to reproduce,
    the crash and its stack trace, the environment, recent logs and network
-   requests. Network request bodies are never included, and an `@` in
+   requests, and the server logs around the report when the app's
+   coordinator is attached. Network request bodies are never included, and an `@` in
    reporter-written text can't notify anyone on GitHub.
-5. Opens the issue in each target that doesn't have it yet, through
-   `issue.Service.OpenInRepository`, and records each one in
-   `report_deliveries`.
+5. Opens the issue in each project that doesn't have it yet, through
+   `issue.Service.OpenInRepository(ctx, appID, repositoryID, draft)`, and
+   records each one in `report_deliveries`. Each issue goes through the
+   reporting **app's own connection** for that repository's tracker (see
+   [issue-service.md](issue-service.md#which-connection-opens-it)).
 6. Sets `processed_at` once every target has its issue, then acknowledges
    the message.
 
@@ -44,9 +49,9 @@ JetStream delivers a message **at least once**. A worker that stops before
 acknowledging, or doesn't answer within the ack wait, gets the message
 redelivered, possibly to another worker. So processing is idempotent:
 
-- each repository that got the issue has a `report_deliveries` row and is
+- each project that got the issue has a `report_deliveries` row and is
   skipped on the next attempt, so a report opens at most one issue per
-  repository;
+  project, even if a routing rule changed in between;
 - when some targets fail, the others are recorded and the next attempt only
   retries the failed ones;
 - a processed report is left alone.
@@ -67,6 +72,7 @@ worker that stopped loses its messages to another one.
 | Permanent: report gone, unreadable, app with no target | logs a warning and terminates the message |
 | Tracker rate limit (`issue.RateLimitError`) | hands the message back to come again after the tracker's wait |
 | Other error (tracker down, network, database) | hands it back after 5 s, 30 s, 2 min, 10 min, then every 30 min |
+| The app has no connection for a target (`issue.ErrNoConnection`) | treated like any other error: retried on the same schedule, so the issue still opens if the owner connects the app in time, then terminated at `worker.max_attempts` |
 | `worker.max_attempts` reached | logs an error and terminates the message; the report keeps `processed_at` empty |
 | Shutdown | waits for the reports in progress; past the shutdown timeout their work is cancelled and their messages come back at once |
 
@@ -89,7 +95,7 @@ to:
 | Column | Meaning |
 |---|---|
 | `report_id` | the report (`reports.id`); cascade on delete |
-| `project_repository_id` | the repository; cascade on delete |
+| `project_repository_id` | the repository the issue went to; cascade on delete |
 | `issue_id` | the issue row, or null if the issue was opened but could not be recorded; set null when the issue row is deleted |
 | `url` | the issue's URL on the tracker |
 | `created_at` | when it was delivered |
@@ -98,10 +104,10 @@ to:
 
 ## Not done yet
 
-- **Routing rules**: only the default repository of each project is used.
 - **Deduplication**: every report opens its own issue; the fingerprint and
   `Opener.Comment` are ready for it.
-- **Enrichment**: no Crashlytics crash or server context yet.
+- **Crash enrichment**: no Crashlytics crash yet. Server logs come from the
+  app's coordinator when one is attached (see [coordinator.md](coordinator.md)).
 - **Attachments**: the issue says a screenshot was sent but doesn't link it;
   that needs private, expiring links.
 - **Sweeper**: a report stored but never published (`queued_at IS NULL`,

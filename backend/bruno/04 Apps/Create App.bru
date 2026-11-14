@@ -1,0 +1,28 @@
+meta {
+  name: Create App
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/apps
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "Shop iOS",
+    "platform": "ios",
+    "bundle_id": "com.example.shop"
+  }
+}
+
+vars:post-response {
+  appId: res.body.id
+}
+
+docs {
+  201 app. `platform` is one of `web`, `ios`, `android`.
+  `bundle_id` is 1-255 characters. All three fields required. Sets `appId`.
+}

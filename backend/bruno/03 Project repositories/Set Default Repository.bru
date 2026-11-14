@@ -1,0 +1,16 @@
+meta {
+  name: Set Default Repository
+  type: http
+  seq: 3
+}
+
+put {
+  url: {{baseUrl}}/projects/{{projectId}}/repositories/{{repositoryId}}/default
+  body: none
+  auth: inherit
+}
+
+docs {
+  204. Clears the old default and sets this one, in one transaction.
+  404 "repository not found" if it isn't linked to this project.
+}

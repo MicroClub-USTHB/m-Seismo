@@ -1,0 +1,42 @@
+# Overlay for running the stack on a server reachable from the internet.
+# Use it on top of compose.dev.yml:
+#
+#   docker compose -f deploy/compose.dev.yml -f deploy/compose.server.yml up --build -d --wait
+#
+# Postgres is not published, the API and the coordinator listen on
+# 127.0.0.1 only (reach them through an SSH tunnel or a reverse proxy), the
+# backend runs in production mode, and the secrets below must be set in
+# deploy/.env. See deploy/README.md.
+
+services:
+  postgres:
+    ports: !reset []
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+    restart: unless-stopped
+
+  redis:
+    restart: unless-stopped
+
+  nats:
+    restart: unless-stopped
+
+  migrate:
+    environment:
+      DATABASE_URL: postgres://seismo:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/seismo?sslmode=disable
+
+  backend:
+    ports: !override
+      - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
+      - "127.0.0.1:${COORDINATOR_PORT:-9443}:9443"
+    environment:
+      SEISMO_ENV: production
+      SEISMO_LOG_LEVEL: ${SEISMO_LOG_LEVEL:-info}
+      SEISMO_SERVER_PUBLIC_URL: ${SEISMO_SERVER_PUBLIC_URL:?set SEISMO_SERVER_PUBLIC_URL in deploy/.env}
+      SEISMO_DATABASE_URL: postgres://seismo:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/seismo?sslmode=disable
+      SEISMO_AUTH_JWT_SECRET: ${SEISMO_AUTH_JWT_SECRET:?set SEISMO_AUTH_JWT_SECRET in deploy/.env}
+      SEISMO_SECRETS_ENCRYPTION_KEY: ${SEISMO_SECRETS_ENCRYPTION_KEY:?set SEISMO_SECRETS_ENCRYPTION_KEY in deploy/.env}
+      # The coordinator port is bound to 127.0.0.1 above. Set the TLS
+      # certificate and key instead before exposing it to other machines.
+      SEISMO_COORDINATOR_PLAINTEXT: ${SEISMO_COORDINATOR_PLAINTEXT:-true}
+    restart: unless-stopped

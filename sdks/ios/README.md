@@ -45,7 +45,8 @@ python3 fake_server.py          # logs every /reports POST it receives
 python3 fake_server.py 2        # fails the first 2 requests with 503, to watch retry/backoff
 ```
 
-The example app points at `http://127.0.0.1:8787/reports` and submits a test
+The example app points at `http://127.0.0.1:8787` (the SDK adds
+`/api/v1/reports`) and submits a test
 report automatically at launch (`ExampleApp.swift`) — no UI interaction
 needed, just run the server and launch the app.
 

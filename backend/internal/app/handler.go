@@ -7,7 +7,9 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/fx"
 
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/provider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ratelimit"
 )
 
@@ -20,12 +22,14 @@ var Module = fx.Module("app",
 )
 
 type Handler struct {
-	svc     *Service
+	svc *Service
+	// conns runs the per-app connect flow and manages app connections.
+	conns   *provider.Service
 	require httpx.AuthMiddleware
 }
 
-func NewHandler(svc *Service, require httpx.AuthMiddleware) *Handler {
-	return &Handler{svc: svc, require: require}
+func NewHandler(svc *Service, conns *provider.Service, require httpx.AuthMiddleware) *Handler {
+	return &Handler{svc: svc, conns: conns, require: require}
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -37,13 +41,27 @@ func (h *Handler) Mount(r chi.Router) {
 			r.Patch("/", h.update)
 			r.Delete("/", h.delete)
 
-			r.Get("/keys", h.listKeys)
-			r.Post("/keys", h.createKey)
-			r.Delete("/keys/{keyID}", h.revokeKey)
+			r.Get("/keys", h.listKeys(db.AppKeyKindSdk))
+			r.Post("/keys", h.createKey(db.AppKeyKindSdk))
+			r.Delete("/keys/{keyID}", h.revokeKey(db.AppKeyKindSdk))
+
+			r.Get("/coordinator-keys", h.listKeys(db.AppKeyKindCoordinator))
+			r.Post("/coordinator-keys", h.createKey(db.AppKeyKindCoordinator))
+			r.Delete("/coordinator-keys/{keyID}", h.revokeKey(db.AppKeyKindCoordinator))
 
 			r.Get("/projects", h.listProjects)
 			r.Put("/projects/{projectID}", h.linkProject)
 			r.Delete("/projects/{projectID}", h.unlinkProject)
+
+			r.Get("/providers/{tracker}/credentials", h.getTrackerCredentials)
+			r.Put("/providers/{tracker}/credentials", h.setTrackerCredentials)
+
+			r.Get("/connect/{tracker}", h.connect)
+			r.Get("/connections", h.listConnections)
+			r.Post("/connections", h.attachConnection)
+			r.Delete("/connections/{connectionID}", h.disconnect)
+			r.Get("/connections/{connectionID}/repositories", h.listConnectionRepositories)
+			r.Get("/targets", h.targets)
 
 			r.Post("/test-issue", h.sendTestIssue)
 		})
@@ -152,46 +170,52 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	httpx.NoContent(w)
 }
 
-func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request) {
-	id, ok := uuidParam(w, r, "appID")
-	if !ok {
-		return
+func (h *Handler) listKeys(kind db.AppKeyKind) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := uuidParam(w, r, "appID")
+		if !ok {
+			return
+		}
+		keys, err := h.svc.ListKeys(r.Context(), httpx.OwnerID(r.Context()), id, kind)
+		if err != nil {
+			httpx.Error(w, r, err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, keys)
 	}
-	keys, err := h.svc.ListKeys(r.Context(), httpx.OwnerID(r.Context()), id)
-	if err != nil {
-		httpx.Error(w, r, err)
-		return
-	}
-	httpx.JSON(w, http.StatusOK, keys)
 }
 
-func (h *Handler) createKey(w http.ResponseWriter, r *http.Request) {
-	id, ok := uuidParam(w, r, "appID")
-	if !ok {
-		return
+func (h *Handler) createKey(kind db.AppKeyKind) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := uuidParam(w, r, "appID")
+		if !ok {
+			return
+		}
+		k, err := h.svc.CreateKey(r.Context(), httpx.OwnerID(r.Context()), id, kind)
+		if err != nil {
+			httpx.Error(w, r, err)
+			return
+		}
+		httpx.JSON(w, http.StatusCreated, k)
 	}
-	k, err := h.svc.CreateKey(r.Context(), httpx.OwnerID(r.Context()), id)
-	if err != nil {
-		httpx.Error(w, r, err)
-		return
-	}
-	httpx.JSON(w, http.StatusCreated, k)
 }
 
-func (h *Handler) revokeKey(w http.ResponseWriter, r *http.Request) {
-	id, ok := uuidParam(w, r, "appID")
-	if !ok {
-		return
+func (h *Handler) revokeKey(kind db.AppKeyKind) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := uuidParam(w, r, "appID")
+		if !ok {
+			return
+		}
+		keyID, ok := uuidParam(w, r, "keyID")
+		if !ok {
+			return
+		}
+		if err := h.svc.RevokeKey(r.Context(), httpx.OwnerID(r.Context()), id, keyID, kind); err != nil {
+			httpx.Error(w, r, err)
+			return
+		}
+		httpx.NoContent(w)
 	}
-	keyID, ok := uuidParam(w, r, "keyID")
-	if !ok {
-		return
-	}
-	if err := h.svc.RevokeKey(r.Context(), httpx.OwnerID(r.Context()), id, keyID); err != nil {
-		httpx.Error(w, r, err)
-		return
-	}
-	httpx.NoContent(w)
 }
 
 func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {

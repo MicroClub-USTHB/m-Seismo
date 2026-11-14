@@ -1,0 +1,75 @@
+name: Flutter SDK CI
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "sdks/flutter/**"
+      - "sdks/ios/**"
+      - ".github/workflows/flutter-ci.yml"
+  pull_request:
+    paths:
+      - "sdks/flutter/**"
+      - "sdks/ios/**"
+      - ".github/workflows/flutter-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  dart:
+    name: Dart checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/flutter
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.44.8"
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Regenerate Pigeon and check for drift
+        run: |
+          dart run pigeon --input pigeons/messages.dart
+          dart format lib/src/messages.g.dart
+          git diff --exit-code -- lib/src/messages.g.dart ios/Classes/Messages.g.swift
+
+      - name: Check formatting
+        run: dart format --set-exit-if-changed lib test pigeons example/lib example/integration_test
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Unit tests
+        run: flutter test
+
+  ios:
+    name: iOS build and integration test
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: sdks/flutter/example
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.44.8"
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build iOS simulator app
+        run: flutter build ios --simulator --no-codesign
+
+      - name: Integration test
+        run: flutter test integration_test -d "iPhone 17"

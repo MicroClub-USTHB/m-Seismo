@@ -1,0 +1,149 @@
+// Coordinator <-> backend. The coordinator dials out and attaches, the
+// backend never knows about individual agents.
+syntax = "proto3";
+
+package seismo.v1;
+
+import "google/protobuf/timestamp.proto";
+import "seismo/v1/common.proto";
+
+service Coordinator {
+  // Served by the backend, called by the coordinator. Looks like
+  // request-response from the backend's side but runs over the stream
+  // the coordinator opened.
+  //
+  // Auth: `authorization: Bearer mco_...` in the gRPC metadata. the
+  // backend derives the app from the key, the client never claims one.
+  rpc Attach(stream CoordinatorEvent) returns (stream BackendRequest);
+}
+
+// Coordinator -> backend.
+message CoordinatorEvent {
+  oneof event {
+    Hello hello = 1;
+    AggregateResult result = 2;
+    AggregateError error = 3;
+    // Added after v1.
+    AggregateMetrics metrics = 4;
+    // Added after v1.
+    AggregateStatus status = 5;
+  }
+}
+
+// Backend -> coordinator.
+message BackendRequest {
+  oneof request {
+    QueryLogs query_logs = 1;
+    // Added after v1.
+    MetricsQuery query_metrics = 2;
+    // Added after v1.
+    StatusQuery query_status = 3;
+  }
+}
+
+// Must be the first event. Same rejection scheme as agent Register:
+// FAILED_PRECONDITION for an unsupported version, UNAUTHENTICATED for a
+// bad key.
+message Hello {
+  uint32 protocol_version = 1;
+  string coordinator_id = 2;
+}
+
+message QueryLogs {
+  string query_id = 1;
+  TimeWindow window = 2;
+  optional string trace_id = 3;
+  // The coordinator fans out under this, minus a small margin to still
+  // have time to aggregate.
+  google.protobuf.Timestamp deadline = 4;
+  // The backend's budget for this query. Unlike in Query, max_bytes_total
+  // is for the whole aggregate: the coordinator splits it across agents.
+  // A zero field, or no limits at all, means the coordinator's default,
+  // and a value above the coordinator's ceiling is lowered to it.
+  QueryLimits limits = 5;
+}
+
+enum AgentStatus {
+  AGENT_STATUS_UNSPECIFIED = 0;
+  AGENT_STATUS_OK = 1;
+  AGENT_STATUS_TIMEOUT = 2;
+  // Stream closed before the agent answered.
+  AGENT_STATUS_DISCONNECTED = 3;
+  // Answered, but had to cut logs (result.truncated is set).
+  AGENT_STATUS_TRUNCATED = 4;
+  AGENT_STATUS_ERROR = 5;
+}
+
+message AgentSection {
+  string agent_id = 1;
+  AgentSource source = 2;
+  AgentStatus status = 3;
+  // Set for OK and TRUNCATED. unset for the rest.
+  optional QueryResult result = 4;
+  // Why, when status is not OK. free text.
+  string detail = 5;
+}
+
+enum WarningCode {
+  WARNING_CODE_UNSPECIFIED = 0;
+  // Same service claimed by more than one agent. nothing is deduped,
+  // both sections are returned as is.
+  WARNING_CODE_DUPLICATE_SERVICE = 1;
+}
+
+message Warning {
+  WarningCode code = 1;
+  string detail = 2;
+  optional string service = 3;
+  repeated string agent_ids = 4;
+}
+
+// One section per agent, no cross-agent merge.
+message AggregateResult {
+  uint32 schema_version = 1;
+  string query_id = 2;
+  TimeWindow requested_window = 3;
+  repeated AgentSection agents = 4;
+  repeated Warning warnings = 5;
+}
+
+// Nothing to aggregate at all (e.g. no agent connected is still a valid
+// AggregateResult with zero sections, this is for coordinator faults).
+message AggregateError {
+  string query_id = 1;
+  SourceError error = 2;
+}
+
+message AgentMetrics {
+  string agent_id = 1;
+  AgentSource source = 2;
+  // Same meaning as in AgentSection. TRUNCATED when any service was cut.
+  AgentStatus status = 3;
+  repeated ServiceMetrics services = 4;
+  string detail = 5;
+}
+
+// Answer to a MetricsQuery. Coordinator faults still come as AggregateError.
+message AggregateMetrics {
+  uint32 schema_version = 1;
+  string query_id = 2;
+  TimeWindow requested_window = 3;
+  repeated AgentMetrics agents = 4;
+}
+
+// One agent's answer to a StatusQuery. Same status rules as AgentSection,
+// except status never produces TRUNCATED.
+message AgentStatusReport {
+  string agent_id = 1;
+  AgentSource source = 2;
+  AgentStatus status = 3;
+  repeated ServiceStatus services = 4;
+  string detail = 5;
+}
+
+// Answer to a StatusQuery. Coordinator faults still come as AggregateError.
+message AggregateStatus {
+  uint32 schema_version = 1;
+  string query_id = 2;
+  repeated AgentStatusReport agents = 3;
+}

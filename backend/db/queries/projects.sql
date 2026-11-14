@@ -23,3 +23,9 @@ RETURNING *;
 -- name: DeleteProject :execrows
 DELETE FROM projects
 WHERE id = $1 AND owner_id = $2;
+
+-- name: ListProjectApps :many
+SELECT a.* FROM apps a
+JOIN app_projects ap ON ap.app_id = a.id
+WHERE ap.project_id = $1
+ORDER BY ap.created_at;

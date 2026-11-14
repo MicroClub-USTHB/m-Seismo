@@ -1,0 +1,15 @@
+meta {
+  name: Delete Rule
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/projects/{{projectId}}/routing-rules/{{ruleId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  204. 404 if the rule is not in this project.
+}

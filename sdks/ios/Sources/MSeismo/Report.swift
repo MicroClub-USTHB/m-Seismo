@@ -26,6 +26,13 @@ public struct Report: Codable, Equatable {
         public var label: String { rawValue.capitalized }
     }
 
+    /// What started the report (schema `trigger`).
+    public enum Trigger: String, Equatable, Codable {
+        case shake, screenshot, manual, crash
+        case longPress = "long_press"
+        case nonFatal = "non_fatal"
+    }
+
     public var title: String
     public var description: String
     public var category: Category
@@ -54,6 +61,35 @@ public struct Report: Codable, Equatable {
     /// app opted in via `NetworkLogger.capturesBodies` (FR-28).
     public var networkRequests: [NetworkRequestLog]?
 
+    /// Idempotency key: the backend stores the same ID once (ingestion
+    /// §3), so it is assigned once, when the report is first submitted,
+    /// and kept across every retry. Optional so reports queued by an
+    /// older SDK build still decode.
+    public var id: String?
+
+    /// When the report was triggered on the device; for a crash, when the
+    /// crash happened.
+    public var occurredAt: Date?
+
+    /// What started the report. `nil` is sent as `manual`.
+    public var trigger: Trigger?
+
+    /// Crash details for an automatic crash or non-fatal report. The
+    /// backend requires them when `trigger` is `crash` or `non_fatal`.
+    public var crash: CrashReport?
+
+    /// Feature flags active when the report was made (FR-16). Filled from
+    /// `MSeismo.featureFlags` unless the report sets its own.
+    public var featureFlags: [String: FlagValue]?
+
+    /// Experiment name to the variant the user is in (FR-16).
+    public var experiments: [String: String]?
+
+    /// Crashlytics' own installation ID, which lets the backend find the
+    /// matching Crashlytics crash (the m-Seismo installation ID is not
+    /// known to Crashlytics). `nil` when the app doesn't use Crashlytics.
+    public var crashlyticsInstallationID: String?
+
     public init(
         title: String = "",
         description: String = "",
@@ -64,7 +100,14 @@ public struct Report: Codable, Equatable {
         sessionID: String? = nil,
         recentLogs: [LogLine]? = nil,
         breadcrumbs: [Breadcrumb]? = nil,
-        networkRequests: [NetworkRequestLog]? = nil
+        networkRequests: [NetworkRequestLog]? = nil,
+        id: String? = nil,
+        occurredAt: Date? = nil,
+        trigger: Trigger? = nil,
+        crash: CrashReport? = nil,
+        featureFlags: [String: FlagValue]? = nil,
+        experiments: [String: String]? = nil,
+        crashlyticsInstallationID: String? = nil
     ) {
         self.title = title
         self.description = description
@@ -76,5 +119,12 @@ public struct Report: Codable, Equatable {
         self.recentLogs = recentLogs
         self.breadcrumbs = breadcrumbs
         self.networkRequests = networkRequests
+        self.id = id
+        self.occurredAt = occurredAt
+        self.trigger = trigger
+        self.crash = crash
+        self.featureFlags = featureFlags
+        self.experiments = experiments
+        self.crashlyticsInstallationID = crashlyticsInstallationID
     }
 }
