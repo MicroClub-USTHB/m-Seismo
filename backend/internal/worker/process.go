@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,7 +19,9 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/observability"
 	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/release"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
 )
 
@@ -76,6 +80,31 @@ type AttachmentLinker interface {
 	SignedURL(id uuid.UUID) string
 }
 
+// ObservabilityConfig resolves an app's configured observability platforms.
+// Implemented by *observability.Service.
+type ObservabilityConfig interface {
+	GetConfigForApp(ctx context.Context, appID uuid.UUID) (observability.Config, error)
+}
+
+// ReleaseCorrelator correlates a release with its repository tracker links.
+// Implemented by *release.Correlator.
+type ReleaseCorrelator interface {
+	Correlate(ctx context.Context, req release.CorrelateRequest) (*release.CorrelatedRelease, error)
+}
+
+// ProcessorOption configures optional processor dependencies.
+type ProcessorOption func(*Processor)
+
+// WithObservability configures the observability configuration provider.
+func WithObservability(obs ObservabilityConfig) ProcessorOption {
+	return func(p *Processor) { p.obs = obs }
+}
+
+// WithReleaseCorrelator configures the release correlator.
+func WithReleaseCorrelator(rel ReleaseCorrelator) ProcessorOption {
+	return func(p *Processor) { p.releases = rel }
+}
+
 // Processor turns one stored report into issues.
 type Processor struct {
 	q      Queries
@@ -83,15 +112,21 @@ type Processor struct {
 	router Router
 	// logs and health are optional; window is how far around the report
 	// they look.
-	logs    ServerLogs
-	health  ServiceHealth
-	window  time.Duration
-	crashes CrashResolver
-	links   AttachmentLinker
+	logs     ServerLogs
+	health   ServiceHealth
+	window   time.Duration
+	crashes  CrashResolver
+	links    AttachmentLinker
+	obs      ObservabilityConfig
+	releases ReleaseCorrelator
 }
 
-func NewProcessor(q Queries, issues Issues, router Router, logs ServerLogs, window time.Duration, crashes CrashResolver, links AttachmentLinker, health ServiceHealth) *Processor {
-	return &Processor{q: q, issues: issues, router: router, logs: logs, window: window, crashes: crashes, links: links, health: health}
+func NewProcessor(q Queries, issues Issues, router Router, logs ServerLogs, window time.Duration, crashes CrashResolver, links AttachmentLinker, health ServiceHealth, opts ...ProcessorOption) *Processor {
+	p := &Processor{q: q, issues: issues, router: router, logs: logs, window: window, crashes: crashes, links: links, health: health}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 // Process opens the report's issue in every project its app is linked to,
@@ -152,23 +187,68 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return fmt.Errorf("list attachments of report %s: %w", id, err)
 	}
-	var crashEvent *crashprovider.Event
-	if r.Sentry != nil && p.crashes != nil {
-		var resolveErr error
-		crashEvent, resolveErr = p.crashes.ForReport(ctx, row.AppID, &r)
-		if resolveErr != nil {
-			// Sentry delays or outages must not discard or indefinitely delay the issue.
-			// The resolver returns a validated link when its configuration is available.
-			slog.WarnContext(ctx, "Sentry details unavailable; retaining crash reference", "report", id)
+
+	enrichCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+
+	var (
+		crashEvent *crashprovider.Event
+		serverLogs *seismov1.AggregateResult
+		healthRows []healthRow
+		obsLinks   []observability.Link
+		releaseRes *release.CorrelatedRelease
+	)
+
+	var wg sync.WaitGroup
+	wg.Add(5)
+
+	// 1. Crash event (existing Sentry logic)
+	go func() {
+		defer wg.Done()
+		if r.Sentry != nil && p.crashes != nil {
+			event, err := p.crashes.ForReport(enrichCtx, row.AppID, &r)
+			if err != nil {
+				slog.WarnContext(enrichCtx, "Sentry details unavailable; retaining crash reference", "report", id, "err", err)
+			}
+			crashEvent = event
 		}
-	}
+	}()
+
+	// 2. Server logs
+	go func() {
+		defer wg.Done()
+		serverLogs = p.serverLogs(enrichCtx, row)
+	}()
+
+	// 3. Service health
+	go func() {
+		defer wg.Done()
+		healthRows = p.serviceHealth(enrichCtx, row)
+	}()
+
+	// 4. Observability links
+	go func() {
+		defer wg.Done()
+		obsLinks = p.observabilityLinks(enrichCtx, row.AppID, r.SessionID, row.OccurredAt)
+	}()
+
+	// 5. Release correlation
+	go func() {
+		defer wg.Done()
+		releaseRes = p.correlateRelease(enrichCtx, todo, r.Release)
+	}()
+
+	wg.Wait()
+
 	info := reportInfo{
-		CrashEvent:     crashEvent,
-		ID:             row.ReportID,
-		InstallationID: row.InstallationID,
-		ScreenshotURL:  p.screenshotURL(attachments),
-		ServerLogs:     p.serverLogs(ctx, row),
-		Health:         p.serviceHealth(ctx, row),
+		CrashEvent:         crashEvent,
+		ID:                 row.ReportID,
+		InstallationID:     row.InstallationID,
+		ScreenshotURL:      p.screenshotURL(attachments),
+		ServerLogs:         serverLogs,
+		Health:             healthRows,
+		ObservabilityLinks: obsLinks,
+		ReleaseCorrelation: releaseRes,
 	}
 	base := render(&r, info)
 
@@ -272,6 +352,45 @@ func (p *Processor) serverLogs(ctx context.Context, row db.Report) *seismov1.Agg
 		slog.DebugContext(ctx, "no coordinator attached, opening the issue without server logs", "report", row.ID)
 	case err != nil:
 		slog.WarnContext(ctx, "server logs unavailable, opening the issue without them", "report", row.ID, "err", err)
+	}
+	return res
+}
+
+func (p *Processor) observabilityLinks(ctx context.Context, appID uuid.UUID, sessionID string, occurredAt time.Time) []observability.Link {
+	if p.obs == nil || strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
+	cfg, err := p.obs.GetConfigForApp(ctx, appID)
+	if err != nil {
+		slog.WarnContext(ctx, "failed to get observability config", "app_id", appID, "err", err)
+		return nil
+	}
+	return observability.NewBuilder(cfg).BuildLinks(sessionID, occurredAt)
+}
+
+func (p *Processor) correlateRelease(ctx context.Context, todo []routing.Route, rel *ingest.Release) *release.CorrelatedRelease {
+	if p.releases == nil || rel == nil || len(todo) == 0 {
+		return nil
+	}
+	repo := todo[0].Repository
+	tracker := ""
+	lower := strings.ToLower(repo)
+	if strings.Contains(lower, "gitlab") {
+		tracker = "gitlab"
+	} else if strings.Contains(lower, "bitbucket") {
+		tracker = "bitbucket"
+	} else if strings.Contains(lower, "github") {
+		tracker = "github"
+	}
+	res, err := p.releases.Correlate(ctx, release.CorrelateRequest{
+		Tracker:    tracker,
+		Repository: repo,
+		Version:    rel.Version,
+		Build:      rel.Build,
+	})
+	if err != nil {
+		slog.WarnContext(ctx, "failed to correlate release", "repository", repo, "err", err)
+		return nil
 	}
 	return res
 }

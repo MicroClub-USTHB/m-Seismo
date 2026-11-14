@@ -11,11 +11,12 @@ import (
 // report's title, steps, crash, environment and logs, each already
 // rendered as markdown by the worker.
 type TemplateData struct {
-	Title       string
-	Steps       string
-	Crash       string
-	Environment string
-	Logs        string
+	Title         string
+	Steps         string
+	Crash         string
+	Environment   string
+	Logs          string
+	Observability string
 }
 
 // compile parses tpl as a Go text/template. Referencing a field TemplateData

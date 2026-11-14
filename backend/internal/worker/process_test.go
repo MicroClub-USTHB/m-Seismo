@@ -16,7 +16,9 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/observability"
 	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/release"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
 )
 
@@ -407,4 +409,189 @@ func TestProcessSentryOnlyReportIncludesCrashDetailsAndSurvivesProviderFailure(t
 			t.Fatal("Sentry failure prevented issue publication")
 		}
 	}
+}
+
+type fakeObservabilityConfig struct {
+	cfg   observability.Config
+	err   error
+	delay time.Duration
+}
+
+func (f *fakeObservabilityConfig) GetConfigForApp(ctx context.Context, _ uuid.UUID) (observability.Config, error) {
+	if f.delay > 0 {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return observability.Config{}, ctx.Err()
+		}
+	}
+	return f.cfg, f.err
+}
+
+type fakeReleaseCorrelator struct {
+	res   *release.CorrelatedRelease
+	err   error
+	delay time.Duration
+}
+
+func (f *fakeReleaseCorrelator) Correlate(ctx context.Context, _ release.CorrelateRequest) (*release.CorrelatedRelease, error) {
+	if f.delay > 0 {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return f.res, f.err
+}
+
+func TestProcess_ObservabilityAndReleaseCorrelation(t *testing.T) {
+	q, is, _ := newFixture(t, 1)
+
+	occurredAt := time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC)
+	payload, _ := json.Marshal(map[string]any{
+		"platform":    "ios",
+		"trigger":     "shake",
+		"session_id":  "sess-42",
+		"occurred_at": occurredAt.Format(time.RFC3339),
+		"release":     map[string]string{"version": "1.4.0", "build": "82"},
+		"user_input": map[string]string{
+			"title": "Bug in checkout",
+		},
+	})
+	q.report.Payload = payload
+	q.report.OccurredAt = occurredAt
+
+	obs := &fakeObservabilityConfig{
+		cfg: observability.Config{
+			Grafana: &observability.GrafanaConfig{
+				BaseURL: "https://grafana.example.com",
+			},
+		},
+	}
+
+	rel := &fakeReleaseCorrelator{
+		res: &release.CorrelatedRelease{
+			Version:    "1.4.0",
+			Build:      "82",
+			ReleaseURL: "https://github.com/o/r/releases/tag/v1.4.0",
+			CompareURL: "https://github.com/o/r/compare/v1.3.0...v1.4.0",
+		},
+	}
+
+	p := NewProcessor(
+		q, is, q.router, nil, time.Minute, nil, fakeLinker{}, nil,
+		WithObservability(obs),
+		WithReleaseCorrelator(rel),
+	)
+
+	if err := p.Process(context.Background(), q.report.ID); err != nil {
+		t.Fatalf("Process failed: %v", err)
+	}
+
+	if len(is.drafts) != 1 {
+		t.Fatalf("expected 1 draft, got %d", len(is.drafts))
+	}
+
+	body := is.drafts[0].Body
+
+	// Check observability section
+	if !strings.Contains(body, "### Observability") {
+		t.Errorf("expected observability section in body:\n%s", body)
+	}
+	if !strings.Contains(body, "* [Grafana](https://grafana.example.com/explore") {
+		t.Errorf("expected Grafana link in body:\n%s", body)
+	}
+
+	// Check release correlation row
+	wantRelease := "| Release | 1.4.0 (82) · [Release Notes](https://github.com/o/r/releases/tag/v1.4.0) · [Compare Changes](https://github.com/o/r/compare/v1.3.0...v1.4.0) |"
+	if !strings.Contains(body, wantRelease) {
+		t.Errorf("expected release row in body:\nwant: %s\ngot:\n%s", wantRelease, body)
+	}
+}
+
+func TestProcess_GracefulDegradation(t *testing.T) {
+	t.Run("immediate error", func(t *testing.T) {
+		q, is, _ := newFixture(t, 1)
+
+		payload, _ := json.Marshal(map[string]any{
+			"platform":   "android",
+			"trigger":    "shake",
+			"session_id": "sess-fail",
+			"release":    map[string]string{"version": "1.0.0", "build": "1"},
+			"user_input": map[string]string{
+				"title": "Crash on login",
+			},
+		})
+		q.report.Payload = payload
+
+		obs := &fakeObservabilityConfig{
+			err: errors.New("observability DB failure"),
+		}
+		rel := &fakeReleaseCorrelator{
+			err: errors.New("external git tracker unreachable"),
+		}
+
+		p := NewProcessor(
+			q, is, q.router, nil, time.Minute, nil, fakeLinker{}, nil,
+			WithObservability(obs),
+			WithReleaseCorrelator(rel),
+		)
+
+		if err := p.Process(context.Background(), q.report.ID); err != nil {
+			t.Fatalf("Process failed despite graceful degradation: %v", err)
+		}
+
+		if len(is.drafts) != 1 {
+			t.Fatalf("expected 1 issue opened, got %d", len(is.drafts))
+		}
+		if q.processed != 1 {
+			t.Fatalf("expected report to be marked processed, got %d", q.processed)
+		}
+
+		body := is.drafts[0].Body
+		if strings.Contains(body, "### Observability") {
+			t.Errorf("observability section should be omitted on failure")
+		}
+		wantStandard := "| Release | 1.0.0 (1) |"
+		if !strings.Contains(body, wantStandard) {
+			t.Errorf("expected standard release row fallback:\nwant: %s\ngot:\n%s", wantStandard, body)
+		}
+	})
+
+	t.Run("slow external timeout", func(t *testing.T) {
+		q, is, _ := newFixture(t, 1)
+
+		payload, _ := json.Marshal(map[string]any{
+			"platform":   "android",
+			"trigger":    "shake",
+			"session_id": "sess-slow",
+			"release":    map[string]string{"version": "1.0.0", "build": "1"},
+			"user_input": map[string]string{
+				"title": "Crash on slow",
+			},
+		})
+		q.report.Payload = payload
+
+		obs := &fakeObservabilityConfig{
+			delay: 20 * time.Millisecond,
+		}
+		rel := &fakeReleaseCorrelator{
+			delay: 20 * time.Millisecond,
+		}
+
+		p := NewProcessor(
+			q, is, q.router, nil, time.Minute, nil, fakeLinker{}, nil,
+			WithObservability(obs),
+			WithReleaseCorrelator(rel),
+		)
+
+		if err := p.Process(context.Background(), q.report.ID); err != nil {
+			t.Fatalf("Process failed: %v", err)
+		}
+
+		if len(is.drafts) != 1 {
+			t.Fatalf("expected 1 issue opened, got %d", len(is.drafts))
+		}
+	})
 }

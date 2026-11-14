@@ -13,7 +13,9 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issuetemplate"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/observability"
 	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/release"
 )
 
 // Limits on what goes into an issue. GitHub refuses titles over 256
@@ -40,8 +42,10 @@ type reportInfo struct {
 	// Health is the service health snapshot (error rate, restarts,
 	// configured CPU and memory, deployed version), empty when there is
 	// none.
-	Health     []healthRow
-	CrashEvent *crashprovider.Event
+	Health             []healthRow
+	CrashEvent         *crashprovider.Event
+	ObservabilityLinks []observability.Link
+	ReleaseCorrelation *release.CorrelatedRelease
 }
 
 // render turns a report into the draft of its issue.
@@ -68,7 +72,7 @@ func render(r *ingest.Report, info reportInfo) issue.Draft {
 
 	b.WriteString(stepsSection(r))
 	b.WriteString(crashSection(r, info))
-	b.WriteString(environmentSection(r))
+	b.WriteString(environmentSection(r, info))
 	b.WriteString(logsSection(r))
 
 	// Bodies are never put in the issue, even when the SDK captured them.
@@ -89,6 +93,8 @@ func render(r *ingest.Report, info reportInfo) issue.Draft {
 		b.WriteString(code(strings.Join(lines, "\n")))
 		b.WriteString("\n")
 	}
+
+	b.WriteString(observabilitySection(info.ObservabilityLinks))
 
 	b.WriteString(footer(info))
 
@@ -149,7 +155,7 @@ func crashSection(r *ingest.Report, info reportInfo) string {
 }
 
 // environmentSection renders the "Environment" table.
-func environmentSection(r *ingest.Report) string {
+func environmentSection(r *ingest.Report, info reportInfo) string {
 	var b strings.Builder
 	b.WriteString("### Environment\n\n")
 	b.WriteString("| | |\n|---|---|\n")
@@ -166,7 +172,26 @@ func environmentSection(r *ingest.Report) string {
 		row("Orientation", d.Orientation)
 	}
 	if rel := r.Release; rel != nil {
-		row("Release", fmt.Sprintf("%s (%s)", rel.Version, rel.Build))
+		relVal := fmt.Sprintf("%s (%s)", rel.Version, rel.Build)
+		if rel.Build == "" {
+			relVal = rel.Version
+		}
+		if rc := info.ReleaseCorrelation; rc != nil {
+			var links []string
+			if rc.ReleaseURL != "" {
+				links = append(links, fmt.Sprintf("[Release Notes](%s)", rc.ReleaseURL))
+			}
+			if rc.CompareURL != "" {
+				links = append(links, fmt.Sprintf("[Compare Changes](%s)", rc.CompareURL))
+			}
+			if rc.CommitURL != "" {
+				links = append(links, fmt.Sprintf("[Commit](%s)", rc.CommitURL))
+			}
+			if len(links) > 0 {
+				relVal += " · " + strings.Join(links, " · ")
+			}
+		}
+		row("Release", relVal)
 	}
 	row("Platform", r.Platform)
 	row("Environment", r.Environment)
@@ -181,6 +206,20 @@ func environmentSection(r *ingest.Report) string {
 	}
 	for _, k := range sortedKeys(r.Experiments) {
 		row("Experiment "+k, r.Experiments[k])
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// observabilitySection renders deep-links to external observability tools.
+func observabilitySection(links []observability.Link) string {
+	if len(links) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("### Observability\n\n")
+	for _, l := range links {
+		fmt.Fprintf(&b, "* [%s](%s)\n", text(l.Name), l.URL)
 	}
 	b.WriteString("\n")
 	return b.String()
@@ -218,11 +257,12 @@ func footer(info reportInfo) string {
 // templateData is what a project's custom issue template (FR-50) can use.
 func templateData(r *ingest.Report, info reportInfo) issuetemplate.TemplateData {
 	return issuetemplate.TemplateData{
-		Title:       title(r),
-		Steps:       stepsSection(r),
-		Crash:       crashSection(r, info),
-		Environment: environmentSection(r),
-		Logs:        logsSection(r),
+		Title:         title(r),
+		Steps:         stepsSection(r),
+		Crash:         crashSection(r, info),
+		Environment:   environmentSection(r, info),
+		Logs:          logsSection(r),
+		Observability: observabilitySection(info.ObservabilityLinks),
 	}
 }
 
