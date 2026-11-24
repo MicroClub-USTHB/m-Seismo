@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go/jetstream"
 	"go.uber.org/fx"
 
@@ -20,13 +21,19 @@ var Module = fx.Module("worker",
 	fx.Provide(
 		func(q db.Querier) Queries { return q },
 		func(s *issue.Service) Issues { return s },
+		func(pool *pgxpool.Pool) Locks { return pgLocks{pool: pool} },
 		func(s *crashprovider.Service) CrashResolver { return s },
 		func(s *attachment.Service) AttachmentLinker { return s },
 		func(c *coordinator.Client) ServiceHealth { return c },
+		func(q db.Querier) TrackerLookup { return q },
 		func(s *observability.Service) ObservabilityConfig { return s },
 		func(c *release.Correlator) ReleaseCorrelator { return c },
-		func(q Queries, is Issues, r *routing.Router, c *coordinator.Client, cr CrashResolver, cfg *config.Config, links AttachmentLinker, health ServiceHealth, obs ObservabilityConfig, rel ReleaseCorrelator) *Processor {
-			return NewProcessor(q, is, r, c, cfg.Coordinator.Window, cr, links, health, WithObservability(obs), WithReleaseCorrelator(rel))
+		func(q Queries, is Issues, r *routing.Router, l Locks, c *coordinator.Client, cr CrashResolver, cfg *config.Config, links AttachmentLinker, health ServiceHealth, trackers TrackerLookup, obs ObservabilityConfig, rel ReleaseCorrelator) *Processor {
+			return NewProcessor(q, is, r, l, c, cfg.Coordinator.Window, cr, links, health,
+				WithTrackerLookup(trackers),
+				WithObservability(obs),
+				WithReleaseCorrelator(rel),
+			)
 		},
 	),
 	fx.Invoke(register),

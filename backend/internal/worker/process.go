@@ -17,6 +17,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/coordinator"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/dedup"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/observability"
@@ -29,6 +30,7 @@ import (
 // issue.Service.
 type Issues interface {
 	OpenInRepository(ctx context.Context, appID, projectRepositoryID uuid.UUID, d issue.Draft) (issue.Result, error)
+	CommentOn(ctx context.Context, appID uuid.UUID, iss db.Issue, body string) (bool, error)
 }
 
 // Queries is the part of db.Querier the processor uses.
@@ -38,6 +40,8 @@ type Queries interface {
 	ListReportDeliveryProjects(ctx context.Context, reportID uuid.UUID) ([]uuid.UUID, error)
 	CreateReportDelivery(ctx context.Context, arg db.CreateReportDeliveryParams) error
 	MarkReportProcessed(ctx context.Context, id uuid.UUID) error
+	GetOpenIssueByFingerprint(ctx context.Context, arg db.GetOpenIssueByFingerprintParams) (db.Issue, error)
+	GetIssueOccurrences(ctx context.Context, arg db.GetIssueOccurrencesParams) (db.GetIssueOccurrencesRow, error)
 }
 
 // Router picks where a report's issues go. Implemented by
@@ -92,6 +96,12 @@ type ReleaseCorrelator interface {
 	Correlate(ctx context.Context, req release.CorrelateRequest) (*release.CorrelatedRelease, error)
 }
 
+// TrackerLookup resolves the tracker type of a project repository linked to an app.
+// Implemented by db.Querier.
+type TrackerLookup interface {
+	GetIssueTarget(ctx context.Context, arg db.GetIssueTargetParams) (db.GetIssueTargetRow, error)
+}
+
 // ProcessorOption configures optional processor dependencies.
 type ProcessorOption func(*Processor)
 
@@ -105,11 +115,17 @@ func WithReleaseCorrelator(rel ReleaseCorrelator) ProcessorOption {
 	return func(p *Processor) { p.releases = rel }
 }
 
+// WithTrackerLookup configures repository tracker resolution for release correlation.
+func WithTrackerLookup(t TrackerLookup) ProcessorOption {
+	return func(p *Processor) { p.trackers = t }
+}
+
 // Processor turns one stored report into issues.
 type Processor struct {
 	q      Queries
 	issues Issues
 	router Router
+	locks  Locks
 	// logs and health are optional; window is how far around the report
 	// they look.
 	logs     ServerLogs
@@ -119,10 +135,11 @@ type Processor struct {
 	links    AttachmentLinker
 	obs      ObservabilityConfig
 	releases ReleaseCorrelator
+	trackers TrackerLookup
 }
 
-func NewProcessor(q Queries, issues Issues, router Router, logs ServerLogs, window time.Duration, crashes CrashResolver, links AttachmentLinker, health ServiceHealth, opts ...ProcessorOption) *Processor {
-	p := &Processor{q: q, issues: issues, router: router, logs: logs, window: window, crashes: crashes, links: links, health: health}
+func NewProcessor(q Queries, issues Issues, router Router, locks Locks, logs ServerLogs, window time.Duration, crashes CrashResolver, links AttachmentLinker, health ServiceHealth, opts ...ProcessorOption) *Processor {
+	p := &Processor{q: q, issues: issues, router: router, locks: locks, logs: logs, window: window, crashes: crashes, links: links, health: health}
 	for _, opt := range opts {
 		opt(p)
 	}
@@ -132,6 +149,10 @@ func NewProcessor(q Queries, issues Issues, router Router, logs ServerLogs, wind
 // Process opens the report's issue in every project its app is linked to,
 // in the repository and with the labels, assignees and milestone the
 // project's routing rules pick.
+//
+// A report of a bug that already has an open issue in the route's
+// repository (same fingerprint, see package dedup) adds a comment to that
+// issue instead of opening another one.
 //
 // The queue delivers a report at least once, so Process can run several
 // times for the same report: each project that already got its issue is
@@ -202,40 +223,40 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 	var wg sync.WaitGroup
 	wg.Add(5)
 
-	// 1. Crash event (existing Sentry logic)
+	// 1. Crash event (existing Sentry logic keeps the processor's context timeout)
 	go func() {
 		defer wg.Done()
 		if r.Sentry != nil && p.crashes != nil {
-			event, err := p.crashes.ForReport(enrichCtx, row.AppID, &r)
+			event, err := p.crashes.ForReport(ctx, row.AppID, &r)
 			if err != nil {
-				slog.WarnContext(enrichCtx, "Sentry details unavailable; retaining crash reference", "report", id, "err", err)
+				slog.WarnContext(ctx, "Sentry details unavailable; retaining crash reference", "report", id, "err", err)
 			}
 			crashEvent = event
 		}
 	}()
 
-	// 2. Server logs
+	// 2. Server logs (keep processor's context timeout)
 	go func() {
 		defer wg.Done()
-		serverLogs = p.serverLogs(enrichCtx, row)
+		serverLogs = p.serverLogs(ctx, row)
 	}()
 
-	// 3. Service health
+	// 3. Service health (keep processor's context timeout)
 	go func() {
 		defer wg.Done()
-		healthRows = p.serviceHealth(enrichCtx, row)
+		healthRows = p.serviceHealth(ctx, row)
 	}()
 
-	// 4. Observability links
+	// 4. Observability links (bounded enrichment timeout)
 	go func() {
 		defer wg.Done()
 		obsLinks = p.observabilityLinks(enrichCtx, row.AppID, r.SessionID, row.OccurredAt)
 	}()
 
-	// 5. Release correlation
+	// 5. Release correlation (bounded enrichment timeout)
 	go func() {
 		defer wg.Done()
-		releaseRes = p.correlateRelease(enrichCtx, todo, r.Release)
+		releaseRes = p.correlateRelease(enrichCtx, row.AppID, todo, r.Release)
 	}()
 
 	wg.Wait()
@@ -251,6 +272,7 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 		ReleaseCorrelation: releaseRes,
 	}
 	base := render(&r, info)
+	fingerprint := dedup.Fingerprint(&r)
 
 	var errs []error
 	for _, t := range todo {
@@ -262,8 +284,9 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 				slog.WarnContext(ctx, "issue template failed, opening with the default layout", "report", id, "rule", t.RuleID, "err", err)
 			}
 		}
+		draft.Fingerprint = fingerprint
 		draft.Labels, draft.Assignees, draft.Milestone = t.Labels, t.Assignees, t.Milestone
-		res, err := p.issues.OpenInRepository(ctx, row.AppID, t.ProjectRepositoryID, draft)
+		res, err := p.deliver(ctx, row, &r, info, t, draft)
 		if err != nil {
 			var rl *issue.RateLimitError
 			if errors.As(err, &rl) {
@@ -293,12 +316,69 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 			errs = append(errs, fmt.Errorf("record delivery to %s: %w", t.Repository, err))
 			continue
 		}
-		slog.InfoContext(ctx, "issue opened", "report", id, "repository", t.Repository, "url", res.Ref.URL)
+		if res.grouped {
+			slog.InfoContext(ctx, "report added to an open issue", "report", id, "repository", t.Repository, "url", res.Ref.URL)
+		} else {
+			slog.InfoContext(ctx, "issue opened", "report", id, "repository", t.Repository, "url", res.Ref.URL)
+		}
 	}
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
 	return p.markProcessed(ctx, id)
+}
+
+// delivered is where a report went in one repository.
+type delivered struct {
+	issue.Result
+	// grouped is set when the report was added to an issue already open.
+	grouped bool
+}
+
+// deliver opens the route's issue, or comments on the open issue the
+// repository already has for the same bug. The repository and fingerprint
+// are locked meanwhile, so two reports of a new bug arriving together open
+// one issue between them.
+func (p *Processor) deliver(ctx context.Context, row db.Report, r *ingest.Report, info reportInfo, t routing.Route, draft issue.Draft) (delivered, error) {
+	if draft.Fingerprint == "" {
+		res, err := p.issues.OpenInRepository(ctx, row.AppID, t.ProjectRepositoryID, draft)
+		return delivered{Result: res}, err
+	}
+
+	unlock, err := p.locks.Lock(ctx, t.ProjectRepositoryID.String()+"/"+draft.Fingerprint)
+	if err != nil {
+		return delivered{}, err
+	}
+	defer unlock()
+
+	existing, err := p.q.GetOpenIssueByFingerprint(ctx, db.GetOpenIssueByFingerprintParams{
+		ProjectRepositoryID: t.ProjectRepositoryID,
+		Fingerprint:         &draft.Fingerprint,
+	})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+	case err != nil:
+		return delivered{}, fmt.Errorf("find the open issue of report %s: %w", row.ID, err)
+	default:
+		n, err := p.q.GetIssueOccurrences(ctx, db.GetIssueOccurrencesParams{IssueID: existing.ID, ReportID: row.ID})
+		if err != nil {
+			return delivered{}, fmt.Errorf("count the reports of issue %s: %w", existing.ID, err)
+		}
+		body := renderOccurrence(r, info, occurrences{Reports: int(n.Occurrences), Installations: int(n.Installations), Versions: n.Versions})
+		posted, err := p.issues.CommentOn(ctx, row.AppID, existing, body)
+		if err != nil {
+			return delivered{}, err
+		}
+		if posted {
+			res := issue.Result{IssueID: existing.ID, Ref: issue.Ref{ID: existing.ExternalID, URL: existing.Url}}
+			return delivered{Result: res, grouped: true}, nil
+		}
+		// Closed on the tracker since: the bug is back, it gets a new
+		// issue.
+	}
+
+	res, err := p.issues.OpenInRepository(ctx, row.AppID, t.ProjectRepositoryID, draft)
+	return delivered{Result: res}, err
 }
 
 func (p *Processor) markProcessed(ctx context.Context, id uuid.UUID) error {
@@ -368,28 +448,28 @@ func (p *Processor) observabilityLinks(ctx context.Context, appID uuid.UUID, ses
 	return observability.NewBuilder(cfg).BuildLinks(sessionID, occurredAt)
 }
 
-func (p *Processor) correlateRelease(ctx context.Context, todo []routing.Route, rel *ingest.Release) *release.CorrelatedRelease {
+func (p *Processor) correlateRelease(ctx context.Context, appID uuid.UUID, todo []routing.Route, rel *ingest.Release) *release.CorrelatedRelease {
 	if p.releases == nil || rel == nil || len(todo) == 0 {
 		return nil
 	}
-	repo := todo[0].Repository
+	route := todo[0]
 	tracker := ""
-	lower := strings.ToLower(repo)
-	if strings.Contains(lower, "gitlab") {
-		tracker = "gitlab"
-	} else if strings.Contains(lower, "bitbucket") {
-		tracker = "bitbucket"
-	} else if strings.Contains(lower, "github") {
-		tracker = "github"
+	if p.trackers != nil {
+		if target, err := p.trackers.GetIssueTarget(ctx, db.GetIssueTargetParams{
+			ID:    route.ProjectRepositoryID,
+			AppID: appID,
+		}); err == nil {
+			tracker = string(target.Tracker)
+		}
 	}
 	res, err := p.releases.Correlate(ctx, release.CorrelateRequest{
 		Tracker:    tracker,
-		Repository: repo,
+		Repository: route.Repository,
 		Version:    rel.Version,
 		Build:      rel.Build,
 	})
 	if err != nil {
-		slog.WarnContext(ctx, "failed to correlate release", "repository", repo, "err", err)
+		slog.WarnContext(ctx, "failed to correlate release", "repository", route.Repository, "err", err)
 		return nil
 	}
 	return res
