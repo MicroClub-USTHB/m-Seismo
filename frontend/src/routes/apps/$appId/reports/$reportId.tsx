@@ -4,7 +4,7 @@ import { api, type ReportDetail } from '../../../../lib/api'
 import { getStoredOwner } from '../../../../lib/auth'
 import { Shell } from '../../../../lib/Shell'
 import { McCard } from '../../../../components/mc-card'
-import { decodePayload, formatDate, RetryButton, StatusBadge } from '../../../../features/reports'
+import { formatDate, RetryButton, StatusBadge } from '../../../../features/reports'
 
 export const Route = createFileRoute('/apps/$appId/reports/$reportId')({
   beforeLoad: () => {
@@ -48,6 +48,11 @@ function ReportPage() {
                   {r.status === 'failed' && <RetryButton appId={appId} reportId={r.report_id} size="sm" />}
                 </span>
               </Row>
+              {r.delivery_error && (
+                <Row label="Error">
+                  <span className="break-words text-destructive">{r.delivery_error}</span>
+                </Row>
+              )}
               <Row label="Trigger">{r.trigger}</Row>
               <Row label="Occurred">{formatDate(r.occurred_at)}</Row>
               <Row label="Received">{formatDate(r.received_at)}</Row>
@@ -83,7 +88,7 @@ function ReportPage() {
             <h3 className="text-sm font-medium text-foreground">Payload</h3>
             <McCard className="p-0">
               <pre className="max-h-[32rem] overflow-auto p-4 text-xs">
-                {JSON.stringify(decodePayload(r.payload), null, 2)}
+                {JSON.stringify(r.payload, null, 2)}
               </pre>
             </McCard>
           </section>

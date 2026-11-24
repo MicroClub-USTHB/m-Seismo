@@ -4,13 +4,18 @@ import { McBadge } from '../components/mc-badge'
 import { McButton } from '../components/mc-button'
 
 export function StatusBadge({ status }: { status: ReportStatus }) {
-  return status === 'delivered' ? (
-    <McBadge variant="outline" className="text-success">
-      Delivered
-    </McBadge>
-  ) : (
-    <McBadge variant="destructive">Not delivered</McBadge>
-  )
+  switch (status) {
+    case 'delivered':
+      return (
+        <McBadge variant="outline" className="text-success">
+          Delivered
+        </McBadge>
+      )
+    case 'queued':
+      return <McBadge variant="secondary">Queued</McBadge>
+    default:
+      return <McBadge variant="destructive">Failed</McBadge>
+  }
 }
 
 export function formatDate(iso: string | undefined) {
@@ -36,15 +41,4 @@ export function RetryButton({ appId, reportId, size }: { appId: string; reportId
       {retry.isError && <span className="text-xs text-destructive">{retry.error.message}</span>}
     </span>
   )
-}
-
-/** The payload comes back as base64 of the stored JSON; show it readable. */
-export function decodePayload(payload: unknown): unknown {
-  if (typeof payload !== 'string') return payload
-  try {
-    const bytes = Uint8Array.from(atob(payload), (c) => c.charCodeAt(0))
-    return JSON.parse(new TextDecoder().decode(bytes))
-  } catch {
-    return payload
-  }
 }

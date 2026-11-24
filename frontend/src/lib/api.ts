@@ -206,10 +206,11 @@ export interface CrashlyticsStatus {
   apps?: string[]
 }
 
-export type ReportStatus = 'delivered' | 'failed'
+/** `queued`: not delivered yet, the worker may still pick it up.
+ * `failed`: the worker gave up; `delivery_error` says why. */
+export type ReportStatus = 'delivered' | 'queued' | 'failed'
 
-/** One row of GET /apps/{id}/reports. `failed` means the report has not
- * reached a tracker yet (still queued or the delivery failed). */
+/** One row of GET /apps/{id}/reports. */
 export interface ReportSummary {
   report_id: string
   installation_id: string
@@ -217,6 +218,7 @@ export interface ReportSummary {
   trigger: string
   occurred_at: string
   status: ReportStatus
+  delivery_error?: string
   issue_urls: string[]
 }
 
@@ -242,7 +244,8 @@ export interface ReportDetail {
   received_at: string
   processed_at?: string
   status: ReportStatus
-  /** The report as the SDK sent it; Go encodes the raw JSON bytes as base64. */
+  delivery_error?: string
+  /** The report as the SDK sent it. */
   payload: unknown
   deliveries: ReportDelivery[]
 }

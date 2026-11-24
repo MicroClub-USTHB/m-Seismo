@@ -29,7 +29,10 @@ export const Route = createFileRoute('/apps/$appId/reports/')({
     if (!getStoredOwner()) throw redirect({ to: '/login' })
   },
   validateSearch: (search: Record<string, unknown>): ReportsSearch => ({
-    status: search.status === 'delivered' || search.status === 'failed' ? search.status : undefined,
+    status:
+      search.status === 'delivered' || search.status === 'queued' || search.status === 'failed'
+        ? search.status
+        : undefined,
     before: typeof search.before === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(search.before) ? search.before : undefined,
   }),
   component: ReportsPage,
@@ -116,7 +119,8 @@ function ReportsPage() {
           <McSelectContent>
             <McSelectItem value="all">All reports</McSelectItem>
             <McSelectItem value="delivered">Delivered</McSelectItem>
-            <McSelectItem value="failed">Not delivered</McSelectItem>
+            <McSelectItem value="queued">Queued</McSelectItem>
+            <McSelectItem value="failed">Failed</McSelectItem>
           </McSelectContent>
         </McSelect>
 
@@ -164,6 +168,11 @@ function ReportsPage() {
                   <td className="px-4 py-2.5 text-muted-foreground">{r.trigger}</td>
                   <td className="px-4 py-2.5">
                     <StatusBadge status={r.status} />
+                    {r.delivery_error && (
+                      <p className="mt-1 max-w-xs truncate text-xs text-destructive" title={r.delivery_error}>
+                        {r.delivery_error}
+                      </p>
+                    )}
                   </td>
                   <td className="px-4 py-2.5">
                     {r.issue_urls.length === 0 && <span className="text-muted-foreground">—</span>}
