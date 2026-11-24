@@ -12,6 +12,7 @@ import (
 
 type Querier interface {
 	ClearDefaultProjectRepository(ctx context.Context, projectID uuid.UUID) error
+	ClearReportFailure(ctx context.Context, id uuid.UUID) error
 	CountRoutingRulesForRepository(ctx context.Context, projectRepositoryID uuid.UUID) (int64, error)
 	CreateApp(ctx context.Context, arg CreateAppParams) (App, error)
 	CreateAppKey(ctx context.Context, arg CreateAppKeyParams) (AppKey, error)
@@ -89,14 +90,17 @@ type Querier interface {
 	ListReportAttachments(ctx context.Context, reportID uuid.UUID) ([]ListReportAttachmentsRow, error)
 	ListReportAttachmentsWithData(ctx context.Context, reportID uuid.UUID) ([]ListReportAttachmentsWithDataRow, error)
 	ListReportDeliveries(ctx context.Context, reportID uuid.UUID) ([]ReportDelivery, error)
+	ListReportDeliveriesByReportIDs(ctx context.Context, reportIds []uuid.UUID) ([]ReportDelivery, error)
 	// The projects that already got the report's issue, whichever of their
 	// repositories it went to.
 	ListReportDeliveryProjects(ctx context.Context, reportID uuid.UUID) ([]uuid.UUID, error)
+	ListReports(ctx context.Context, arg ListReportsParams) ([]Report, error)
 	ListRoutingRules(ctx context.Context, projectID uuid.UUID) ([]RoutingRule, error)
 	// The rules of every project the app reports into, in the order they are
 	// tried, with the repository each one sends to and its template's content,
 	// when it has one.
 	ListRoutingRulesForApp(ctx context.Context, appID uuid.UUID) ([]ListRoutingRulesForAppRow, error)
+	MarkReportFailed(ctx context.Context, arg MarkReportFailedParams) error
 	MarkReportProcessed(ctx context.Context, id uuid.UUID) error
 	MarkReportQueued(ctx context.Context, id uuid.UUID) error
 	RevokeAppKey(ctx context.Context, arg RevokeAppKeyParams) (int64, error)

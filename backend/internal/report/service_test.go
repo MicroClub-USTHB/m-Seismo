@@ -6,13 +6,24 @@ import (
 	"context"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/queue"
 )
+
+type fakePublisher struct {
+	published []queue.ReportAccepted
+}
+
+func (f *fakePublisher) ReportAccepted(_ context.Context, msg queue.ReportAccepted) error {
+	f.published = append(f.published, msg)
+	return nil
+}
 
 type fakeQuerier struct {
 	db.Querier
@@ -24,6 +35,9 @@ type fakeQuerier struct {
 	byInstallation map[uuid.UUID]int64
 	reports        map[uuid.UUID]db.Report
 	attachments    map[uuid.UUID][]db.ListReportAttachmentsWithDataRow
+	deliveries     map[uuid.UUID][]db.ReportDelivery
+	singleDelCalls int
+	batchDelCalls  int
 }
 
 func (f *fakeQuerier) GetApp(_ context.Context, arg db.GetAppParams) (db.App, error) {
@@ -49,6 +63,89 @@ func (f *fakeQuerier) ListReportAttachmentsWithData(_ context.Context, reportID 
 		return nil, nil
 	}
 	return f.attachments[reportID], nil
+}
+
+func (f *fakeQuerier) ListReportDeliveries(_ context.Context, reportID uuid.UUID) ([]db.ReportDelivery, error) {
+	f.singleDelCalls++
+	if f.deliveries == nil {
+		return nil, nil
+	}
+	return f.deliveries[reportID], nil
+}
+
+func (f *fakeQuerier) ListReportDeliveriesByReportIDs(_ context.Context, reportIDs []uuid.UUID) ([]db.ReportDelivery, error) {
+	f.batchDelCalls++
+	var out []db.ReportDelivery
+	for _, id := range reportIDs {
+		out = append(out, f.deliveries[id]...)
+	}
+	return out, nil
+}
+
+func (f *fakeQuerier) ClearReportFailure(_ context.Context, id uuid.UUID) error {
+	for k, r := range f.reports {
+		if r.ID == id && r.ProcessedAt == nil {
+			r.DeliveryError = nil
+			f.reports[k] = r
+		}
+	}
+	return nil
+}
+
+func (f *fakeQuerier) ListReports(_ context.Context, arg db.ListReportsParams) ([]db.Report, error) {
+	if arg.AppID != f.app.ID {
+		return nil, nil
+	}
+	var res []db.Report
+	for _, r := range f.reports {
+		if r.AppID != arg.AppID {
+			continue
+		}
+		if arg.CursorTime.Valid {
+			if arg.CursorID == nil {
+				if !r.OccurredAt.Before(arg.CursorTime.Time) {
+					continue
+				}
+			} else {
+				if r.OccurredAt.After(arg.CursorTime.Time) {
+					continue
+				}
+				if r.OccurredAt.Equal(arg.CursorTime.Time) && bytes.Compare(r.ID[:], arg.CursorID[:]) >= 0 {
+					continue
+				}
+			}
+		}
+		if arg.Status != nil {
+			switch *arg.Status {
+			case "delivered":
+				if r.ProcessedAt == nil {
+					continue
+				}
+			case "failed":
+				if r.ProcessedAt != nil || r.DeliveryError == nil {
+					continue
+				}
+			case "queued":
+				if r.ProcessedAt != nil || r.DeliveryError != nil {
+					continue
+				}
+			}
+		}
+		res = append(res, r)
+	}
+	// Sort by OccurredAt descending, ID descending
+	for i := 0; i < len(res)-1; i++ {
+		for j := i + 1; j < len(res); j++ {
+			if res[j].OccurredAt.After(res[i].OccurredAt) ||
+				(res[j].OccurredAt.Equal(res[i].OccurredAt) && bytes.Compare(res[j].ID[:], res[i].ID[:]) > 0) {
+				res[i], res[j] = res[j], res[i]
+			}
+		}
+	}
+	if len(res) > int(arg.Limit) {
+		res = res[:arg.Limit]
+	}
+	return res, nil
 }
 
 func (f *fakeQuerier) DeleteReportByReportID(_ context.Context, arg db.DeleteReportByReportIDParams) (int64, error) {
@@ -78,7 +175,7 @@ func TestDeleteReport(t *testing.T) {
 		app:     db.App{ID: uuid.New(), OwnerID: owner},
 		deleted: map[uuid.UUID]bool{reportID: true},
 	}
-	svc := NewService(q)
+	svc := NewService(q, nil)
 	ctx := context.Background()
 
 	if err := svc.DeleteReport(ctx, owner, q.app.ID, reportID); err != nil {
@@ -101,7 +198,7 @@ func TestDeleteByInstallation(t *testing.T) {
 		app:            db.App{ID: uuid.New(), OwnerID: owner},
 		byInstallation: map[uuid.UUID]int64{installationID: 3},
 	}
-	svc := NewService(q)
+	svc := NewService(q, nil)
 	ctx := context.Background()
 
 	n, err := svc.DeleteByInstallation(ctx, owner, q.app.ID, installationID)
@@ -166,7 +263,7 @@ func TestExportBundle(t *testing.T) {
 				},
 			},
 		}
-		svc := NewService(q)
+		svc := NewService(q, nil)
 
 		var buf bytes.Buffer
 		if err := svc.Bundle(ctx, owner, appID, reportID, &buf); err != nil {
@@ -207,7 +304,7 @@ func TestExportBundle(t *testing.T) {
 				internalID: {},
 			},
 		}
-		svc := NewService(q)
+		svc := NewService(q, nil)
 
 		var buf bytes.Buffer
 		if err := svc.Bundle(ctx, owner, appID, reportID, &buf); err != nil {
@@ -240,7 +337,7 @@ func TestExportBundle(t *testing.T) {
 				},
 			},
 		}
-		svc := NewService(q)
+		svc := NewService(q, nil)
 
 		var buf bytes.Buffer
 		if err := svc.Bundle(ctx, owner, appID, reportID, &buf); err != nil {
@@ -262,7 +359,7 @@ func TestExportBundle(t *testing.T) {
 			app:     db.App{ID: appID, OwnerID: owner},
 			reports: map[uuid.UUID]db.Report{},
 		}
-		svc := NewService(q)
+		svc := NewService(q, nil)
 
 		var buf bytes.Buffer
 		err := svc.Bundle(ctx, owner, appID, nonExistentReportID, &buf)
@@ -282,7 +379,7 @@ func TestExportBundle(t *testing.T) {
 				reportID: {ID: internalID, AppID: appID, ReportID: reportID, Payload: reportPayload},
 			},
 		}
-		svc := NewService(q)
+		svc := NewService(q, nil)
 
 		var buf bytes.Buffer
 		err := svc.Bundle(ctx, strangerOwner, appID, reportID, &buf)
@@ -303,12 +400,353 @@ func TestExportBundle(t *testing.T) {
 				reportID: {ID: internalID, AppID: appID, ReportID: reportID, Payload: reportPayload},
 			},
 		}
-		svc := NewService(q)
+		svc := NewService(q, nil)
 
 		var buf bytes.Buffer
 		err := svc.Bundle(ctx, owner, otherAppID, reportID, &buf)
 		if kind(err) != apperr.KindNotFound {
 			t.Fatalf("expected KindNotFound when querying report under another app, got %v (kind %v)", err, kind(err))
+		}
+	})
+}
+
+func TestListReports(t *testing.T) {
+	ctx := context.Background()
+	owner := uuid.New()
+	appID := uuid.New()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	repID1 := uuid.New()
+	repID2 := uuid.New()
+	repID3 := uuid.New()
+	repID4 := uuid.New()
+	repID5 := uuid.New()
+
+	// Ordered UUIDs so tie-breaking on identical OccurredAt is predictable.
+	intID1 := uuid.MustParse("00000000-0000-0000-0000-000000000005")
+	intID2 := uuid.MustParse("00000000-0000-0000-0000-000000000004")
+	intID3 := uuid.MustParse("00000000-0000-0000-0000-000000000003")
+	intID4 := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	intID5 := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+
+	proc1 := now.Add(-30 * time.Second)
+	proc3 := now.Add(-90 * time.Second)
+	err2 := "github returned 502"
+	err4 := "no targets configured"
+
+	// 5 reports sorted by (OccurredAt, ID) descending:
+	// 1: -1m, delivered
+	// 2: -2m, failed
+	// 3: -3m, delivered (same OccurredAt as #4 to verify keyset tie-breaking)
+	// 4: -3m, failed
+	// 5: -5m, queued (neither processed nor failed yet)
+	reports := map[uuid.UUID]db.Report{
+		repID1: {ID: intID1, AppID: appID, ReportID: repID1, OccurredAt: now.Add(-1 * time.Minute), ProcessedAt: &proc1, Trigger: "shake"},
+		repID2: {ID: intID2, AppID: appID, ReportID: repID2, OccurredAt: now.Add(-2 * time.Minute), DeliveryError: &err2, Trigger: "manual"},
+		repID3: {ID: intID3, AppID: appID, ReportID: repID3, OccurredAt: now.Add(-3 * time.Minute), ProcessedAt: &proc3, Trigger: "crash"},
+		repID4: {ID: intID4, AppID: appID, ReportID: repID4, OccurredAt: now.Add(-3 * time.Minute), DeliveryError: &err4, Trigger: "shake"},
+		repID5: {ID: intID5, AppID: appID, ReportID: repID5, OccurredAt: now.Add(-5 * time.Minute), Trigger: "manual"},
+	}
+
+	deliveries := map[uuid.UUID][]db.ReportDelivery{
+		intID1: {
+			{ReportID: intID1, Url: "https://github.com/org/repo/issues/10"},
+		},
+		intID3: {
+			{ReportID: intID3, Url: "https://github.com/org/repo/issues/12"},
+		},
+	}
+
+	q := &fakeQuerier{
+		app:        db.App{ID: appID, OwnerID: owner},
+		reports:    reports,
+		deliveries: deliveries,
+	}
+	svc := NewService(q, nil)
+
+	t.Run("happy path batches deliveries", func(t *testing.T) {
+		q.singleDelCalls, q.batchDelCalls = 0, 0
+		res, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Limit: 10})
+		if err != nil {
+			t.Fatalf("ListReports() unexpected err: %v", err)
+		}
+		if q.singleDelCalls != 0 || q.batchDelCalls != 1 {
+			t.Errorf("delivery query calls: single=%d batch=%d, want 0 and 1", q.singleDelCalls, q.batchDelCalls)
+		}
+		if len(res.Reports) != 5 {
+			t.Fatalf("expected 5 reports, got %d", len(res.Reports))
+		}
+		if res.Reports[0].Status != "delivered" || res.Reports[0].DeliveryError != nil {
+			t.Errorf("report 0 status=%q err=%v, want delivered/nil", res.Reports[0].Status, res.Reports[0].DeliveryError)
+		}
+		if len(res.Reports[0].IssueURLs) != 1 || res.Reports[0].IssueURLs[0] != "https://github.com/org/repo/issues/10" {
+			t.Errorf("report 0 IssueURLs = %v, want ['https://github.com/org/repo/issues/10']", res.Reports[0].IssueURLs)
+		}
+		if res.Reports[1].Status != "failed" || res.Reports[1].DeliveryError == nil || *res.Reports[1].DeliveryError != err2 {
+			t.Errorf("report 1 status=%q err=%v, want failed/%q", res.Reports[1].Status, res.Reports[1].DeliveryError, err2)
+		}
+		if res.Reports[1].IssueURLs == nil || len(res.Reports[1].IssueURLs) != 0 {
+			t.Errorf("report 1 IssueURLs = %#v, want non-nil empty slice", res.Reports[1].IssueURLs)
+		}
+		if res.Reports[2].Status != "delivered" {
+			t.Errorf("report 2 status = %q, want 'delivered'", res.Reports[2].Status)
+		}
+		if res.Reports[3].Status != "failed" {
+			t.Errorf("report 3 status = %q, want 'failed'", res.Reports[3].Status)
+		}
+		if res.Reports[4].Status != "queued" || res.Reports[4].DeliveryError != nil {
+			t.Errorf("report 4 status=%q err=%v, want queued/nil", res.Reports[4].Status, res.Reports[4].DeliveryError)
+		}
+	})
+
+	t.Run("filter by status delivered", func(t *testing.T) {
+		res, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Status: "delivered", Limit: 10})
+		if err != nil {
+			t.Fatalf("ListReports() unexpected err: %v", err)
+		}
+		if len(res.Reports) != 2 {
+			t.Fatalf("expected 2 delivered reports, got %d", len(res.Reports))
+		}
+		for i, r := range res.Reports {
+			if r.Status != "delivered" {
+				t.Errorf("report %d status = %q, want 'delivered'", i, r.Status)
+			}
+		}
+	})
+
+	t.Run("filter by status failed excludes queued", func(t *testing.T) {
+		res, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Status: "failed", Limit: 10})
+		if err != nil {
+			t.Fatalf("ListReports() unexpected err: %v", err)
+		}
+		if len(res.Reports) != 2 {
+			t.Fatalf("expected 2 failed reports, got %d", len(res.Reports))
+		}
+		for i, r := range res.Reports {
+			if r.Status != "failed" {
+				t.Errorf("report %d status = %q, want 'failed'", i, r.Status)
+			}
+		}
+	})
+
+	t.Run("filter by status queued", func(t *testing.T) {
+		res, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Status: "queued", Limit: 10})
+		if err != nil {
+			t.Fatalf("ListReports() unexpected err: %v", err)
+		}
+		if len(res.Reports) != 1 || res.Reports[0].ReportID != repID5 {
+			t.Fatalf("expected only queued report %v, got %+v", repID5, res.Reports)
+		}
+	})
+
+	t.Run("keyset pagination preserves tied timestamps across pages", func(t *testing.T) {
+		// Page size 3 ends on repID3 (-3m, id ...0003); repID4 shares -3m with id ...0002.
+		page1, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Limit: 3})
+		if err != nil {
+			t.Fatalf("page 1 unexpected err: %v", err)
+		}
+		if len(page1.Reports) != 3 || page1.NextCursor == nil {
+			t.Fatalf("page 1 len=%d next=%v, want 3 and non-nil", len(page1.Reports), page1.NextCursor)
+		}
+		if page1.Reports[0].ReportID != repID1 || page1.Reports[1].ReportID != repID2 || page1.Reports[2].ReportID != repID3 {
+			t.Errorf("page 1 returned unexpected reports: %+v", page1.Reports)
+		}
+
+		page2, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Limit: 3, Cursor: *page1.NextCursor})
+		if err != nil {
+			t.Fatalf("page 2 unexpected err: %v", err)
+		}
+		if len(page2.Reports) != 2 {
+			t.Fatalf("page 2 expected 2 reports, got %d", len(page2.Reports))
+		}
+		if page2.Reports[0].ReportID != repID4 || page2.Reports[1].ReportID != repID5 {
+			t.Errorf("page 2 returned unexpected reports: %v, %v", page2.Reports[0].ReportID, page2.Reports[1].ReportID)
+		}
+		if page2.NextCursor != nil {
+			t.Errorf("page 2 expected nil next cursor for last page, got %v", *page2.NextCursor)
+		}
+	})
+
+	t.Run("timestamp-only cursor filters before date", func(t *testing.T) {
+		res, err := svc.ListReports(ctx, owner, appID, ListReportsParams{
+			Limit:  10,
+			Cursor: now.Add(-2 * time.Minute).Format(time.RFC3339Nano),
+		})
+		if err != nil {
+			t.Fatalf("ListReports() unexpected err: %v", err)
+		}
+		if len(res.Reports) != 3 || res.Reports[0].ReportID != repID3 {
+			t.Fatalf("expected 3 reports older than -2m starting with %v, got %+v", repID3, res.Reports)
+		}
+	})
+
+	t.Run("invalid cursor and status", func(t *testing.T) {
+		if _, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Cursor: "not-a-cursor"}); kind(err) != apperr.KindInvalid {
+			t.Errorf("invalid cursor kind = %v, want KindInvalid", kind(err))
+		}
+		if _, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Status: "unknown"}); kind(err) != apperr.KindInvalid {
+			t.Errorf("invalid status kind = %v, want KindInvalid", kind(err))
+		}
+	})
+
+	t.Run("unauthorized owner / wrong app", func(t *testing.T) {
+		stranger := uuid.New()
+		_, err := svc.ListReports(ctx, stranger, appID, ListReportsParams{Limit: 10})
+		if kind(err) != apperr.KindNotFound {
+			t.Fatalf("expected KindNotFound for unauthorized owner, got %v (kind %v)", err, kind(err))
+		}
+	})
+}
+
+func TestGetReport(t *testing.T) {
+	ctx := context.Background()
+	owner := uuid.New()
+	appID := uuid.New()
+	reportID := uuid.New()
+	internalID := uuid.New()
+	now := time.Now().UTC()
+	payload := []byte(`{"device":{"model":"iPhone15"},"user_input":{"title":"Crash on checkout"}}`)
+	issueURL := "https://github.com/org/repo/issues/42"
+	repoID := uuid.New()
+	processedAt := now.Add(-5 * time.Minute)
+
+	q := &fakeQuerier{
+		app: db.App{ID: appID, OwnerID: owner},
+		reports: map[uuid.UUID]db.Report{
+			reportID: {
+				ID:             internalID,
+				AppID:          appID,
+				ReportID:       reportID,
+				InstallationID: uuid.New(),
+				SessionID:      "sess-123",
+				Trigger:        "shake",
+				OccurredAt:     now.Add(-10 * time.Minute),
+				ReceivedAt:     now.Add(-9 * time.Minute),
+				ProcessedAt:    &processedAt,
+				Payload:        payload,
+			},
+		},
+		deliveries: map[uuid.UUID][]db.ReportDelivery{
+			internalID: {
+				{
+					ReportID:            internalID,
+					ProjectRepositoryID: repoID,
+					Url:                 issueURL,
+					CreatedAt:           processedAt,
+				},
+			},
+		},
+	}
+	svc := NewService(q, nil)
+
+	t.Run("happy path", func(t *testing.T) {
+		res, err := svc.GetReport(ctx, owner, appID, reportID)
+		if err != nil {
+			t.Fatalf("GetReport() unexpected err: %v", err)
+		}
+		if res.ReportID != reportID {
+			t.Errorf("ReportID = %v, want %v", res.ReportID, reportID)
+		}
+		if res.Trigger != "shake" {
+			t.Errorf("Trigger = %q, want %q", res.Trigger, "shake")
+		}
+		if !bytes.Equal(res.Payload, payload) {
+			t.Errorf("Payload mismatch: got %s, want %s", res.Payload, payload)
+		}
+		if res.Status != "delivered" {
+			t.Errorf("Status = %q, want %q", res.Status, "delivered")
+		}
+		if len(res.Deliveries) != 1 {
+			t.Fatalf("Deliveries len = %d, want 1", len(res.Deliveries))
+		}
+		if res.Deliveries[0].URL != issueURL {
+			t.Errorf("Delivery URL = %q, want %q", res.Deliveries[0].URL, issueURL)
+		}
+		if res.Deliveries[0].ProjectRepositoryID != repoID {
+			t.Errorf("Delivery ProjectRepositoryID = %v, want %v", res.Deliveries[0].ProjectRepositoryID, repoID)
+		}
+	})
+
+	t.Run("missing report", func(t *testing.T) {
+		_, err := svc.GetReport(ctx, owner, appID, uuid.New())
+		if kind(err) != apperr.KindNotFound {
+			t.Fatalf("expected KindNotFound for missing report, got %v (kind %v)", err, kind(err))
+		}
+	})
+
+	t.Run("cross-app / wrong owner isolation", func(t *testing.T) {
+		otherAppID := uuid.New()
+		if _, err := svc.GetReport(ctx, owner, otherAppID, reportID); kind(err) != apperr.KindNotFound {
+			t.Errorf("expected KindNotFound for querying report under another app, got %v", err)
+		}
+		stranger := uuid.New()
+		if _, err := svc.GetReport(ctx, stranger, appID, reportID); kind(err) != apperr.KindNotFound {
+			t.Errorf("expected KindNotFound for unauthorized owner, got %v", err)
+		}
+	})
+}
+
+func TestRetryReport(t *testing.T) {
+	ctx := context.Background()
+	owner := uuid.New()
+	appID := uuid.New()
+	reportID := uuid.New()
+	internalID := uuid.New()
+
+	errMsg := "tracker timeout"
+	q := &fakeQuerier{
+		app: db.App{ID: appID, OwnerID: owner},
+		reports: map[uuid.UUID]db.Report{
+			reportID: {
+				ID:            internalID,
+				AppID:         appID,
+				ReportID:      reportID,
+				DeliveryError: &errMsg,
+			},
+		},
+	}
+	pub := &fakePublisher{}
+	svc := NewService(q, pub)
+
+	t.Run("happy path clears delivery error", func(t *testing.T) {
+		pub.published = nil
+		err := svc.RetryReport(ctx, owner, appID, reportID)
+		if err != nil {
+			t.Fatalf("RetryReport() unexpected err: %v", err)
+		}
+		if len(pub.published) != 1 {
+			t.Fatalf("expected exactly 1 published message, got %d", len(pub.published))
+		}
+		if pub.published[0].ID != internalID {
+			t.Errorf("published ID = %v, want %v", pub.published[0].ID, internalID)
+		}
+		if pub.published[0].AppID != appID {
+			t.Errorf("published AppID = %v, want %v", pub.published[0].AppID, appID)
+		}
+		if q.reports[reportID].DeliveryError != nil {
+			t.Errorf("expected DeliveryError cleared on retry, got %v", *q.reports[reportID].DeliveryError)
+		}
+	})
+
+	t.Run("missing report", func(t *testing.T) {
+		pub.published = nil
+		err := svc.RetryReport(ctx, owner, appID, uuid.New())
+		if kind(err) != apperr.KindNotFound {
+			t.Fatalf("expected KindNotFound for missing report, got %v (kind %v)", err, kind(err))
+		}
+		if len(pub.published) != 0 {
+			t.Errorf("expected 0 published messages for missing report, got %d", len(pub.published))
+		}
+	})
+
+	t.Run("wrong owner", func(t *testing.T) {
+		pub.published = nil
+		err := svc.RetryReport(ctx, uuid.New(), appID, reportID)
+		if kind(err) != apperr.KindNotFound {
+			t.Fatalf("expected KindNotFound for unauthorized owner, got %v (kind %v)", err, kind(err))
+		}
+		if len(pub.published) != 0 {
+			t.Errorf("expected 0 published messages for unauthorized owner, got %d", len(pub.published))
 		}
 	})
 }
