@@ -3,8 +3,7 @@
         agent-build agent-test agent-fmt agent-fmt-check backend-lint agent-lint \
         test-integration agent-integration db-up db-down db-status sqlc-generate \
         dev-up dev-down dev-reset dev-logs server-up server-down server-reset server-logs \
-        api-test api-test-fresh \
-        flutter-check flutter-pigeon
+        api-test api-test-fresh flutter-check flutter-pigeon
 
 COMPOSE_DEV := docker compose -f deploy/compose.dev.yml
 COMPOSE_SERVER := $(COMPOSE_DEV) -f deploy/compose.server.yml
