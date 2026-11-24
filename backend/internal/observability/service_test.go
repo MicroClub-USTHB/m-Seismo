@@ -309,6 +309,14 @@ func TestService_Set_Validation(t *testing.T) {
 			wantKind: apperr.KindInvalid,
 		},
 		{
+			name:     "grafana invalid scheme",
+			owner:    ownerID,
+			app:      appID,
+			provider: ProviderGrafana,
+			settings: `{"base_url":"javascript:alert(1)"}`,
+			wantKind: apperr.KindInvalid,
+		},
+		{
 			name:     "grafana valid",
 			owner:    ownerID,
 			app:      appID,
@@ -347,6 +355,14 @@ func TestService_Set_Validation(t *testing.T) {
 			provider: ProviderCloudWatch,
 			settings: `{"region":"us-east-1","log_group":"/aws/app"}`,
 			wantKind: -1, // success
+		},
+		{
+			name:     "datadog invalid base_url",
+			owner:    ownerID,
+			app:      appID,
+			provider: ProviderDatadog,
+			settings: `{"base_url":"ftp://datadog.invalid"}`,
+			wantKind: apperr.KindInvalid,
 		},
 		{
 			name:     "datadog valid",

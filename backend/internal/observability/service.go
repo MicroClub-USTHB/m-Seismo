@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -102,6 +103,9 @@ func (s *Service) List(ctx context.Context, ownerID, appID uuid.UUID) ([]Provide
 
 // Get returns the configuration for a specific observability provider for an app.
 func (s *Service) Get(ctx context.Context, ownerID, appID uuid.UUID, provider Provider) (ProviderConnection, error) {
+	if err := validateProvider(provider); err != nil {
+		return ProviderConnection{}, err
+	}
 	if err := s.requireApp(ctx, ownerID, appID); err != nil {
 		return ProviderConnection{}, err
 	}
@@ -144,6 +148,9 @@ func (s *Service) Set(ctx context.Context, ownerID, appID uuid.UUID, provider Pr
 
 // Delete removes an observability provider configuration from an app.
 func (s *Service) Delete(ctx context.Context, ownerID, appID uuid.UUID, provider Provider) error {
+	if err := validateProvider(provider); err != nil {
+		return err
+	}
 	if err := s.requireApp(ctx, ownerID, appID); err != nil {
 		return err
 	}
@@ -174,6 +181,23 @@ func (s *Service) requireApp(ctx context.Context, ownerID, appID uuid.UUID) erro
 	return nil
 }
 
+func validateProvider(provider Provider) error {
+	switch provider {
+	case ProviderGrafana, ProviderLoki, ProviderCloudWatch, ProviderDatadog:
+		return nil
+	default:
+		return apperr.Invalid(fmt.Sprintf("unsupported observability provider %q", provider))
+	}
+}
+
+func validateHTTPURL(field, raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return apperr.Invalid(fmt.Sprintf("%s must be a valid http or https URL", field))
+	}
+	return nil
+}
+
 func validateSettings(provider Provider, raw json.RawMessage) error {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || !json.Valid(trimmed) || trimmed[0] != '{' {
@@ -189,7 +213,7 @@ func validateSettings(provider Provider, raw json.RawMessage) error {
 		if strings.TrimSpace(cfg.BaseURL) == "" {
 			return apperr.Invalid("grafana base_url is required")
 		}
-		return nil
+		return validateHTTPURL("grafana base_url", cfg.BaseURL)
 
 	case ProviderLoki:
 		var cfg LokiConfig
@@ -199,7 +223,7 @@ func validateSettings(provider Provider, raw json.RawMessage) error {
 		if strings.TrimSpace(cfg.BaseURL) == "" {
 			return apperr.Invalid("loki base_url is required")
 		}
-		return nil
+		return validateHTTPURL("loki base_url", cfg.BaseURL)
 
 	case ProviderCloudWatch:
 		var cfg CloudWatchConfig
@@ -209,12 +233,18 @@ func validateSettings(provider Provider, raw json.RawMessage) error {
 		if strings.TrimSpace(cfg.LogGroup) == "" {
 			return apperr.Invalid("cloudwatch log_group is required")
 		}
+		if strings.TrimSpace(cfg.BaseURL) != "" {
+			return validateHTTPURL("cloudwatch base_url", cfg.BaseURL)
+		}
 		return nil
 
 	case ProviderDatadog:
 		var cfg DatadogConfig
 		if err := json.Unmarshal(trimmed, &cfg); err != nil {
 			return apperr.Invalid("invalid datadog settings: " + err.Error())
+		}
+		if strings.TrimSpace(cfg.BaseURL) != "" {
+			return validateHTTPURL("datadog base_url", cfg.BaseURL)
 		}
 		return nil
 

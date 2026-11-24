@@ -2,10 +2,18 @@ package release
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
+
+type fallbackError struct {
+	rel *CorrelatedRelease
+}
+
+func (e *fallbackError) Error() string { return "release lookup fallback" }
 
 var commitHashRegex = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
 
@@ -86,9 +94,14 @@ func (c *Correlator) Correlate(ctx context.Context, req CorrelateRequest) (*Corr
 		req.Build,
 	)
 
-	return c.cache.GetOrCompute(key, func() (*CorrelatedRelease, error) {
+	rel, err := c.cache.GetOrCompute(key, func() (*CorrelatedRelease, error) {
 		return c.resolve(ctx, req)
 	})
+	var fb *fallbackError
+	if errors.As(err, &fb) {
+		return fb.rel, nil
+	}
+	return rel, err
 }
 
 func (c *Correlator) resolve(ctx context.Context, req CorrelateRequest) (*CorrelatedRelease, error) {
@@ -103,13 +116,22 @@ func (c *Correlator) resolve(ctx context.Context, req CorrelateRequest) (*Correl
 		tagName = req.Version
 	}
 	previousTag := ""
+	clientFailed := false
 
 	if c.client != nil {
-		tags, err := c.client.ListTags(ctx, req.Tracker, cleanRepo)
-		if err == nil && len(tags) > 0 {
-			if matched, prev, ok := matchTag(tags, req.Version, req.Build); ok {
-				tagName = matched
-				previousTag = prev
+		if ctx.Err() != nil {
+			clientFailed = true
+		} else {
+			lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+			defer cancel()
+			tags, err := c.client.ListTags(lookupCtx, req.Tracker, cleanRepo)
+			if err != nil {
+				clientFailed = true
+			} else if len(tags) > 0 {
+				if matched, prev, ok := matchTag(tags, req.Version, req.Build); ok {
+					tagName = matched
+					previousTag = prev
+				}
 			}
 		}
 	}
@@ -122,6 +144,10 @@ func (c *Correlator) resolve(ctx context.Context, req CorrelateRequest) (*Correl
 	}
 
 	populateURLs(result, req.Tracker, host, cleanRepo, tagName, previousTag, req.Build)
+	if clientFailed {
+		// Return fallback without caching transient client errors for the full TTL.
+		return nil, &fallbackError{rel: result}
+	}
 	return result, nil
 }
 
@@ -157,13 +183,13 @@ func matchTag(tags []string, version, build string) (matched string, prev string
 
 func normalizeRepository(repo string) (host, path string) {
 	repo = strings.TrimSpace(repo)
-	repo = strings.TrimPrefix(repo, "git@")
+	if strings.HasPrefix(repo, "git@") {
+		repo = strings.TrimPrefix(repo, "git@")
+		repo = strings.Replace(repo, ":", "/", 1)
+	}
 	repo = strings.TrimPrefix(repo, "https://")
 	repo = strings.TrimPrefix(repo, "http://")
 	repo = strings.TrimSuffix(repo, ".git")
-
-	// If it was git@github.com:owner/repo
-	repo = strings.Replace(repo, ":", "/", 1)
 
 	parts := strings.SplitN(repo, "/", 2)
 	if len(parts) == 2 && strings.Contains(parts[0], ".") {

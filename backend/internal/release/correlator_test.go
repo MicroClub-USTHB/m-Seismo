@@ -295,7 +295,7 @@ func TestCorrelator_GracefulFallbackAndEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("client error falls back gracefully without failing", func(t *testing.T) {
+	t.Run("client error falls back gracefully without poisoning cache", func(t *testing.T) {
 		client := newMockReleaseClient()
 		client.setError("broken/repo", errors.New("github rate limit 403"))
 		correlator := NewCorrelator(WithReleaseClient(client))
@@ -311,6 +311,21 @@ func TestCorrelator_GracefulFallbackAndEdgeCases(t *testing.T) {
 		}
 		if rel.ReleaseURL != "https://github.com/broken/repo/releases/tag/v5.0.0" {
 			t.Errorf("unexpected ReleaseURL: %s", rel.ReleaseURL)
+		}
+		if rel.CompareURL != "" {
+			t.Errorf("expected empty CompareURL on fallback, got %s", rel.CompareURL)
+		}
+
+		// Recovery on a subsequent call should not be blocked by the cached fallback.
+		client.setError("broken/repo", nil)
+		delete(client.errs, "broken/repo")
+		client.setTags("broken/repo", []string{"v5.0.0", "v4.9.0"})
+		rel, err = correlator.Correlate(context.Background(), req)
+		if err != nil {
+			t.Fatalf("expected recovery after transient error, got %v", err)
+		}
+		if rel.CompareURL != "https://github.com/broken/repo/compare/v4.9.0...v5.0.0" {
+			t.Errorf("expected CompareURL after recovery, got %q", rel.CompareURL)
 		}
 	})
 
