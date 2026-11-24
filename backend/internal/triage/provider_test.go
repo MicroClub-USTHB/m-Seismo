@@ -221,6 +221,17 @@ func TestCodeownersProvider_GracefulFallback(t *testing.T) {
 		if co != nil {
 			t.Errorf("expected nil Codeowners, got %+v", co)
 		}
+
+		// Subsequent recovery must not be blocked by caching the transient error.
+		delete(mock.errs, "org/err-repo")
+		mock.setFile("org/err-repo", ".github/CODEOWNERS", []byte("* @recovered\n"))
+		co, err = provider.GetCodeowners(context.Background(), "org/err-repo")
+		if err != nil || co == nil {
+			t.Fatalf("expected recovery after transient error, got co=%v err=%v", co, err)
+		}
+		if owners, _ := co.Match("a.go"); len(owners) == 0 || owners[0] != "@recovered" {
+			t.Errorf("expected @recovered, got %v", owners)
+		}
 	})
 
 	t.Run("handles nil receiver or empty repository safely", func(t *testing.T) {

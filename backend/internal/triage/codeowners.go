@@ -128,11 +128,12 @@ func pathMatches(pattern, normPath string) bool {
 		if trimmed == "" {
 			return true
 		}
-		if strings.HasPrefix(normPath, trimmed+"/") ||
-			strings.Contains(normPath, "/"+trimmed+"/") ||
-			strings.Contains(normPath, trimmed) {
+		if normPath == trimmed ||
+			strings.HasPrefix(normPath, trimmed+"/") ||
+			strings.Contains(normPath, "/"+trimmed+"/") {
 			return true
 		}
+		return false
 	}
 
 	// Strip leading slash for relative matching

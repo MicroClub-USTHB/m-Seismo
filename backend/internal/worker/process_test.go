@@ -597,7 +597,7 @@ func TestProcessor_ConcurrentTriageEnrichment(t *testing.T) {
 			Screen:         "CheckoutScreen",
 		},
 	}
-	p := NewProcessor(q, is, q.router, nil, time.Minute, nil, fakeLinker{}, nil, WithTriager(triager))
+	p := NewProcessor(q, is, q.router, &fakeLocks{}, nil, time.Minute, nil, fakeLinker{}, nil, WithTriager(triager))
 
 	if err := p.Process(context.Background(), q.report.ID); err != nil {
 		t.Fatal(err)
@@ -622,5 +622,21 @@ func TestProcessor_ConcurrentTriageEnrichment(t *testing.T) {
 	}
 	if triager.calledWith.repo != "o/r" {
 		t.Errorf("expected triager to be called with repo 'o/r', got %q", triager.calledWith.repo)
+	}
+
+	// Team handles like @org/team must not be passed as GitHub individual assignees.
+	q2, is2, _ := newFixture(t, 1)
+	teamTriager := &fakeTriager{
+		suggestion: triage.Suggestion{
+			Severity: "high",
+			Owner:    "@myorg/checkout-team",
+		},
+	}
+	p2 := NewProcessor(q2, is2, q2.router, &fakeLocks{}, nil, time.Minute, nil, fakeLinker{}, nil, WithTriager(teamTriager))
+	if err := p2.Process(context.Background(), q2.report.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(is2.drafts[0].Assignees) != 0 {
+		t.Errorf("expected team handle not to be added to Assignees, got %v", is2.drafts[0].Assignees)
 	}
 }

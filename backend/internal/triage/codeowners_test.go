@@ -98,6 +98,12 @@ Features/Checkout/ @checkout-team
 		if pattern != "Features/Checkout/" || len(owners) == 0 || owners[0] != "@checkout-team" {
 			t.Errorf("expected @checkout-team for CartViewController.swift, got pattern %q, owners %v", pattern, owners)
 		}
+
+		// Directory rule /backend/ must not substring-match unrelated filenames like "mybackendfile.go".
+		owners, pattern = co.Match("ios/mybackendfile.go")
+		if len(owners) != 0 || pattern != "" {
+			t.Errorf("expected no directory substring match for mybackendfile.go, got pattern %q, owners %v", pattern, owners)
+		}
 	})
 }
 

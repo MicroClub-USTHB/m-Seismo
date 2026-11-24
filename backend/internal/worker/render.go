@@ -115,31 +115,36 @@ func triageSection(s triage.Suggestion) string {
 	b.WriteString(">\n")
 
 	if s.Severity != "" {
-		b.WriteString("> Suggested Severity: " + s.Severity)
+		b.WriteString("> Suggested Severity: " + text(oneLine(s.Severity)))
 		if s.SeverityReason != "" {
-			fmt.Fprintf(&b, " (%s)", s.SeverityReason)
+			fmt.Fprintf(&b, " (%s)", text(oneLine(s.SeverityReason)))
 		}
 		b.WriteString("\n")
 	}
 	if s.Owner != "" {
-		b.WriteString("> Suggested Owner: " + s.Owner)
+		b.WriteString("> Suggested Owner: " + oneLine(s.Owner))
 		if s.OwnerReason != "" {
-			fmt.Fprintf(&b, " (%s)", s.OwnerReason)
+			fmt.Fprintf(&b, " (%s)", text(oneLine(s.OwnerReason)))
 		}
 		b.WriteString("\n")
 	}
 	if len(s.Labels) > 0 {
 		formatted := make([]string, len(s.Labels))
 		for i, l := range s.Labels {
-			formatted[i] = "`" + l + "`"
+			formatted[i] = "`" + text(oneLine(l)) + "`"
 		}
 		fmt.Fprintf(&b, "> Suggested Labels: %s\n", strings.Join(formatted, ", "))
 	}
 	if s.Screen != "" {
-		fmt.Fprintf(&b, "> Active Screen: %s\n", s.Screen)
+		fmt.Fprintf(&b, "> Active Screen: %s\n", text(oneLine(s.Screen)))
 	}
-	if s.AISummary != nil && s.AISummary.ProbableCause != "" {
-		fmt.Fprintf(&b, "> Probable Cause: %s\n", s.AISummary.ProbableCause)
+	if s.AISummary != nil {
+		if s.AISummary.Title != "" {
+			fmt.Fprintf(&b, "> Suggested Title: %s\n", text(oneLine(s.AISummary.Title)))
+		}
+		if s.AISummary.ProbableCause != "" {
+			fmt.Fprintf(&b, "> Probable Cause: %s\n", text(oneLine(s.AISummary.ProbableCause)))
+		}
 	}
 	b.WriteString("\n")
 

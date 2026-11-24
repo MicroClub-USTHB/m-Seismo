@@ -2,6 +2,8 @@ package triage
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"sync"
 	"time"
@@ -90,6 +92,10 @@ func (p *CodeownersProvider) GetCodeowners(ctx context.Context, repository strin
 		return entry.co, nil
 	}
 
+	if ctx.Err() != nil {
+		return nil, nil
+	}
+
 	val, err, _ := p.group.Do(repository, func() (any, error) {
 		// Double-check cache in case a concurrent call resolved it while waiting
 		now := p.now()
@@ -100,13 +106,26 @@ func (p *CodeownersProvider) GetCodeowners(ctx context.Context, repository strin
 			return entry.co, nil
 		}
 
+		lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), DefaultCodeownersTTL)
+		defer cancel()
+
 		var foundBytes []byte
+		var transientErr error
 		for _, loc := range candidateCodeownersPaths {
-			data, fetchErr := p.fetcher.FetchFile(ctx, repository, loc)
+			data, fetchErr := p.fetcher.FetchFile(lookupCtx, repository, loc)
 			if fetchErr == nil && len(data) > 0 {
 				foundBytes = data
+				transientErr = nil
 				break
 			}
+			if fetchErr != nil && !errors.Is(fetchErr, fs.ErrNotExist) {
+				transientErr = fetchErr
+			}
+		}
+
+		// Do not cache transient network/rate-limit errors for the full TTL.
+		if len(foundBytes) == 0 && transientErr != nil {
+			return nil, nil
 		}
 
 		var co *Codeowners

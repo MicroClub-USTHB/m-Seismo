@@ -95,7 +95,11 @@ func TestRender_AutoTriageSection(t *testing.T) {
 			Labels:         []string{"ios", "crash"},
 			Owner:          "@checkout-team",
 			OwnerReason:    "matched CODEOWNERS rule 'Features/Checkout/*'",
-			Screen:         "CheckoutScreen",
+			Screen:         "CheckoutScreen @everyone\n> breakout",
+			AISummary: &triage.AISummary{
+				Title:         "Crash on checkout",
+				ProbableCause: "Nil pointer in @handler",
+			},
 		},
 	}
 
@@ -112,7 +116,13 @@ func TestRender_AutoTriageSection(t *testing.T) {
 	if !strings.Contains(draft.Body, "`ios`, `crash`") {
 		t.Errorf("expected Body to contain formatted labels, got:\n%s", draft.Body)
 	}
-	if !strings.Contains(draft.Body, "Active Screen: CheckoutScreen") {
-		t.Errorf("expected Body to contain active screen, got:\n%s", draft.Body)
+	if !strings.Contains(draft.Body, "Active Screen: CheckoutScreen @\u200beveryone > breakout") {
+		t.Errorf("expected sanitized single-line active screen, got:\n%s", draft.Body)
+	}
+	if !strings.Contains(draft.Body, "Suggested Title: Crash on checkout") {
+		t.Errorf("expected Body to contain suggested title, got:\n%s", draft.Body)
+	}
+	if !strings.Contains(draft.Body, "Probable Cause: Nil pointer in @\u200bhandler") {
+		t.Errorf("expected sanitized probable cause, got:\n%s", draft.Body)
 	}
 }
