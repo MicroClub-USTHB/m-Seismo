@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { Check, Copy } from 'lucide-react'
 import {
   api,
   ApiError,
@@ -138,12 +139,11 @@ export function CredentialsForm({
 export function KeysSection({ appId }: { appId: string }) {
   const queryClient = useQueryClient()
   const [lastSecret, setLastSecret] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState<'yes' | 'failed' | null>(null)
 
   async function copySecret() {
     if (!lastSecret) return
-    await navigator.clipboard.writeText(lastSecret)
-    setCopied(true)
+    setCopied((await copyText(lastSecret)) ? 'yes' : 'failed')
   }
 
   const keys = useQuery({
@@ -155,7 +155,7 @@ export function KeysSection({ appId }: { appId: string }) {
     mutationFn: () => api.post<AppKeyCreated>(`/apps/${appId}/keys`),
     onSuccess: (key) => {
       setLastSecret(key.secret)
-      setCopied(false)
+      setCopied(null)
       queryClient.invalidateQueries({ queryKey: ['apps', appId, 'keys'] })
     },
   })
@@ -170,14 +170,22 @@ export function KeysSection({ appId }: { appId: string }) {
 
       {lastSecret && (
         <McCard className="border-warning/30 bg-warning/10">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-warning">
-              New key secret (shown once): <code className="font-mono break-all">{lastSecret}</code>
-            </p>
-            <McButton variant="secondary" size="sm" onClick={copySecret}>
-              {copied ? 'Copied' : 'Copy'}
-            </McButton>
+          <p className="text-sm text-warning">New key secret, shown once. Copy it now:</p>
+          <div className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
+            <code className="min-w-0 flex-1 font-mono text-sm break-all text-foreground">{lastSecret}</code>
+            <button
+              type="button"
+              onClick={copySecret}
+              aria-label="Copy key"
+              title={copied === 'yes' ? 'Copied' : 'Copy'}
+              className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              {copied === 'yes' ? <Check className="size-4 text-success" /> : <Copy className="size-4" />}
+            </button>
           </div>
+          {copied === 'failed' && (
+            <p className="text-xs text-destructive">Could not copy. Select the key and copy it by hand.</p>
+          )}
         </McCard>
       )}
 
@@ -269,4 +277,31 @@ export function TestIssueSection({ appId }: { appId: string }) {
       )}
     </section>
   )
+}
+
+/** Copies text, falling back to a hidden textarea where the Clipboard API is
+ * missing or refused (plain-HTTP origins, some embedded browsers). */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    /* fall through to the textarea */
+  }
+  const area = document.createElement('textarea')
+  area.value = text
+  area.setAttribute('readonly', '')
+  area.style.position = 'fixed'
+  area.style.opacity = '0'
+  document.body.appendChild(area)
+  area.select()
+  try {
+    return document.execCommand('copy')
+  } catch {
+    return false
+  } finally {
+    document.body.removeChild(area)
+  }
 }
