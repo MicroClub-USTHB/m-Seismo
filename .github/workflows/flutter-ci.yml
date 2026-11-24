@@ -77,5 +77,14 @@ jobs:
       - name: Build iOS simulator app
         run: flutter build ios --simulator --no-codesign
 
+      - name: Boot iOS simulator
+        id: sim
+        run: |
+          udid=$(xcrun simctl list devices available -j \
+            | jq -r '[.devices | to_entries[] | select(.key | contains("iOS")) | .value[] | select(.name == "iPhone 17")][0].udid')
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+
       - name: Integration test
-        run: flutter test integration_test -d "iPhone 17"
+        run: flutter test integration_test -d "${{ steps.sim.outputs.udid }}"
