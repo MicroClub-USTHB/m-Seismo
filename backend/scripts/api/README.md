@@ -4,7 +4,7 @@ End-to-end tests for every API endpoint, written in bash with curl. They run
 against a running backend, normally the dev stack in `deploy/`.
 
 ```sh
-make dev-up                          # start the stack (fake GitHub included)
+make dev-up                          # start the stack
 backend/scripts/api/all.sh           # run everything
 backend/scripts/api/projects.sh      # or one service
 backend/scripts/api/all.sh --fresh   # forget the saved owner/token/connection first
@@ -48,16 +48,28 @@ location with `STATE_FILE`.
 - **Isolation tests** register a throwaway second owner with its own token
   (`new_owner`) and delete it at the end.
 
-## GitHub modes
+## GitHub
 
-| `GITHUB_MODE` | How the connection is made | Notes |
-|---|---|---|
-| `fake` (default) | The script plays the browser. It calls `/apps/{id}/connect/github`, then `/providers/github/callback` with a random installation `N` and code `fake-code-N`, as GitHub's redirect would. | Fully automatic. Also runs the forged-ID, replay, two-account, fan-out and failure tests. |
-| `real` | The script prints the install URL, you install the App in a browser, and the script polls `/apps/{id}/connections` until the connection appears. | Set `GITHUB_TEST_REPO=owner/name` to a repository the App can access. **This opens real issues**, labelled `m-seismo-test`. Fake-only tests are skipped. |
+The dev stack has no fake trackers, so the GitHub checks run against a real
+GitHub App (`GITHUB_MODE=real`, the default):
 
-`gitlab.sh` and `bitbucket.sh` always use the fake GitLab and Bitbucket
-(they skip themselves when those are not reachable) and create fresh apps
-and connections on every run.
+1. Configure the App in `deploy/.env` (see `deploy/README.md`).
+2. Set `GITHUB_TEST_REPO=owner/name` to a repository the App can access.
+   **This opens real issues** there, labelled `m-seismo-test`.
+3. On the first run, the script prints the install URL. Install the App in
+   a browser; the script polls `/apps/{id}/connections` until the
+   connection appears.
+
+Without `GITHUB_TEST_REPO`, `providers.sh` and `issues.sh` skip themselves.
+Checks that need a fake tracker (forged installation IDs, replay, two
+accounts, fan-out, failures, rate limits) are skipped in real mode.
+
+`GITHUB_MODE=fake` still exists for a fake GitHub served elsewhere (set
+`FAKE_GITHUB_URL`); the repository no longer ships one.
+
+`gitlab.sh` and `bitbucket.sh` need a fake GitLab and Bitbucket, and skip
+themselves when none is reachable. The GitLab and Bitbucket providers are
+covered by their Go tests instead.
 
 The test app and its GitHub connection are saved and reused across runs.
 Apps that a script creates get their own connection by **attaching** the saved
@@ -68,18 +80,16 @@ one, so in real mode you install once.
 | Variable | Default |
 |---|---|
 | `API_URL` | `http://localhost:8080/api/v1` |
-| `FAKE_GITHUB_URL` | `http://localhost:9090` |
-| `FAKE_GITLAB_URL` | `http://localhost:9091` |
-| `FAKE_BITBUCKET_URL` | `http://localhost:9092` |
-| `GITHUB_MODE` | `fake` |
-| `GITHUB_TEST_REPO` | `octo-org/seismo-test` |
+| `GITHUB_MODE` | `real` |
+| `GITHUB_TEST_REPO` | empty (GitHub scripts skipped) |
+| `GITHUB_WEBHOOK_SECRET` | empty (`webhooks.sh` skipped) |
+| `FAKE_GITHUB_URL`, `FAKE_GITLAB_URL`, `FAKE_BITBUCKET_URL` | `http://localhost:9090`, `:9091`, `:9092` (fake mode only) |
 | `STATE_FILE` | `backend/scripts/api/.env.test` |
 | `VERBOSE` | `0` |
 
 The full interface reference is in
 [docs/test-scripts.md](../../docs/test-scripts.md). It covers every
-`lib.sh` function, the globals, the state file, exit codes and the fake
-GitHub contract.
+`lib.sh` function, the globals, the state file and exit codes.
 
 ## Writing a new check
 

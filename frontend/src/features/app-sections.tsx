@@ -138,6 +138,13 @@ export function CredentialsForm({
 export function KeysSection({ appId }: { appId: string }) {
   const queryClient = useQueryClient()
   const [lastSecret, setLastSecret] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  async function copySecret() {
+    if (!lastSecret) return
+    await navigator.clipboard.writeText(lastSecret)
+    setCopied(true)
+  }
 
   const keys = useQuery({
     queryKey: ['apps', appId, 'keys'],
@@ -148,6 +155,7 @@ export function KeysSection({ appId }: { appId: string }) {
     mutationFn: () => api.post<AppKeyCreated>(`/apps/${appId}/keys`),
     onSuccess: (key) => {
       setLastSecret(key.secret)
+      setCopied(false)
       queryClient.invalidateQueries({ queryKey: ['apps', appId, 'keys'] })
     },
   })
@@ -162,9 +170,14 @@ export function KeysSection({ appId }: { appId: string }) {
 
       {lastSecret && (
         <McCard className="border-warning/30 bg-warning/10">
-          <p className="text-sm text-warning">
-            New key secret (shown once): <code className="font-mono">{lastSecret}</code>
-          </p>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-warning">
+              New key secret (shown once): <code className="font-mono break-all">{lastSecret}</code>
+            </p>
+            <McButton variant="secondary" size="sm" onClick={copySecret}>
+              {copied ? 'Copied' : 'Copy'}
+            </McButton>
+          </div>
         </McCard>
       )}
 
@@ -194,6 +207,11 @@ export function KeysSection({ appId }: { appId: string }) {
       <McButton onClick={() => createKey.mutate()} isLoading={createKey.isPending}>
         Create key
       </McButton>
+      {createKey.isError && (
+        <p className="text-sm text-destructive">
+          {createKey.error instanceof ApiError ? createKey.error.message : 'could not create key'}
+        </p>
+      )}
     </section>
   )
 }

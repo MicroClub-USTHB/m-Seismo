@@ -110,15 +110,14 @@ two owners from holding the same `(tracker, external_id)`. Return
 
 **8. Write a fake and test against it.**
 
-- Put the fake in an importable package (`internal/provider/<tracker>/fake<tracker>`)
-  so the unit tests run it in-process with `httptest`, and
-  `cmd/fake<tracker>` serves it in the dev stack.
+- Serve it from the provider's tests with `httptest`, as `gitlab_test.go`
+  does. The dev stack has no fake trackers.
 - Cover: the code exchange (good, bad, denied); the user lookup;
   pagination; issue creation, comments and state; token refresh with an
   already-expired token; a revoked grant; 429 short and long; a 5xx.
   `gitlab_test.go` is the model.
-- Then add a Dockerfile target, a compose service, and an API script that
-  sources `scripts/api/oauth_suite.sh` (see `gitlab.sh`).
+- `scripts/api/oauth_suite.sh` (see `gitlab.sh`) runs only against a fake
+  tracker, and skips itself when none is reachable.
 
 ---
 

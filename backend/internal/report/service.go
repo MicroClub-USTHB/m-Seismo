@@ -4,9 +4,15 @@
 package report
 
 import (
+	"archive/zip"
 	"context"
+	"errors"
+	"io"
+	"mime"
+	"path/filepath"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
@@ -18,6 +24,67 @@ type Service struct {
 
 func NewService(q db.Querier) *Service {
 	return &Service{q: q}
+}
+
+func (s *Service) Bundle(ctx context.Context, ownerID, appID, reportID uuid.UUID, w io.Writer) error {
+	if _, err := s.getApp(ctx, ownerID, appID); err != nil {
+		return err
+	}
+
+	rep, err := s.q.GetReportByReportID(ctx, db.GetReportByReportIDParams{AppID: appID, ReportID: reportID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apperr.NotFound("report not found")
+		}
+		return err
+	}
+
+	attachments, err := s.q.ListReportAttachmentsWithData(ctx, rep.ID)
+	if err != nil {
+		return err
+	}
+
+	zw := zip.NewWriter(w)
+
+	// 1. Write report.json
+	rw, err := zw.Create("report.json")
+	if err != nil {
+		return err
+	}
+	if _, err := rw.Write(rep.Payload); err != nil {
+		return err
+	}
+
+	// 2. Write attachments with extension resolution and path sanitization
+	for _, a := range attachments {
+		name := filepath.Base(a.Name)
+		if filepath.Ext(name) == "" {
+			switch a.ContentType {
+			case "image/png":
+				name += ".png"
+			case "image/jpeg":
+				name += ".jpg"
+			case "text/plain":
+				name += ".txt"
+			case "application/json":
+				name += ".json"
+			default:
+				if exts, _ := mime.ExtensionsByType(a.ContentType); len(exts) > 0 {
+					name += exts[0]
+				}
+			}
+		}
+
+		aw, err := zw.Create(name)
+		if err != nil {
+			return err
+		}
+		if _, err := aw.Write(a.Data); err != nil {
+			return err
+		}
+	}
+
+	return zw.Close()
 }
 
 // DeleteReport deletes one report and its attachments.

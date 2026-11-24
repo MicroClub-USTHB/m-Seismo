@@ -3,8 +3,7 @@
 `backend/scripts/api/` is an end-to-end test suite for the HTTP API, written
 in bash and curl. This page is its reference: how a script runs, what the
 shared library `lib.sh` provides (every function, with its inputs, outputs
-and side effects), the state file, the fake GitHub it relies on, and how to
-add tests.
+and side effects), the state file, the GitHub modes, and how to add tests.
 
 For a quick start, see [scripts/api/README.md](../scripts/api/README.md).
 
@@ -23,7 +22,6 @@ For a quick start, see [scripts/api/README.md](../scripts/api/README.md).
   - [Setup and fixtures](#setup-and-fixtures)
   - [GitHub](#github)
 - [The scripts](#the-scripts)
-- [The fake GitHub contract](#the-fake-github-contract)
 - [Exit codes](#exit-codes)
 - [Writing tests](#writing-tests)
 - [Troubleshooting](#troubleshooting)
@@ -55,8 +53,7 @@ flowchart LR
     gitlab & bitbucket -->|source| suite[oauth_suite.sh]
     lib <-->|read before every request / write on change| state[(.env.test)]
     lib -->|curl| api[backend :8080]
-    lib -->|curl| fakes[fake GitHub :9090 · GitLab :9091 · Bitbucket :9092]
-    api --> fakes
+    api --> trackers[GitHub · GitLab · Bitbucket]
 ```
 
 Design principles:
@@ -69,9 +66,9 @@ Design principles:
   scripts and runs, and re-verified each time. Apps created by a script get
   their own connection by attaching the saved one (no new install). Everything else is created fresh, with a unique
   `run` suffix, so runs never collide.
-- **Tests go through HTTP only.** Nothing reads the database directly. The
-  fake GitHub's inspection endpoints (`/_fake/...`) are the only way to look
-  behind the API.
+- **Tests go through HTTP only.** Nothing reads the database directly. In
+  fake mode, the fake tracker's inspection endpoints (`/_fake/...`) are the
+  only way to look behind the API.
 - **Failures don't stop a script.** Every assertion is counted, and the
   script continues so one run shows every problem. Only unrecoverable setup
   problems (`fatal`) stop it.
@@ -206,11 +203,11 @@ brackets.
 |---|---|---|
 | `API_URL` | `http://localhost:8080/api/v1` | base of every relative `http`/`api` path; trailing `/` removed |
 | `BASE_URL` | derived: `API_URL` minus `/api/v1` | `/healthz`; trimmed from logged request lines |
-| `FAKE_GITHUB_URL` | `http://localhost:9090` | `fake_issue_count`, `fake_stat` |
+| `GITHUB_MODE` | `real` | `real`: interactive connect to a real GitHub App, fake-only tests skipped. `fake`: automatic connect and fake-only tests, against a fake GitHub the repository no longer ships. |
+| `GITHUB_TEST_REPO` | empty (`octo-org/seismo-test` in fake mode) | repository linked as the default in `providers.sh` and `issues.sh`; both skip themselves when it is empty |
+| `FAKE_GITHUB_URL` | `http://localhost:9090` | fake mode: `fake_issue_count`, `fake_stat` |
 | `FAKE_GITLAB_URL` | `http://localhost:9091` | `fake_tracker_*` for `gitlab` |
 | `FAKE_BITBUCKET_URL` | `http://localhost:9092` | `fake_tracker_*` for `bitbucket` |
-| `GITHUB_MODE` | `fake` | `fake`: automatic connect and fake-only tests. `real`: interactive connect, fake-only tests skipped. |
-| `GITHUB_TEST_REPO` | `octo-org/seismo-test` | repository linked as the default in `providers.sh` and `issues.sh` |
 | `STATE_FILE` | `$LIB_DIR/.env.test` | where identity and token are kept |
 | `VERBOSE` | `0` | `1` prints every request, request body and the first 300 characters of the response |
 
@@ -256,7 +253,7 @@ brackets.
 Sends one request with curl and records the result.
 
 - `PATH` is appended to `API_URL` unless it starts with `http`, in which case
-  it is used as is (for `/healthz` and the fake GitHub).
+  it is used as is (for `/healthz` and a fake tracker).
 - `BODY`, if non-empty, is sent as `application/json` with `--data-binary`.
 - `TOKEN`, if non-empty, is sent as `Authorization: Bearer TOKEN`.
 - It always sends `Accept: application/json`, uses a 30 s timeout, and
@@ -366,12 +363,16 @@ For a condition that isn't a plain comparison, compute it first:
 | `attach_connection` | `attach_connection APP_ID CONNECTION_ID` | `POST /apps/{APP_ID}/connections {"connection_id":…}`: gives the app its own connection to the same installation, with no OAuth. Sets `CREATED_ID` to the app's connection; `fail` on a non-201. |
 | `fake_issue_count` | `fake_issue_count TITLE` | prints how many issues on the fake GitHub have that exact title. Use it in `$( … )`. |
 | `fake_stat` | `fake_stat NAME` | prints a counter from `/_fake/stats`: `secondary_limited`, `primary_limited` or `issues`. Use it in `$( … )`. |
+| `require_github_repo` | `require_github_repo` | returns 0 when `GITHUB_TEST_REPO` is set; otherwise records a skip and returns 1. Scripts that need GitHub start with `require_github_repo \|\| { summary; exit 0; }`. |
 | `require_fake` | `require_fake DESC` | returns 0 in fake mode; otherwise records `SKIP DESC` and returns 1. Use as `if require_fake "…"; then … fi`. |
 
 ### GitLab and Bitbucket
 
-These drive the OAuth connect flow against the fake GitLab and Bitbucket.
-The callback is called directly, the way the tracker's redirect would.
+These drive the OAuth connect flow against a fake GitLab and Bitbucket.
+The callback is called directly, the way the tracker's redirect would. The
+repository no longer ships those fakes, so `gitlab.sh` and `bitbucket.sh`
+skip themselves unless one is reachable at `FAKE_GITLAB_URL` /
+`FAKE_BITBUCKET_URL`.
 
 | Function | Signature | Behaviour |
 |---|---|---|
@@ -426,69 +427,6 @@ Check counts are from a full fake-mode run.
 
 ---
 
-## The fake GitHub contract
-
-`backend/cmd/fakegithub` (`:9090` in the dev stack) implements exactly what
-the backend's GitHub provider calls, plus inspection endpoints.
-
-| Endpoint | Auth expected | Behaviour |
-|---|---|---|
-| `GET /healthz` | — | `{"status":"ok"}` |
-| `GET /apps/{slug}/installations/new?state=` | — | plain-text page explaining how to finish by hand |
-| `POST /login/oauth/access_token` | form `client_secret=fake-secret` | `code=fake-code-N` → `{"access_token":"fake-user-token-N"}`; anything else → `{"error":"bad_verification_code"}` |
-| `GET /user/installations` | `Bearer fake-user-token-N` | exactly installation `N`: on `octo-org` (Organization), or on `other-org` when `N ≥ 100000000` |
-| `POST /app/installations/{N}/access_tokens` | an App JWT (`Bearer ey…`, signature not checked) | `{"token":"fake-installation-token-N","expires_at":…}` |
-| `GET /installation/repositories` | installation token | the fixture repositories of the installation's account (five on `octo-org`, `other-org/tools` on `other-org`) |
-| `GET /repos/{o}/{r}` | installation token | 200 for fixtures **on the installation's account**, 404 otherwise, as on GitHub. The same rule applies to the milestone, issue and comment endpoints. |
-| `GET /repos/{o}/{r}/milestones` | installation token | `[{"number":1,"title":"v1.0"}]` |
-| `POST /repos/{o}/{r}/issues` | installation token | stores and returns the issue; see special repositories below |
-| `GET /repos/{o}/{r}/issues/{n}`, `POST …/comments` | installation token | read / comment |
-| `GET /_fake/issues` · `DELETE /_fake/issues` | — | every stored issue (`repository, number, title, body, labels, assignees, milestone, state, comments, html_url`) · clear them |
-| `GET /_fake/stats` | — | `{"secondary_limited":n,"primary_limited":n,"issues":n}` |
-
-Special repositories:
-
-| Repository | Issue creation |
-|---|---|
-| `octo-org/seismo-test`, `octo-org/another` | works |
-| `octo-org/broken` | always `500` (a GitHub outage) |
-| `octo-org/slow-down` | first attempt for each title: `403` secondary limit with `Retry-After: 1`; then works |
-| `octo-org/exhausted` | always `403` with `X-RateLimit-Remaining: 0` and a reset in one hour |
-| `other-org/tools` | works, but only for installations on `other-org` |
-
-Every installation-authenticated response carries `X-RateLimit-Limit: 5000`,
-`X-RateLimit-Remaining` (counted per token), `X-RateLimit-Used`,
-`X-RateLimit-Reset` (the next full hour) and `X-RateLimit-Resource: core`.
-Issues and counters are kept in memory and reset when the container restarts.
-
----
-
-## The fake GitLab and Bitbucket contracts
-
-`internal/provider/gitlab/fakegitlab` (`:9091`) and
-`internal/provider/bitbucket/fakebitbucket` (`:9092`) are importable
-packages. The provider unit tests run them in-process, and
-`cmd/fakegitlab` and `cmd/fakebitbucket` serve them in the dev stack. The
-full fixture lists are in
-[gitlab-bitbucket.md → The fakes](gitlab-bitbucket.md#the-fakes). What the
-scripts rely on:
-
-| | Fake GitLab | Fake Bitbucket |
-|---|---|---|
-| Authorize page | `GET /oauth/authorize` (text) | `GET /site/oauth2/authorize` (text) |
-| Token endpoint | `POST /oauth/token`, client in the form body | `POST /site/oauth2/access_token`, client with HTTP Basic |
-| Codes | `fake-code-N` (2 h), `fake-code-N-short` (1 s); anything else → `400 invalid_grant` | same |
-| Grants | each exchange is a grant with its own tokens; refresh rotates both tokens; an old refresh token → `invalid_grant` | each exchange is a grant; refresh replaces the access token, the refresh token stays |
-| API | `/api/v4/user`, `/users?username=`, `/projects` (`X-Next-Page`), `/projects/{id or encoded path}`, `…/milestones`, `…/issues`, `…/issues/{iid}`, `…/notes` | `/2.0/user`, `/2.0/repositories` (`next` link), `/2.0/repositories/{ws}/{slug}`, `…/milestones`, `…/issues`, `…/issues/{id}`, `…/comments` |
-| Rejected token | `401 {"message":"401 Unauthorized"}` | `401 {"type":"error","error":{"message":…}}` |
-| Special repositories | `seismo-group/broken` (500), `/limited` (429 once per title, `Retry-After: 1`), `/exhausted` (429, `Retry-After: 3600`), `/sub/nested` | `seismo-ws/broken`, `/limited`, `/exhausted`, `/no-issues` (404 "Repository has no issue tracker.") |
-| Issue author | `author_id` = N | `reporter` = `{0000000N-0000-4000-8000-000000000000}` |
-| Inspection | `GET`/`DELETE /_fake/issues`, `GET /_fake/stats` (`exchanges`, `refreshes`, `rate_limited`, `issues`), `POST /_fake/revoke?user=N` | same |
-
-Everything is in memory and resets when the container restarts.
-
----
-
 ## Exit codes
 
 | Code | Meaning |
@@ -540,8 +478,7 @@ Guidelines:
 - **Name checks by what must be true** (`"duplicate slug is a conflict"`),
   not by the request. The request is printed on failure anyway.
 - **Make data unique per run** with `$run`: titles, names, slugs, bodies.
-  The fake GitHub keeps issues across runs, so count by a unique title or
-  body.
+  Trackers keep issues across runs, so count by a unique title or body.
 - **Don't call `http`/`api` inside `$( … )`** unless you only need what it
   prints.
 - **Guard fake-only behaviour** with `if require_fake "…"; then … fi`, so
@@ -561,7 +498,8 @@ Guidelines:
 | `FATAL backend not reachable …` | Start the stack: `make dev-up`. Or point `API_URL` at your server. |
 | `FATAL need jq or python3` | Install `jq`, or make `python3` / `python` available on `PATH`. |
 | `$'\r': command not found` | The scripts were checked out with CRLF. The repository's `.gitattributes` forces LF for `*.sh`; run `git add --renormalize .`, or re-clone. |
-| `connect GitHub installation … to app …` fails | The backend is not using the fake (check `SEISMO_GITHUB_*` in `deploy/.env`), or `fakegithub` is down. With `reason=…already+connected+by+another+owner`, the installation ID is already held by another owner: use a fresh one (`fake_install_id`). |
+| `SKIP GitHub checks (set GITHUB_TEST_REPO …)` | Expected without a GitHub App. Configure the App in `deploy/.env` and set `GITHUB_TEST_REPO=owner/name` to run `providers.sh` and `issues.sh`. |
+| `waited 5 minutes for the GitHub App install` | The install URL was not opened, or the App was installed on an account that doesn't own `GITHUB_TEST_REPO`. Check the App's Callback URL points at this backend. |
 | `no github connection on this app covers …` in your own experiments | The app has no connection on that repository's account. Connect it (`GET /apps/{id}/connect/github`) or attach one (`POST /apps/{id}/connections`); `GET /apps/{id}/targets` shows the result. |
 | Many failures right after `make dev-reset` | Expected once: the saved owner no longer exists, so a new one is registered. Or run `all.sh --fresh`. |
 | `429 too many test issues` in your own experiments | The per-app throttle (default 10/min). Wait for `Retry-After`, or raise `SEISMO_LIMITS_TEST_ISSUES_PER_MINUTE` in `deploy/.env`. |

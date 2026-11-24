@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run unit, HTTP and persistence tests using disposable local services.
 
-Requires Python 3, Docker, Go (go.mod version), and Node 20+. Uses fake GitHub
-and a local TLS Sentry stub; no external vendor credentials are required.
+Requires Python 3, Docker, Go (go.mod version), and Node 20+. Uses a local TLS
+Sentry stub; no external vendor credentials are required.
 """
 
 import argparse
@@ -80,7 +80,7 @@ def main():
     # their running database. All endpoints below are allocated for this run.
     env = {
         key: value for key, value in os.environ.items()
-        if not key.startswith(("SEISMO_", "FAKEGITHUB_"))
+        if not key.startswith("SEISMO_")
     }
     prefix = "m-seismo-test-" + uuid.uuid4().hex[:10]
     containers, processes, logs = [], [], []
@@ -153,9 +153,8 @@ def main():
             run([args.go, "vet", "-tags", "integration", "./..."], env=env)
             run(["node", "--test"], env=env, cwd=ROOT / "sdks/web-sentry")
 
-            print("Running existing HTTP API regression scripts against fake GitHub", flush=True)
+            print("Running the HTTP API regression scripts that need no tracker", flush=True)
             run([args.go, "build", "-o", str(temporary / "seismo"), "."], env=env)
-            run([args.go, "build", "-o", str(temporary / "fakegithub"), "./cmd/fakegithub"], env=env)
 
             def start_process(name, command, process_env):
                 log = temporary / (name + ".log")
@@ -163,16 +162,8 @@ def main():
                 with log.open("w") as output:
                     processes.append(subprocess.Popen(command, cwd=BACKEND, env=process_env, stdout=output, stderr=subprocess.STDOUT))
 
-            github_port, backend_port = free_port(), free_port()
-            while backend_port == github_port:
-                backend_port = free_port()
-            github_url, backend_url = f"http://127.0.0.1:{github_port}", f"http://127.0.0.1:{backend_port}"
-            key = temporary / "github.pem"
-            start_process("fakegithub", [str(temporary / "fakegithub")], {
-                **env, "FAKEGITHUB_ADDR": f"127.0.0.1:{github_port}",
-                "FAKEGITHUB_PUBLIC_URL": github_url, "FAKEGITHUB_KEY_PATH": str(key),
-            })
-            wait_until(lambda: healthy(github_url + "/healthz"), "fake GitHub")
+            backend_port = free_port()
+            backend_url = f"http://127.0.0.1:{backend_port}"
             start_process("backend", [str(temporary / "seismo")], {
                 **env, "SEISMO_ENV": "development", "SEISMO_AUTH_JWT_SECRET": "integration-only-jwt-secret",
                 "SEISMO_DATABASE_URL": env["SEISMO_TEST_DATABASE_URL"],
@@ -180,17 +171,14 @@ def main():
                 "SEISMO_SERVER_HOST": "127.0.0.1", "SEISMO_SERVER_PORT": str(backend_port),
                 "SEISMO_SERVER_PUBLIC_URL": backend_url,
                 "SEISMO_CRASH_PROVIDERS_ENCRYPTION_KEY": base64.b64encode(os.urandom(32)).decode(),
-                "SEISMO_GITHUB_APP_ID": "1", "SEISMO_GITHUB_APP_SLUG": "m-seismo-dev",
-                "SEISMO_GITHUB_CLIENT_ID": "fake-client", "SEISMO_GITHUB_CLIENT_SECRET": "fake-secret",
-                "SEISMO_GITHUB_PRIVATE_KEY_PATH": str(key),
-                "SEISMO_GITHUB_API_URL": github_url + "/", "SEISMO_GITHUB_WEB_URL": github_url + "/",
             })
             wait_until(lambda: healthy(backend_url + "/healthz"), "backend")
-            run(["bash", str(BACKEND / "scripts/api/all.sh"), "--fresh"], env={
-                **env, "API_URL": backend_url + "/api/v1", "FAKE_GITHUB_URL": github_url,
-                "GITHUB_MODE": "fake", "GITHUB_TEST_REPO": "octo-org/seismo-test",
-                "STATE_FILE": str(temporary / "api-state.env"), "VERBOSE": "0",
-            })
+            # The GitHub, GitLab and Bitbucket scripts need a real tracker.
+            for script in ("auth", "owners", "projects", "apps", "routing"):
+                run(["bash", str(BACKEND / "scripts/api" / (script + ".sh"))], env={
+                    **env, "API_URL": backend_url + "/api/v1",
+                    "STATE_FILE": str(temporary / "api-state.env"), "VERBOSE": "0",
+                })
             print("All Go, web, persistence, Sentry HTTP and API regression tests passed", flush=True)
         except BaseException:
             for log in logs:

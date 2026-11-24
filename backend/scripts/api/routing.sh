@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Routing rules: CRUD, order, validation, the repository guards and owner
 # isolation. No tracker is called: rules only pick among a project's
-# repositories.
+# repositories. They are GitLab repositories because GitLab is always
+# available, so the script runs without a GitHub App.
 #
 #   backend/scripts/api/routing.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -13,15 +14,15 @@ run=$(rand)
 section "setup: project with two repositories, an app"
 create_project "Routing $run"
 project_id=$CREATED_ID
-link_repo "$project_id" "octo-org/triage-$run" true
+link_repo "$project_id" "seismo-group/triage-$run" true gitlab
 default_repo=$CREATED_ID
-link_repo "$project_id" "octo-org/mobile-$run" false
+link_repo "$project_id" "seismo-group/mobile-$run" false gitlab
 mobile_repo=$CREATED_ID
 create_app "Routing App $run"
 app_id=$CREATED_ID
 create_project "Routing Other $run"
 other_project=$CREATED_ID
-link_repo "$other_project" "octo-org/elsewhere-$run" true
+link_repo "$other_project" "seismo-group/elsewhere-$run" true gitlab
 foreign_repo=$CREATED_ID
 
 rules="/projects/$project_id/routing-rules"
@@ -111,7 +112,7 @@ http DELETE "$rules/$crash_rule" "" "$NEW_TOKEN"
 expect_status 404 "another owner cannot delete one"
 http POST /projects "{\"name\":\"Theirs $run\"}" "$NEW_TOKEN"
 their_project=$(jget .id)
-http POST "/projects/$their_project/repositories" "{\"tracker\":\"github\",\"repository\":\"them/repo-$run\"}" "$NEW_TOKEN"
+http POST "/projects/$their_project/repositories" "{\"tracker\":\"gitlab\",\"repository\":\"them/repo-$run\"}" "$NEW_TOKEN"
 their_repo=$(jget .id)
 http POST "/projects/$their_project/routing-rules" "{\"app_id\":\"$app_id\",\"repository_id\":\"$their_repo\"}" "$NEW_TOKEN"
 expect_status 404 "another owner cannot write a rule for our app"
