@@ -47,7 +47,7 @@ func renderOccurrence(r *ingest.Report, info reportInfo, n occurrences) string {
 		fmt.Fprintf(&b, "**%s**: %s\n\n", text(c.Type), text(c.Reason))
 	}
 	b.WriteString(stepsSection(r))
-	b.WriteString(environmentSection(r))
+	b.WriteString(environmentSection(r, info))
 	renderServerLogs(&b, info.ServerLogs)
 	renderHealth(&b, info.Health)
 	if info.ScreenshotURL != "" {

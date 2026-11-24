@@ -11,6 +11,8 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/observability"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/release"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
 )
 
@@ -23,8 +25,15 @@ var Module = fx.Module("worker",
 		func(s *crashprovider.Service) CrashResolver { return s },
 		func(s *attachment.Service) AttachmentLinker { return s },
 		func(c *coordinator.Client) ServiceHealth { return c },
-		func(q Queries, is Issues, r *routing.Router, l Locks, c *coordinator.Client, cr CrashResolver, cfg *config.Config, links AttachmentLinker, health ServiceHealth) *Processor {
-			return NewProcessor(q, is, r, l, c, cfg.Coordinator.Window, cr, links, health)
+		func(q db.Querier) TrackerLookup { return q },
+		func(s *observability.Service) ObservabilityConfig { return s },
+		func(c *release.Correlator) ReleaseCorrelator { return c },
+		func(q Queries, is Issues, r *routing.Router, l Locks, c *coordinator.Client, cr CrashResolver, cfg *config.Config, links AttachmentLinker, health ServiceHealth, trackers TrackerLookup, obs ObservabilityConfig, rel ReleaseCorrelator) *Processor {
+			return NewProcessor(q, is, r, l, c, cfg.Coordinator.Window, cr, links, health,
+				WithTrackerLookup(trackers),
+				WithObservability(obs),
+				WithReleaseCorrelator(rel),
+			)
 		},
 	),
 	fx.Invoke(register),
