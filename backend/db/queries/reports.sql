@@ -53,6 +53,25 @@ FROM report_deliveries d
 JOIN project_repositories pr ON pr.id = d.project_repository_id
 WHERE d.report_id = $1;
 
+-- name: GetIssueOccurrences :one
+-- How often an issue's bug was seen: the reports delivered to it plus
+-- report_id, the one being delivered now.
+WITH grouped AS (
+    SELECT d.report_id FROM report_deliveries d WHERE d.issue_id = sqlc.arg(issue_id)::uuid
+    UNION
+    SELECT sqlc.arg(report_id)::uuid
+)
+SELECT
+    count(*)::int AS occurrences,
+    count(DISTINCT r.installation_id)::int AS installations,
+    coalesce(
+        array_agg(DISTINCT r.payload -> 'release' ->> 'version')
+            FILTER (WHERE r.payload -> 'release' ->> 'version' IS NOT NULL),
+        '{}'
+    )::text[] AS versions
+FROM grouped g
+JOIN reports r ON r.id = g.report_id;
+
 -- name: DeleteReportByReportID :execrows
 -- Attachments cascade; report_deliveries and the issues they point to are
 -- left as they are.
