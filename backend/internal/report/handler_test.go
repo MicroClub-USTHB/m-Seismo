@@ -123,12 +123,13 @@ func TestHandlerListReports(t *testing.T) {
 	intID2 := uuid.New()
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	proc1 := now.Add(-1 * time.Minute)
+	err2 := "github returned 502"
 
 	q := &fakeQuerier{
 		app: db.App{ID: appID, OwnerID: owner},
 		reports: map[uuid.UUID]db.Report{
 			repID1: {ID: intID1, AppID: appID, ReportID: repID1, OccurredAt: now.Add(-1 * time.Minute), ProcessedAt: &proc1, Trigger: "shake"},
-			repID2: {ID: intID2, AppID: appID, ReportID: repID2, OccurredAt: now.Add(-2 * time.Minute), ProcessedAt: nil, Trigger: "manual"},
+			repID2: {ID: intID2, AppID: appID, ReportID: repID2, OccurredAt: now.Add(-2 * time.Minute), DeliveryError: &err2, Trigger: "manual"},
 		},
 		deliveries: map[uuid.UUID][]db.ReportDelivery{
 			intID1: {
@@ -191,6 +192,40 @@ func TestHandlerListReports(t *testing.T) {
 		}
 		if len(res.Reports) != 1 || res.Reports[0].ReportID != repID1 {
 			t.Fatalf("expected 1 delivered report, got %+v", res.Reports)
+		}
+	})
+
+	t.Run("filter by status failed", func(t *testing.T) {
+		url := fmt.Sprintf("/api/v1/apps/%s/reports?status=failed", appID)
+		req := httptest.NewRequest(http.MethodGet, url, nil)
+		req.Header.Set("Authorization", "Bearer valid-token")
+
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var res ListReportsResult
+		if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if len(res.Reports) != 1 || res.Reports[0].ReportID != repID2 || res.Reports[0].DeliveryError == nil || *res.Reports[0].DeliveryError != err2 {
+			t.Fatalf("expected 1 failed report with error, got %+v", res.Reports)
+		}
+	})
+
+	t.Run("invalid cursor returns 422", func(t *testing.T) {
+		url := fmt.Sprintf("/api/v1/apps/%s/reports?cursor=bad-cursor", appID)
+		req := httptest.NewRequest(http.MethodGet, url, nil)
+		req.Header.Set("Authorization", "Bearer valid-token")
+
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422 Unprocessable Entity, got %d", rec.Code)
 		}
 	})
 
@@ -282,6 +317,15 @@ func TestHandlerGetReport(t *testing.T) {
 		}
 		if len(detail.Deliveries) != 1 || detail.Deliveries[0].URL != issueURL {
 			t.Errorf("unexpected deliveries: %+v", detail.Deliveries)
+		}
+		// Verify payload is serialized as raw JSON object, not a base64 string.
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+			t.Fatalf("decode raw body: %v", err)
+		}
+		var parsedPayload map[string]any
+		if err := json.Unmarshal(raw["payload"], &parsedPayload); err != nil {
+			t.Fatalf("payload should be a JSON object, got %s (%v)", raw["payload"], err)
 		}
 	})
 

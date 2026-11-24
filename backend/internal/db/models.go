@@ -279,6 +279,7 @@ type Report struct {
 	QueuedAt       *time.Time `json:"queued_at"`
 	Payload        []byte     `json:"payload"`
 	ProcessedAt    *time.Time `json:"processed_at"`
+	DeliveryError  *string    `json:"delivery_error"`
 }
 
 type ReportAttachment struct {

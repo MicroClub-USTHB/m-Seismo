@@ -6,10 +6,13 @@ package report
 import (
 	"archive/zip"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +22,11 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/queue"
+)
+
+const (
+	defaultListLimit = 50
+	maxListLimit     = 100
 )
 
 type Service struct {
@@ -32,13 +40,13 @@ func NewService(q db.Querier, pub queue.Publisher) *Service {
 
 type ListReportsParams struct {
 	Status string
-	Cursor *time.Time
+	Cursor string
 	Limit  int32
 }
 
 type ListReportsResult struct {
 	Reports    []ReportSummary `json:"reports"`
-	NextCursor *time.Time      `json:"next_cursor,omitempty"`
+	NextCursor *string         `json:"next_cursor,omitempty"`
 }
 
 type ReportSummary struct {
@@ -48,6 +56,7 @@ type ReportSummary struct {
 	Trigger        string    `json:"trigger"`
 	OccurredAt     time.Time `json:"occurred_at"`
 	Status         string    `json:"status"`
+	DeliveryError  *string   `json:"delivery_error,omitempty"`
 	IssueURLs      []string  `json:"issue_urls"`
 }
 
@@ -62,7 +71,8 @@ type ReportDetail struct {
 	ReceivedAt     time.Time        `json:"received_at"`
 	ProcessedAt    *time.Time       `json:"processed_at,omitempty"`
 	Status         string           `json:"status"`
-	Payload        []byte           `json:"payload"`
+	DeliveryError  *string          `json:"delivery_error,omitempty"`
+	Payload        json.RawMessage  `json:"payload"`
 	Deliveries     []ReportDelivery `json:"deliveries"`
 }
 
@@ -77,71 +87,68 @@ func (s *Service) ListReports(ctx context.Context, ownerID, appID uuid.UUID, p L
 		return ListReportsResult{}, err
 	}
 
-	var isProcessed *bool
+	var statusFilter *string
 	switch p.Status {
-	case "delivered":
-		t := true
-		isProcessed = &t
-	case "failed":
-		f := false
-		isProcessed = &f
+	case "":
+	case "delivered", "failed", "queued":
+		v := p.Status
+		statusFilter = &v
 	default:
-		isProcessed = nil
+		return ListReportsResult{}, apperr.Invalid("invalid status: must be delivered, failed, or queued")
 	}
 
-	var cursor pgtype.Timestamptz
-	if p.Cursor != nil {
-		cursor = pgtype.Timestamptz{Time: *p.Cursor, Valid: true}
+	cursorTime, cursorID, err := parseCursor(p.Cursor)
+	if err != nil {
+		return ListReportsResult{}, err
 	}
 
 	limit := p.Limit
 	if limit <= 0 {
-		limit = 50
+		limit = defaultListLimit
+	}
+	if limit > maxListLimit {
+		limit = maxListLimit
 	}
 
 	rows, err := s.q.ListReports(ctx, db.ListReportsParams{
-		AppID:       appID,
-		Cursor:      cursor,
-		IsProcessed: isProcessed,
-		Limit:       limit + 1,
+		AppID:      appID,
+		CursorTime: cursorTime,
+		CursorID:   cursorID,
+		Status:     statusFilter,
+		Limit:      limit + 1,
 	})
 	if err != nil {
 		return ListReportsResult{}, err
 	}
 
-	var nextCursor *time.Time
+	var nextCursor *string
 	if len(rows) > int(limit) {
-		nextCursor = &rows[limit-1].OccurredAt
 		rows = rows[:limit]
+		last := rows[len(rows)-1]
+		c := formatCursor(last.OccurredAt, last.ID)
+		nextCursor = &c
+	}
+
+	urlsByReport, err := s.batchIssueURLs(ctx, rows)
+	if err != nil {
+		return ListReportsResult{}, err
 	}
 
 	reports := make([]ReportSummary, len(rows))
 	for i, r := range rows {
-		status := "failed"
-		if r.ProcessedAt != nil {
-			status = "delivered"
+		urls := urlsByReport[r.ID]
+		if urls == nil {
+			urls = []string{}
 		}
-
-		deliveries, err := s.q.ListReportDeliveries(ctx, r.ID)
-		if err != nil {
-			return ListReportsResult{}, err
-		}
-
-		issueURLs := make([]string, 0, len(deliveries))
-		for _, d := range deliveries {
-			if d.Url != "" {
-				issueURLs = append(issueURLs, d.Url)
-			}
-		}
-
 		reports[i] = ReportSummary{
 			ReportID:       r.ReportID,
 			InstallationID: r.InstallationID,
 			SessionID:      r.SessionID,
 			Trigger:        r.Trigger,
 			OccurredAt:     r.OccurredAt,
-			Status:         status,
-			IssueURLs:      issueURLs,
+			Status:         reportStatus(r.ProcessedAt, r.DeliveryError),
+			DeliveryError:  r.DeliveryError,
+			IssueURLs:      urls,
 		}
 	}
 
@@ -149,6 +156,27 @@ func (s *Service) ListReports(ctx context.Context, ownerID, appID uuid.UUID, p L
 		Reports:    reports,
 		NextCursor: nextCursor,
 	}, nil
+}
+
+func (s *Service) batchIssueURLs(ctx context.Context, rows []db.Report) (map[uuid.UUID][]string, error) {
+	urlsByReport := make(map[uuid.UUID][]string, len(rows))
+	if len(rows) == 0 {
+		return urlsByReport, nil
+	}
+	ids := make([]uuid.UUID, len(rows))
+	for i, r := range rows {
+		ids[i] = r.ID
+	}
+	deliveries, err := s.q.ListReportDeliveriesByReportIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range deliveries {
+		if d.Url != "" {
+			urlsByReport[d.ReportID] = append(urlsByReport[d.ReportID], d.Url)
+		}
+	}
+	return urlsByReport, nil
 }
 
 func (s *Service) GetReport(ctx context.Context, ownerID, appID, reportID uuid.UUID) (ReportDetail, error) {
@@ -181,9 +209,9 @@ func (s *Service) GetReport(ctx context.Context, ownerID, appID, reportID uuid.U
 		}
 	}
 
-	status := "failed"
-	if rep.ProcessedAt != nil {
-		status = "delivered"
+	payload := json.RawMessage(rep.Payload)
+	if len(payload) == 0 {
+		payload = json.RawMessage("null")
 	}
 
 	return ReportDetail{
@@ -196,8 +224,9 @@ func (s *Service) GetReport(ctx context.Context, ownerID, appID, reportID uuid.U
 		OccurredAt:     rep.OccurredAt,
 		ReceivedAt:     rep.ReceivedAt,
 		ProcessedAt:    rep.ProcessedAt,
-		Status:         status,
-		Payload:        rep.Payload,
+		Status:         reportStatus(rep.ProcessedAt, rep.DeliveryError),
+		DeliveryError:  rep.DeliveryError,
+		Payload:        payload,
 		Deliveries:     delList,
 	}, nil
 }
@@ -218,6 +247,10 @@ func (s *Service) RetryReport(ctx context.Context, ownerID, appID, reportID uuid
 		return err
 	}
 
+	if err := s.q.ClearReportFailure(ctx, rep.ID); err != nil {
+		return err
+	}
+
 	if s.pub != nil {
 		if err := s.pub.ReportAccepted(ctx, queue.ReportAccepted{
 			ID:    rep.ID,
@@ -228,6 +261,49 @@ func (s *Service) RetryReport(ctx context.Context, ownerID, appID, reportID uuid
 	}
 
 	return nil
+}
+
+func reportStatus(processedAt *time.Time, deliveryError *string) string {
+	if processedAt != nil {
+		return "delivered"
+	}
+	if deliveryError != nil {
+		return "failed"
+	}
+	return "queued"
+}
+
+func formatCursor(occurredAt time.Time, id uuid.UUID) string {
+	return fmt.Sprintf("%s_%s", occurredAt.UTC().Format(time.RFC3339Nano), id)
+}
+
+// parseCursor accepts a composite "<timestamp>_<uuid>" keyset cursor or a bare
+// RFC3339 timestamp (used by date-bounded filters such as "on or before").
+func parseCursor(raw string) (pgtype.Timestamptz, *uuid.UUID, error) {
+	if raw == "" {
+		return pgtype.Timestamptz{}, nil, nil
+	}
+	tsPart, idPart, hasID := strings.Cut(raw, "_")
+	t, err := parseTimestamp(tsPart)
+	if err != nil {
+		return pgtype.Timestamptz{}, nil, apperr.Invalid("invalid cursor format")
+	}
+	ts := pgtype.Timestamptz{Time: t, Valid: true}
+	if !hasID {
+		return ts, nil, nil
+	}
+	id, err := uuid.Parse(idPart)
+	if err != nil {
+		return pgtype.Timestamptz{}, nil, apperr.Invalid("invalid cursor format")
+	}
+	return ts, &id, nil
+}
+
+func parseTimestamp(s string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC3339, s)
 }
 
 func (s *Service) Bundle(ctx context.Context, ownerID, appID, reportID uuid.UUID, w io.Writer) error {

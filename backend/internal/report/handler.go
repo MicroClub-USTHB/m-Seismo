@@ -5,12 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
 )
 
@@ -43,20 +41,6 @@ func (h *Handler) listReports(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
-	status := q.Get("status")
-
-	var cursor *time.Time
-	if cursorStr := q.Get("cursor"); cursorStr != "" {
-		if t, err := time.Parse(time.RFC3339Nano, cursorStr); err == nil {
-			cursor = &t
-		} else if t, err := time.Parse(time.RFC3339, cursorStr); err == nil {
-			cursor = &t
-		} else {
-			httpx.Error(w, r, apperr.Invalid("invalid cursor timestamp format"))
-			return
-		}
-	}
-
 	limit := int32(20)
 	if limitStr := q.Get("limit"); limitStr != "" {
 		if n, err := strconv.ParseInt(limitStr, 10, 32); err == nil && n > 0 {
@@ -65,8 +49,8 @@ func (h *Handler) listReports(w http.ResponseWriter, r *http.Request) {
 	}
 
 	params := ListReportsParams{
-		Status: status,
-		Cursor: cursor,
+		Status: q.Get("status"),
+		Cursor: q.Get("cursor"),
 		Limit:  limit,
 	}
 

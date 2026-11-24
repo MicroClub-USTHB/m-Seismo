@@ -36,6 +36,8 @@ type fakeQuerier struct {
 	reports        map[uuid.UUID]db.Report
 	attachments    map[uuid.UUID][]db.ListReportAttachmentsWithDataRow
 	deliveries     map[uuid.UUID][]db.ReportDelivery
+	singleDelCalls int
+	batchDelCalls  int
 }
 
 func (f *fakeQuerier) GetApp(_ context.Context, arg db.GetAppParams) (db.App, error) {
@@ -64,21 +66,30 @@ func (f *fakeQuerier) ListReportAttachmentsWithData(_ context.Context, reportID 
 }
 
 func (f *fakeQuerier) ListReportDeliveries(_ context.Context, reportID uuid.UUID) ([]db.ReportDelivery, error) {
+	f.singleDelCalls++
 	if f.deliveries == nil {
 		return nil, nil
 	}
 	return f.deliveries[reportID], nil
 }
 
-func (f *fakeQuerier) ListReportDeliveriesByReportID(_ context.Context, arg db.ListReportDeliveriesByReportIDParams) ([]db.ReportDelivery, error) {
-	if arg.AppID != f.app.ID {
-		return nil, nil
+func (f *fakeQuerier) ListReportDeliveriesByReportIDs(_ context.Context, reportIDs []uuid.UUID) ([]db.ReportDelivery, error) {
+	f.batchDelCalls++
+	var out []db.ReportDelivery
+	for _, id := range reportIDs {
+		out = append(out, f.deliveries[id]...)
 	}
-	r, ok := f.reports[arg.ReportID]
-	if !ok {
-		return nil, nil
+	return out, nil
+}
+
+func (f *fakeQuerier) ClearReportFailure(_ context.Context, id uuid.UUID) error {
+	for k, r := range f.reports {
+		if r.ID == id && r.ProcessedAt == nil {
+			r.DeliveryError = nil
+			f.reports[k] = r
+		}
 	}
-	return f.deliveries[r.ID], nil
+	return nil
 }
 
 func (f *fakeQuerier) ListReports(_ context.Context, arg db.ListReportsParams) ([]db.Report, error) {
@@ -90,23 +101,43 @@ func (f *fakeQuerier) ListReports(_ context.Context, arg db.ListReportsParams) (
 		if r.AppID != arg.AppID {
 			continue
 		}
-		if arg.Cursor.Valid && !r.OccurredAt.Before(arg.Cursor.Time) {
-			continue
-		}
-		if arg.IsProcessed != nil {
-			if *arg.IsProcessed && r.ProcessedAt == nil {
-				continue
+		if arg.CursorTime.Valid {
+			if arg.CursorID == nil {
+				if !r.OccurredAt.Before(arg.CursorTime.Time) {
+					continue
+				}
+			} else {
+				if r.OccurredAt.After(arg.CursorTime.Time) {
+					continue
+				}
+				if r.OccurredAt.Equal(arg.CursorTime.Time) && bytes.Compare(r.ID[:], arg.CursorID[:]) >= 0 {
+					continue
+				}
 			}
-			if !*arg.IsProcessed && r.ProcessedAt != nil {
-				continue
+		}
+		if arg.Status != nil {
+			switch *arg.Status {
+			case "delivered":
+				if r.ProcessedAt == nil {
+					continue
+				}
+			case "failed":
+				if r.ProcessedAt != nil || r.DeliveryError == nil {
+					continue
+				}
+			case "queued":
+				if r.ProcessedAt != nil || r.DeliveryError != nil {
+					continue
+				}
 			}
 		}
 		res = append(res, r)
 	}
-	// Sort by OccurredAt descending
+	// Sort by OccurredAt descending, ID descending
 	for i := 0; i < len(res)-1; i++ {
 		for j := i + 1; j < len(res); j++ {
-			if res[j].OccurredAt.After(res[i].OccurredAt) {
+			if res[j].OccurredAt.After(res[i].OccurredAt) ||
+				(res[j].OccurredAt.Equal(res[i].OccurredAt) && bytes.Compare(res[j].ID[:], res[i].ID[:]) > 0) {
 				res[i], res[j] = res[j], res[i]
 			}
 		}
@@ -391,27 +422,30 @@ func TestListReports(t *testing.T) {
 	repID4 := uuid.New()
 	repID5 := uuid.New()
 
-	intID1 := uuid.New()
-	intID2 := uuid.New()
-	intID3 := uuid.New()
-	intID4 := uuid.New()
-	intID5 := uuid.New()
+	// Ordered UUIDs so tie-breaking on identical OccurredAt is predictable.
+	intID1 := uuid.MustParse("00000000-0000-0000-0000-000000000005")
+	intID2 := uuid.MustParse("00000000-0000-0000-0000-000000000004")
+	intID3 := uuid.MustParse("00000000-0000-0000-0000-000000000003")
+	intID4 := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	intID5 := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 
 	proc1 := now.Add(-30 * time.Second)
 	proc3 := now.Add(-90 * time.Second)
+	err2 := "github returned 502"
+	err4 := "no targets configured"
 
-	// 5 reports sorted by OccurredAt descending:
+	// 5 reports sorted by (OccurredAt, ID) descending:
 	// 1: -1m, delivered
 	// 2: -2m, failed
-	// 3: -3m, delivered
-	// 4: -4m, failed
-	// 5: -5m, failed
+	// 3: -3m, delivered (same OccurredAt as #4 to verify keyset tie-breaking)
+	// 4: -3m, failed
+	// 5: -5m, queued (neither processed nor failed yet)
 	reports := map[uuid.UUID]db.Report{
 		repID1: {ID: intID1, AppID: appID, ReportID: repID1, OccurredAt: now.Add(-1 * time.Minute), ProcessedAt: &proc1, Trigger: "shake"},
-		repID2: {ID: intID2, AppID: appID, ReportID: repID2, OccurredAt: now.Add(-2 * time.Minute), ProcessedAt: nil, Trigger: "manual"},
+		repID2: {ID: intID2, AppID: appID, ReportID: repID2, OccurredAt: now.Add(-2 * time.Minute), DeliveryError: &err2, Trigger: "manual"},
 		repID3: {ID: intID3, AppID: appID, ReportID: repID3, OccurredAt: now.Add(-3 * time.Minute), ProcessedAt: &proc3, Trigger: "crash"},
-		repID4: {ID: intID4, AppID: appID, ReportID: repID4, OccurredAt: now.Add(-4 * time.Minute), ProcessedAt: nil, Trigger: "shake"},
-		repID5: {ID: intID5, AppID: appID, ReportID: repID5, OccurredAt: now.Add(-5 * time.Minute), ProcessedAt: nil, Trigger: "manual"},
+		repID4: {ID: intID4, AppID: appID, ReportID: repID4, OccurredAt: now.Add(-3 * time.Minute), DeliveryError: &err4, Trigger: "shake"},
+		repID5: {ID: intID5, AppID: appID, ReportID: repID5, OccurredAt: now.Add(-5 * time.Minute), Trigger: "manual"},
 	}
 
 	deliveries := map[uuid.UUID][]db.ReportDelivery{
@@ -430,31 +464,38 @@ func TestListReports(t *testing.T) {
 	}
 	svc := NewService(q, nil)
 
-	t.Run("happy path", func(t *testing.T) {
+	t.Run("happy path batches deliveries", func(t *testing.T) {
+		q.singleDelCalls, q.batchDelCalls = 0, 0
 		res, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Limit: 10})
 		if err != nil {
 			t.Fatalf("ListReports() unexpected err: %v", err)
 		}
+		if q.singleDelCalls != 0 || q.batchDelCalls != 1 {
+			t.Errorf("delivery query calls: single=%d batch=%d, want 0 and 1", q.singleDelCalls, q.batchDelCalls)
+		}
 		if len(res.Reports) != 5 {
 			t.Fatalf("expected 5 reports, got %d", len(res.Reports))
 		}
-		if res.Reports[0].Status != "delivered" {
-			t.Errorf("report 0 status = %q, want 'delivered'", res.Reports[0].Status)
+		if res.Reports[0].Status != "delivered" || res.Reports[0].DeliveryError != nil {
+			t.Errorf("report 0 status=%q err=%v, want delivered/nil", res.Reports[0].Status, res.Reports[0].DeliveryError)
 		}
 		if len(res.Reports[0].IssueURLs) != 1 || res.Reports[0].IssueURLs[0] != "https://github.com/org/repo/issues/10" {
 			t.Errorf("report 0 IssueURLs = %v, want ['https://github.com/org/repo/issues/10']", res.Reports[0].IssueURLs)
 		}
-		if res.Reports[1].Status != "failed" {
-			t.Errorf("report 1 status = %q, want 'failed'", res.Reports[1].Status)
+		if res.Reports[1].Status != "failed" || res.Reports[1].DeliveryError == nil || *res.Reports[1].DeliveryError != err2 {
+			t.Errorf("report 1 status=%q err=%v, want failed/%q", res.Reports[1].Status, res.Reports[1].DeliveryError, err2)
 		}
-		if len(res.Reports[1].IssueURLs) != 0 {
-			t.Errorf("report 1 IssueURLs = %v, want empty", res.Reports[1].IssueURLs)
+		if res.Reports[1].IssueURLs == nil || len(res.Reports[1].IssueURLs) != 0 {
+			t.Errorf("report 1 IssueURLs = %#v, want non-nil empty slice", res.Reports[1].IssueURLs)
 		}
 		if res.Reports[2].Status != "delivered" {
 			t.Errorf("report 2 status = %q, want 'delivered'", res.Reports[2].Status)
 		}
-		if res.Reports[3].Status != "failed" || res.Reports[4].Status != "failed" {
-			t.Errorf("reports 3 and 4 should be 'failed'")
+		if res.Reports[3].Status != "failed" {
+			t.Errorf("report 3 status = %q, want 'failed'", res.Reports[3].Status)
+		}
+		if res.Reports[4].Status != "queued" || res.Reports[4].DeliveryError != nil {
+			t.Errorf("report 4 status=%q err=%v, want queued/nil", res.Reports[4].Status, res.Reports[4].DeliveryError)
 		}
 	})
 
@@ -473,13 +514,13 @@ func TestListReports(t *testing.T) {
 		}
 	})
 
-	t.Run("filter by status failed", func(t *testing.T) {
+	t.Run("filter by status failed excludes queued", func(t *testing.T) {
 		res, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Status: "failed", Limit: 10})
 		if err != nil {
 			t.Fatalf("ListReports() unexpected err: %v", err)
 		}
-		if len(res.Reports) != 3 {
-			t.Fatalf("expected 3 failed reports, got %d", len(res.Reports))
+		if len(res.Reports) != 2 {
+			t.Fatalf("expected 2 failed reports, got %d", len(res.Reports))
 		}
 		for i, r := range res.Reports {
 			if r.Status != "failed" {
@@ -488,47 +529,63 @@ func TestListReports(t *testing.T) {
 		}
 	})
 
-	t.Run("pagination", func(t *testing.T) {
-		page1, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Limit: 2})
+	t.Run("filter by status queued", func(t *testing.T) {
+		res, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Status: "queued", Limit: 10})
+		if err != nil {
+			t.Fatalf("ListReports() unexpected err: %v", err)
+		}
+		if len(res.Reports) != 1 || res.Reports[0].ReportID != repID5 {
+			t.Fatalf("expected only queued report %v, got %+v", repID5, res.Reports)
+		}
+	})
+
+	t.Run("keyset pagination preserves tied timestamps across pages", func(t *testing.T) {
+		// Page size 3 ends on repID3 (-3m, id ...0003); repID4 shares -3m with id ...0002.
+		page1, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Limit: 3})
 		if err != nil {
 			t.Fatalf("page 1 unexpected err: %v", err)
 		}
-		if len(page1.Reports) != 2 {
-			t.Fatalf("page 1 expected 2 reports, got %d", len(page1.Reports))
+		if len(page1.Reports) != 3 || page1.NextCursor == nil {
+			t.Fatalf("page 1 len=%d next=%v, want 3 and non-nil", len(page1.Reports), page1.NextCursor)
 		}
-		if page1.NextCursor == nil {
-			t.Fatalf("page 1 expected next cursor, got nil")
-		}
-		if page1.Reports[0].ReportID != repID1 || page1.Reports[1].ReportID != repID2 {
-			t.Errorf("page 1 returned unexpected reports: %v, %v", page1.Reports[0].ReportID, page1.Reports[1].ReportID)
+		if page1.Reports[0].ReportID != repID1 || page1.Reports[1].ReportID != repID2 || page1.Reports[2].ReportID != repID3 {
+			t.Errorf("page 1 returned unexpected reports: %+v", page1.Reports)
 		}
 
-		page2, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Limit: 2, Cursor: page1.NextCursor})
+		page2, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Limit: 3, Cursor: *page1.NextCursor})
 		if err != nil {
 			t.Fatalf("page 2 unexpected err: %v", err)
 		}
 		if len(page2.Reports) != 2 {
 			t.Fatalf("page 2 expected 2 reports, got %d", len(page2.Reports))
 		}
-		if page2.NextCursor == nil {
-			t.Fatalf("page 2 expected next cursor, got nil")
-		}
-		if page2.Reports[0].ReportID != repID3 || page2.Reports[1].ReportID != repID4 {
+		if page2.Reports[0].ReportID != repID4 || page2.Reports[1].ReportID != repID5 {
 			t.Errorf("page 2 returned unexpected reports: %v, %v", page2.Reports[0].ReportID, page2.Reports[1].ReportID)
 		}
+		if page2.NextCursor != nil {
+			t.Errorf("page 2 expected nil next cursor for last page, got %v", *page2.NextCursor)
+		}
+	})
 
-		page3, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Limit: 2, Cursor: page2.NextCursor})
+	t.Run("timestamp-only cursor filters before date", func(t *testing.T) {
+		res, err := svc.ListReports(ctx, owner, appID, ListReportsParams{
+			Limit:  10,
+			Cursor: now.Add(-2 * time.Minute).Format(time.RFC3339Nano),
+		})
 		if err != nil {
-			t.Fatalf("page 3 unexpected err: %v", err)
+			t.Fatalf("ListReports() unexpected err: %v", err)
 		}
-		if len(page3.Reports) != 1 {
-			t.Fatalf("page 3 expected 1 report, got %d", len(page3.Reports))
+		if len(res.Reports) != 3 || res.Reports[0].ReportID != repID3 {
+			t.Fatalf("expected 3 reports older than -2m starting with %v, got %+v", repID3, res.Reports)
 		}
-		if page3.Reports[0].ReportID != repID5 {
-			t.Errorf("page 3 returned unexpected report: %v", page3.Reports[0].ReportID)
+	})
+
+	t.Run("invalid cursor and status", func(t *testing.T) {
+		if _, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Cursor: "not-a-cursor"}); kind(err) != apperr.KindInvalid {
+			t.Errorf("invalid cursor kind = %v, want KindInvalid", kind(err))
 		}
-		if page3.NextCursor != nil {
-			t.Errorf("page 3 expected nil next cursor for last page, got %v", page3.NextCursor)
+		if _, err := svc.ListReports(ctx, owner, appID, ListReportsParams{Status: "unknown"}); kind(err) != apperr.KindInvalid {
+			t.Errorf("invalid status kind = %v, want KindInvalid", kind(err))
 		}
 	})
 
@@ -636,20 +693,22 @@ func TestRetryReport(t *testing.T) {
 	reportID := uuid.New()
 	internalID := uuid.New()
 
+	errMsg := "tracker timeout"
 	q := &fakeQuerier{
 		app: db.App{ID: appID, OwnerID: owner},
 		reports: map[uuid.UUID]db.Report{
 			reportID: {
-				ID:       internalID,
-				AppID:    appID,
-				ReportID: reportID,
+				ID:            internalID,
+				AppID:         appID,
+				ReportID:      reportID,
+				DeliveryError: &errMsg,
 			},
 		},
 	}
 	pub := &fakePublisher{}
 	svc := NewService(q, pub)
 
-	t.Run("happy path", func(t *testing.T) {
+	t.Run("happy path clears delivery error", func(t *testing.T) {
 		pub.published = nil
 		err := svc.RetryReport(ctx, owner, appID, reportID)
 		if err != nil {
@@ -663,6 +722,9 @@ func TestRetryReport(t *testing.T) {
 		}
 		if pub.published[0].AppID != appID {
 			t.Errorf("published AppID = %v, want %v", pub.published[0].AppID, appID)
+		}
+		if q.reports[reportID].DeliveryError != nil {
+			t.Errorf("expected DeliveryError cleared on retry, got %v", *q.reports[reportID].DeliveryError)
 		}
 	})
 

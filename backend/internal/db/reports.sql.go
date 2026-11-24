@@ -13,6 +13,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearReportFailure = `-- name: ClearReportFailure :exec
+UPDATE reports
+SET delivery_error = NULL
+WHERE id = $1 AND processed_at IS NULL
+`
+
+func (q *Queries) ClearReportFailure(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, clearReportFailure, id)
+	return err
+}
+
 const createReportDelivery = `-- name: CreateReportDelivery :exec
 INSERT INTO report_deliveries (report_id, project_repository_id, issue_id, url)
 VALUES ($1, $2, $3, $4)
@@ -93,7 +104,7 @@ func (q *Queries) DeleteReportsByInstallation(ctx context.Context, arg DeleteRep
 }
 
 const getReport = `-- name: GetReport :one
-SELECT id, app_id, report_id, installation_id, session_id, trigger, occurred_at, received_at, queued_at, payload, processed_at FROM reports
+SELECT id, app_id, report_id, installation_id, session_id, trigger, occurred_at, received_at, queued_at, payload, processed_at, delivery_error FROM reports
 WHERE id = $1
 `
 
@@ -112,6 +123,7 @@ func (q *Queries) GetReport(ctx context.Context, id uuid.UUID) (Report, error) {
 		&i.QueuedAt,
 		&i.Payload,
 		&i.ProcessedAt,
+		&i.DeliveryError,
 	)
 	return i, err
 }
@@ -136,7 +148,7 @@ func (q *Queries) GetReportAttachment(ctx context.Context, id uuid.UUID) (Report
 }
 
 const getReportByReportID = `-- name: GetReportByReportID :one
-SELECT id, app_id, report_id, installation_id, session_id, trigger, occurred_at, received_at, queued_at, payload, processed_at FROM reports
+SELECT id, app_id, report_id, installation_id, session_id, trigger, occurred_at, received_at, queued_at, payload, processed_at, delivery_error FROM reports
 WHERE app_id = $1 AND report_id = $2
 `
 
@@ -160,6 +172,7 @@ func (q *Queries) GetReportByReportID(ctx context.Context, arg GetReportByReport
 		&i.QueuedAt,
 		&i.Payload,
 		&i.ProcessedAt,
+		&i.DeliveryError,
 	)
 	return i, err
 }
@@ -168,7 +181,7 @@ const insertReport = `-- name: InsertReport :one
 INSERT INTO reports (app_id, report_id, installation_id, session_id, trigger, occurred_at, payload)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (app_id, report_id) DO NOTHING
-RETURNING id, app_id, report_id, installation_id, session_id, trigger, occurred_at, received_at, queued_at, payload, processed_at
+RETURNING id, app_id, report_id, installation_id, session_id, trigger, occurred_at, received_at, queued_at, payload, processed_at, delivery_error
 `
 
 type InsertReportParams struct {
@@ -205,6 +218,7 @@ func (q *Queries) InsertReport(ctx context.Context, arg InsertReportParams) (Rep
 		&i.QueuedAt,
 		&i.Payload,
 		&i.ProcessedAt,
+		&i.DeliveryError,
 	)
 	return i, err
 }
@@ -325,22 +339,14 @@ func (q *Queries) ListReportDeliveries(ctx context.Context, reportID uuid.UUID) 
 	return items, nil
 }
 
-const listReportDeliveriesByReportID = `-- name: ListReportDeliveriesByReportID :many
-SELECT d.report_id, d.project_repository_id, d.issue_id, d.url, d.created_at
-FROM report_deliveries d
-JOIN reports r ON r.id = d.report_id
-WHERE r.app_id = $1 AND r.report_id = $2
-ORDER BY d.created_at ASC
+const listReportDeliveriesByReportIDs = `-- name: ListReportDeliveriesByReportIDs :many
+SELECT report_id, project_repository_id, issue_id, url, created_at FROM report_deliveries
+WHERE report_id = ANY($1::uuid[])
+ORDER BY created_at ASC
 `
 
-type ListReportDeliveriesByReportIDParams struct {
-	AppID    uuid.UUID `json:"app_id"`
-	ReportID uuid.UUID `json:"report_id"`
-}
-
-// Fetches the created issue URLs and delivery details directly by client report_id.
-func (q *Queries) ListReportDeliveriesByReportID(ctx context.Context, arg ListReportDeliveriesByReportIDParams) ([]ReportDelivery, error) {
-	rows, err := q.db.Query(ctx, listReportDeliveriesByReportID, arg.AppID, arg.ReportID)
+func (q *Queries) ListReportDeliveriesByReportIDs(ctx context.Context, reportIds []uuid.UUID) ([]ReportDelivery, error) {
+	rows, err := q.db.Query(ctx, listReportDeliveriesByReportIDs, reportIds)
 	if err != nil {
 		return nil, err
 	}
@@ -395,30 +401,37 @@ func (q *Queries) ListReportDeliveryProjects(ctx context.Context, reportID uuid.
 }
 
 const listReports = `-- name: ListReports :many
-SELECT id, app_id, report_id, installation_id, session_id, trigger, occurred_at, received_at, queued_at, payload, processed_at FROM reports
+SELECT id, app_id, report_id, installation_id, session_id, trigger, occurred_at, received_at, queued_at, payload, processed_at, delivery_error FROM reports
 WHERE app_id = $1
-  AND ($2::timestamptz IS NULL OR occurred_at < $2)
   AND (
-    $3::boolean IS NULL
-    OR ($3::boolean = true AND processed_at IS NOT NULL)
-    OR ($3::boolean = false AND processed_at IS NULL)
+    $2::timestamptz IS NULL
+    OR ($3::uuid IS NULL AND occurred_at < $2::timestamptz)
+    OR ($3::uuid IS NOT NULL AND (occurred_at, id) < ($2::timestamptz, $3::uuid))
   )
-ORDER BY occurred_at DESC
-LIMIT $4
+  AND (
+    $4::text IS NULL
+    OR ($4::text = 'delivered' AND processed_at IS NOT NULL)
+    OR ($4::text = 'failed' AND processed_at IS NULL AND delivery_error IS NOT NULL)
+    OR ($4::text = 'queued' AND processed_at IS NULL AND delivery_error IS NULL)
+  )
+ORDER BY occurred_at DESC, id DESC
+LIMIT $5
 `
 
 type ListReportsParams struct {
-	AppID       uuid.UUID          `json:"app_id"`
-	Cursor      pgtype.Timestamptz `json:"cursor"`
-	IsProcessed *bool              `json:"is_processed"`
-	Limit       int32              `json:"limit"`
+	AppID      uuid.UUID          `json:"app_id"`
+	CursorTime pgtype.Timestamptz `json:"cursor_time"`
+	CursorID   *uuid.UUID         `json:"cursor_id"`
+	Status     *string            `json:"status"`
+	Limit      int32              `json:"limit"`
 }
 
 func (q *Queries) ListReports(ctx context.Context, arg ListReportsParams) ([]Report, error) {
 	rows, err := q.db.Query(ctx, listReports,
 		arg.AppID,
-		arg.Cursor,
-		arg.IsProcessed,
+		arg.CursorTime,
+		arg.CursorID,
+		arg.Status,
 		arg.Limit,
 	)
 	if err != nil {
@@ -440,6 +453,7 @@ func (q *Queries) ListReports(ctx context.Context, arg ListReportsParams) ([]Rep
 			&i.QueuedAt,
 			&i.Payload,
 			&i.ProcessedAt,
+			&i.DeliveryError,
 		); err != nil {
 			return nil, err
 		}
@@ -451,9 +465,26 @@ func (q *Queries) ListReports(ctx context.Context, arg ListReportsParams) ([]Rep
 	return items, nil
 }
 
+const markReportFailed = `-- name: MarkReportFailed :exec
+UPDATE reports
+SET delivery_error = $2::text
+WHERE id = $1 AND processed_at IS NULL
+`
+
+type MarkReportFailedParams struct {
+	ID            uuid.UUID `json:"id"`
+	DeliveryError string    `json:"delivery_error"`
+}
+
+func (q *Queries) MarkReportFailed(ctx context.Context, arg MarkReportFailedParams) error {
+	_, err := q.db.Exec(ctx, markReportFailed, arg.ID, arg.DeliveryError)
+	return err
+}
+
 const markReportProcessed = `-- name: MarkReportProcessed :exec
 UPDATE reports
-SET processed_at = now()
+SET processed_at = now(),
+    delivery_error = NULL
 WHERE id = $1 AND processed_at IS NULL
 `
 
