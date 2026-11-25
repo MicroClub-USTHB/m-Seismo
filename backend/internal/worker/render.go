@@ -113,10 +113,14 @@ func stepsSection(r *ingest.Report) string {
 }
 
 // crashSection renders the "Crash" markdown, empty when the report has
-// neither a native crash nor a linked Sentry event.
+// neither a native crash, a linked Sentry event nor a Crashlytics crash.
 func crashSection(r *ingest.Report, info reportInfo) string {
 	var b strings.Builder
-	if r.Crash == nil && r.Sentry == nil {
+	crashlytics := info.CrashEvent
+	if crashlytics != nil && crashlytics.Provider != "crashlytics" {
+		crashlytics = nil
+	}
+	if r.Crash == nil && r.Sentry == nil && crashlytics == nil {
 		return ""
 	}
 	b.WriteString("### Crash\n\n")
@@ -132,10 +136,25 @@ func crashSection(r *ingest.Report, info reportInfo) string {
 		}
 		b.WriteString(code(strings.Join(frames, "\n")))
 		b.WriteString("\n")
-	} else if event := info.CrashEvent; event != nil && event.Title != "" {
+	} else if event := info.CrashEvent; event != nil && event.Title != "" && crashlytics == nil {
 		b.WriteString("**" + text(event.Title) + "**\n\n")
 		if len(event.StackTrace) > 0 {
 			b.WriteString(code(strings.Join(event.StackTrace[:min(len(event.StackTrace), maxStackFrames)], "\n")) + "\n")
+		}
+	}
+	// The Crashlytics crash is shown even when the SDK sent its own: its
+	// trace is the symbolicated one and the link opens the crash in Firebase.
+	if event := crashlytics; event != nil {
+		b.WriteString("#### Firebase Crashlytics\n\n")
+		if event.Title != "" {
+			b.WriteString("**" + text(event.Title) + "**\n\n")
+		}
+		if len(event.StackTrace) > 0 {
+			b.WriteString(code(strings.Join(event.StackTrace[:min(len(event.StackTrace), maxStackFrames)], "\n")) + "\n")
+		}
+		if event.URL != "" {
+			// The URL comes from the Crashlytics API, not from the report.
+			fmt.Fprintf(&b, "[View in Firebase Crashlytics](%s)\n\n", event.URL)
 		}
 	}
 	if ref := r.Sentry; ref != nil {

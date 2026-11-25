@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 )
 
@@ -66,6 +67,34 @@ func TestRenderBody(t *testing.T) {
 	}
 	if strings.Contains(body, "secret-token") {
 		t.Error("body contains a network request body")
+	}
+}
+
+func TestRenderBodyShowsTheCrashlyticsCrash(t *testing.T) {
+	r := ingest.Report{
+		Platform: "android",
+		Trigger:  "crash",
+		Crash:    &ingest.Crash{Type: "IllegalStateException", Reason: "boom", StackTrace: []string{"MainActivity.onCreate"}},
+	}
+	event := &crashprovider.Event{
+		Provider:   "crashlytics",
+		EventID:    "abc",
+		URL:        "https://console.firebase.google.com/project/demo/crashlytics/app/android:demo/issues/1",
+		Title:      "MainActivity.onCreate — boom",
+		StackTrace: []string{"at MainActivity.onCreate(MainActivity.kt:12)"},
+	}
+	body := render(&r, reportInfo{ID: uuid.New(), InstallationID: uuid.New(), CrashEvent: event}).Body
+
+	for _, want := range []string{
+		"**IllegalStateException**: boom",
+		"#### Firebase Crashlytics",
+		"**MainActivity.onCreate — boom**",
+		"at MainActivity.onCreate(MainActivity.kt:12)",
+		"[View in Firebase Crashlytics](https://console.firebase.google.com/project/demo/crashlytics/app/android:demo/issues/1)",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body is missing %q:\n%s", want, body)
+		}
 	}
 }
 
