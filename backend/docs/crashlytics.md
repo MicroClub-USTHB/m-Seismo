@@ -49,8 +49,10 @@ into Crashlytics as a custom key** (see [3. App setup](#3-app-setup)).
 ## 1. Deployment setup (once)
 
 1. **Pick a Google Cloud project** for quota and the OAuth client, e.g. the
-   main Firebase project. Enable the *Firebase Crashlytics API* on it:
-   `gcloud services enable firebasecrashlytics.googleapis.com --project <project>`.
+   main Firebase project. Enable the *Firebase Crashlytics API* on it, and
+   the *Firebase Management API*, which lets the dashboard list the
+   account's Firebase apps:
+   `gcloud services enable firebasecrashlytics.googleapis.com firebase.googleapis.com --project <project>`.
 2. **Create an OAuth client**: *APIs & Services → Credentials → Create
    credentials → OAuth client ID → Web application*. Add the callback as an
    authorized redirect URI:
@@ -105,8 +107,9 @@ curl -X POST -H "$AUTH" https://<host>/api/v1/projects/$PROJECT/crashlytics/conn
    shows "Crashlytics is connected with ...".
 
 ```sh
-# 3. Set the project's Firebase apps
-#    Firebase console → Project settings → Your apps → App ID
+# 3. Set the project's Firebase apps. The dashboard offers the apps the
+#    account can read (GET .../crashlytics/firebase-apps); by hand, the ID is
+#    in Firebase console → Project settings → Your apps → App ID
 curl -X PUT -H "$AUTH" https://<host>/api/v1/projects/$PROJECT/crashlytics/apps \
   -d '{"apps": ["projects/123456789/apps/1:123456789:android:abc123",
                 "projects/123456789/apps/1:123456789:ios:def456"]}'
@@ -150,6 +153,7 @@ All under `/api/v1`.
 | `GET /oauth/crashlytics/callback` | public, protected by the one-time `state` | Google redirects here after consent |
 | `GET /projects/{id}/crashlytics` | project owner | Connection status |
 | `PUT /projects/{id}/crashlytics/apps` | project owner | Sets the project's Firebase apps |
+| `GET /projects/{id}/crashlytics/firebase-apps` | project owner | Lists the Firebase apps the connected account can read (`502` when the Firebase Management API is not enabled) |
 
 Another owner's project answers `404`, the same as one that does not exist.
 The `state` value is random, stored in Redis for 10 minutes and usable once,

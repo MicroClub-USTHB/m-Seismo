@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/oauth2"
+	"google.golang.org/api/option"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
 )
@@ -73,22 +74,28 @@ func (s *RedisStates) Take(ctx context.Context, state string) (string, bool, err
 // Handler serves the HTTP endpoints that connect a project to Crashlytics,
 // under /api/v1:
 //
-//	POST /projects/{id}/crashlytics/connect  owner: returns the Google consent URL
-//	GET  /oauth/crashlytics/callback         Google redirects here after consent
-//	GET  /projects/{id}/crashlytics          owner: connection status
-//	PUT  /projects/{id}/crashlytics/apps     owner: sets the project's Firebase apps
+//	POST /projects/{id}/crashlytics/connect        owner: returns the Google consent URL
+//	GET  /oauth/crashlytics/callback               Google redirects here after consent
+//	GET  /projects/{id}/crashlytics                owner: connection status
+//	PUT  /projects/{id}/crashlytics/apps           owner: sets the project's Firebase apps
+//	GET  /projects/{id}/crashlytics/firebase-apps  owner: Firebase apps the account can read
 type Handler struct {
 	oauth       *oauth2.Config
 	store       Store
 	states      States
 	require     httpx.AuthMiddleware
 	userinfoURL string
+	// quotaProject is billed for the Firebase Management API calls.
+	quotaProject string
 	// httpClient, when set, is used for the calls to Google (tests).
 	httpClient *http.Client
+	// firebaseOpts are appended to the Firebase Management API client's
+	// options (tests).
+	firebaseOpts []option.ClientOption
 }
 
 func NewHandler(cfg Config, store Store, states States, require httpx.AuthMiddleware) *Handler {
-	return &Handler{oauth: cfg.oauth(), store: store, states: states, require: require, userinfoURL: userinfoURL}
+	return &Handler{oauth: cfg.oauth(), store: store, states: states, require: require, userinfoURL: userinfoURL, quotaProject: cfg.QuotaProject}
 }
 
 // RedirectURL is where Google sends the browser back after consent.
@@ -105,6 +112,7 @@ func (h *Handler) Mount(r chi.Router) {
 	owned.Post("/projects/{id}/crashlytics/connect", h.connect)
 	owned.Get("/projects/{id}/crashlytics", h.status)
 	owned.Put("/projects/{id}/crashlytics/apps", h.setApps)
+	owned.Get("/projects/{id}/crashlytics/firebase-apps", h.firebaseApps)
 }
 
 // ownProject answers 404 unless the project in the path belongs to the

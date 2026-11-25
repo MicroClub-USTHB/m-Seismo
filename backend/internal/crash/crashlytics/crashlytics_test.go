@@ -387,3 +387,16 @@ func TestFormatTraceIOSThread(t *testing.T) {
 		t.Errorf("trace =\n%s\nwant\n%s", trace, want)
 	}
 }
+
+func TestFormatTraceAndroidSkipsTheCrashedThread(t *testing.T) {
+	frames := []*fc.Frame{{Symbol: "MainActivity.onCreate", File: "MainActivity.kt", Line: 12}}
+	trace := formatTrace(&fc.Event{
+		Exceptions: []*fc.Exception{{Type: "java.lang.IllegalStateException", ExceptionMessage: "boom", Frames: frames}},
+		Threads:    []*fc.Thread{{Name: "main", Crashed: true, Frames: frames}},
+	})
+
+	want := "java.lang.IllegalStateException: boom\n    at MainActivity.onCreate (MainActivity.kt:12)\n"
+	if trace != want {
+		t.Errorf("trace =\n%s\nwant\n%s", trace, want)
+	}
+}

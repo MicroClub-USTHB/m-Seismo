@@ -12,7 +12,9 @@ import (
 // Android and web events carry exceptions, last thrown first, so the first
 // one is printed as the crash and the rest as its causes. iOS events carry
 // threads (crashes) or errors (non-fatals); only the thread or error that
-// Crashlytics blamed is printed, to keep the issue readable.
+// Crashlytics blamed is printed, to keep the issue readable. Android events
+// also carry the crashed thread, whose frames repeat the exception's, so a
+// thread is printed only when the event has no exception.
 func formatTrace(ev *fc.Event) string {
 	var b strings.Builder
 
@@ -29,7 +31,7 @@ func formatTrace(ev *fc.Event) string {
 		writeFrames(&b, e.Frames)
 	}
 
-	if t := blamedThread(ev.Threads); t != nil {
+	if t := blamedThread(ev.Threads); t != nil && len(ev.Exceptions) == 0 {
 		name := t.Name
 		if name == "" {
 			name = t.Title

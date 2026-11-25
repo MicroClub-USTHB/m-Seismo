@@ -206,6 +206,18 @@ export interface CrashlyticsStatus {
   apps?: string[]
 }
 
+/** A Firebase app the connected Google account can read. */
+export interface FirebaseApp {
+  /** `projects/<number>/apps/<app id>`, the form the apps endpoint takes. */
+  name: string
+  display_name: string
+  platform: 'ANDROID' | 'IOS' | 'WEB' | string
+  /** Android package or iOS bundle ID. */
+  namespace: string
+  /** Firebase project display name. */
+  project: string
+}
+
 /** `queued`: not delivered yet, the worker may still pick it up.
  * `failed`: the worker gave up; `delivery_error` says why. */
 export type ReportStatus = 'delivered' | 'queued' | 'failed'
