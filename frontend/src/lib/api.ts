@@ -205,3 +205,47 @@ export interface CrashlyticsStatus {
   google_email?: string
   apps?: string[]
 }
+
+/** `queued`: not delivered yet, the worker may still pick it up.
+ * `failed`: the worker gave up; `delivery_error` says why. */
+export type ReportStatus = 'delivered' | 'queued' | 'failed'
+
+/** One row of GET /apps/{id}/reports. */
+export interface ReportSummary {
+  report_id: string
+  installation_id: string
+  session_id: string
+  trigger: string
+  occurred_at: string
+  status: ReportStatus
+  delivery_error?: string
+  issue_urls: string[]
+}
+
+export interface ReportPage {
+  reports: ReportSummary[]
+  next_cursor?: string
+}
+
+export interface ReportDelivery {
+  project_repository_id: string
+  url: string
+  created_at: string
+}
+
+export interface ReportDetail {
+  id: string
+  app_id: string
+  report_id: string
+  installation_id: string
+  session_id: string
+  trigger: string
+  occurred_at: string
+  received_at: string
+  processed_at?: string
+  status: ReportStatus
+  delivery_error?: string
+  /** The report as the SDK sent it. */
+  payload: unknown
+  deliveries: ReportDelivery[]
+}

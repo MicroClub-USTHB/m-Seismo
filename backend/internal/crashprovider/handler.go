@@ -9,7 +9,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
 )
 
-var Module = fx.Module("crashprovider", fx.Provide(NewService, httpx.AsRoutes(NewHandler)))
+var Module = fx.Module("crashprovider", fx.Provide(newModuleService, httpx.AsRoutes(NewHandler)))
 
 type Handler struct {
 	svc     *Service

@@ -2,7 +2,7 @@ name: ExampleApp
 options:
   bundleIdPrefix: com.microclub.mseismo
   deploymentTarget:
-    iOS: "14.0"
+    iOS: "15.0"
 
 packages:
   MSeismo:

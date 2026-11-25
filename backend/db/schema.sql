@@ -317,7 +317,8 @@ CREATE TABLE public.reports (
     received_at timestamp with time zone DEFAULT now() NOT NULL,
     queued_at timestamp with time zone,
     payload jsonb NOT NULL,
-    processed_at timestamp with time zone
+    processed_at timestamp with time zone,
+    delivery_error text
 );
 
 
@@ -655,10 +656,24 @@ CREATE INDEX provider_connections_owner_id_idx ON public.provider_connections US
 
 
 --
+-- Name: report_deliveries_issue_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX report_deliveries_issue_id_idx ON public.report_deliveries USING btree (issue_id);
+
+
+--
 -- Name: reports_app_id_installation_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX reports_app_id_installation_id_idx ON public.reports USING btree (app_id, installation_id);
+
+
+--
+-- Name: reports_app_id_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX reports_app_id_occurred_at_id_idx ON public.reports USING btree (app_id, occurred_at DESC, id DESC);
 
 
 --
@@ -912,9 +927,11 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022200000'),
     ('20261022210000'),
     ('20261023090000'),
+    ('20261024090000'),
     ('20261026090000'),
     ('20261029090000'),
     ('20261030160000'),
     ('20261030170000'),
     ('20261030180000'),
-    ('20261031090000');
+    ('20261031090000'),
+    ('20261124234500');

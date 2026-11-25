@@ -12,9 +12,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
 )
 
-// Handler serves the report-deletion endpoints described in issue #61:
-// DELETE /api/v1/apps/{appID}/reports/{reportID} and
-// DELETE /api/v1/apps/{appID}/installations/{installationID}/reports.
+// Handler serves report management and deletion endpoints.
 type Handler struct {
 	svc     *Service
 	require httpx.AuthMiddleware
@@ -28,9 +26,78 @@ func NewHandler(svc *Service, require httpx.AuthMiddleware) *Handler {
 // that would Mount a second sub-router at the same pattern app.Handler
 // already owns, which shadows its own routes under /apps/{appID}.
 func (h *Handler) Mount(r chi.Router) {
+	r.With(h.require).Get("/apps/{appID}/reports", h.listReports)
+	r.With(h.require).Get("/apps/{appID}/reports/{reportID}", h.getReport)
+	r.With(h.require).Post("/apps/{appID}/reports/{reportID}/retry", h.retryReport)
 	r.With(h.require).Get("/apps/{appID}/reports/{reportID}/bundle", h.bundle)
 	r.With(h.require).Delete("/apps/{appID}/reports/{reportID}", h.deleteReport)
 	r.With(h.require).Delete("/apps/{appID}/installations/{installationID}/reports", h.deleteByInstallation)
+}
+
+func (h *Handler) listReports(w http.ResponseWriter, r *http.Request) {
+	appID, ok := uuidParam(w, r, "appID")
+	if !ok {
+		return
+	}
+
+	q := r.URL.Query()
+	limit := int32(20)
+	if limitStr := q.Get("limit"); limitStr != "" {
+		if n, err := strconv.ParseInt(limitStr, 10, 32); err == nil && n > 0 {
+			limit = int32(n)
+		}
+	}
+
+	params := ListReportsParams{
+		Status: q.Get("status"),
+		Cursor: q.Get("cursor"),
+		Limit:  limit,
+	}
+
+	res, err := h.svc.ListReports(r.Context(), httpx.OwnerID(r.Context()), appID, params)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+
+	httpx.JSON(w, http.StatusOK, res)
+}
+
+func (h *Handler) getReport(w http.ResponseWriter, r *http.Request) {
+	appID, ok := uuidParam(w, r, "appID")
+	if !ok {
+		return
+	}
+	reportID, ok := uuidParam(w, r, "reportID")
+	if !ok {
+		return
+	}
+
+	res, err := h.svc.GetReport(r.Context(), httpx.OwnerID(r.Context()), appID, reportID)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+
+	httpx.JSON(w, http.StatusOK, res)
+}
+
+func (h *Handler) retryReport(w http.ResponseWriter, r *http.Request) {
+	appID, ok := uuidParam(w, r, "appID")
+	if !ok {
+		return
+	}
+	reportID, ok := uuidParam(w, r, "reportID")
+	if !ok {
+		return
+	}
+
+	if err := h.svc.RetryReport(r.Context(), httpx.OwnerID(r.Context()), appID, reportID); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func (h *Handler) bundle(w http.ResponseWriter, r *http.Request) {

@@ -26,18 +26,25 @@ Google returns a refresh token, which m-Seismo encrypts with
 `SEISMO_SECRETS_ENCRYPTION_KEY` (AES-256-GCM) and stores in
 `crashlytics_connections`.
 
-To find a crash, `events.list` can filter by time but not by installation.
-For each report the backend lists the events of the project's apps in
-`[crash time - window, crash time + window]` (`SEISMO_CRASH_WINDOW`, default
-`2m`) and keeps the event from the same installation that is closest in
-time.
+To find a crash, the worker uses the app's crash provider (dashboard: app
+settings → crash provider → Crashlytics, with the Firebase project and app
+ID). For each report it tries the Crashlytics connection of each m-Seismo
+project the app belongs to:
 
-> **Open point: which installation ID.** Events carry Crashlytics' own
-> installation UUID, which is not the m-Seismo `installation_id` of the
-> report. Matching needs the SDK to send Crashlytics' ID (the optional
-> `crashlytics.installation_id` field of the report schema), or to write the
-> m-Seismo ID into Crashlytics as a custom key. Until that is decided,
-> `Find` gets no match for reports that carry only the m-Seismo ID.
+1. list the app's issues seen in `[crash time - window, crash time + window]`
+   (`SEISMO_CRASH_WINDOW`, default `2m`) through the `topIssues` report;
+2. list each issue's events in that window whose custom key
+   `seismo_installation_id` is the report's `installation_id`
+   (`events.list` refuses requests that don't name an issue);
+3. keep the event closest in time.
+
+The issue then shows the crash title, trace and a link to the Firebase
+console. No match, or Crashlytics being down, only leaves the crash details
+out of the issue.
+
+Crashlytics events carry their own installation UUID, which the app can't
+read on the device, so **the app must write its m-Seismo installation ID
+into Crashlytics as a custom key** (see [3. App setup](#3-app-setup)).
 
 ## 1. Deployment setup (once)
 
@@ -110,6 +117,28 @@ curl -H "$AUTH" https://<host>/api/v1/projects/$PROJECT/crashlytics
 ```
 
 Connecting again replaces the account and token and keeps the apps.
+
+## 3. App setup
+
+Right after starting Crashlytics and m-Seismo, set the custom key once:
+
+```swift
+// iOS
+Crashlytics.crashlytics().setCustomValue(Installation.shared.id, forKey: "seismo_installation_id")
+```
+
+```dart
+// Flutter
+await FirebaseCrashlytics.instance.setCustomKey(
+    'seismo_installation_id', await MSeismo.instance.installationId);
+```
+
+```kotlin
+// Android
+FirebaseCrashlytics.getInstance().setCustomKey("seismo_installation_id", installationId)
+```
+
+Crashes recorded before the key was set can't be matched.
 
 ## Endpoints
 
