@@ -92,7 +92,7 @@ jobs:
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
 
       - name: Integration test
-        run: flutter test integration_test -d "iPhone 17"
+        run: flutter test integration_test -d "${{ steps.sim.outputs.udid }}"
 
   android:
     name: Android build
@@ -121,4 +121,3 @@ jobs:
 
       - name: Build debug APK
         run: flutter build apk --debug
-        run: flutter test integration_test -d "${{ steps.sim.outputs.udid }}"
