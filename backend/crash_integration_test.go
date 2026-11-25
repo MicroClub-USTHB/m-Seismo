@@ -317,7 +317,7 @@ func TestCrashProviderHTTPIntegration(t *testing.T) {
 	// Report IDs are idempotent within an app, not globally across apps.
 	report["platform"] = "ios"
 	upload(mobileKey, report, 202)
-	if request("GET", mobilePath+"/reports/"+reportID+"/crash", token, nil, 200)["status"] != "adapter_pending" {
+	if request("GET", mobilePath+"/reports/"+reportID+"/crash", token, nil, 200)["status"] != "event_not_found" {
 		t.Fatal("Crashlytics app incorrectly resolved through Sentry")
 	}
 	report["id"] = uuid.NewString()

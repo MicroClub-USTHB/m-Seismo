@@ -12,12 +12,14 @@ import (
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crash"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 )
 
-// CrashlyticsSettings preserves the per-app choice for the future Firebase
-// export adapter. Selecting it does not require or use a Sentry credential.
+// CrashlyticsSettings is the Firebase app whose crashes belong to the app.
+// The Google credentials are the project's Crashlytics connection, so no
+// credential is stored here.
 type CrashlyticsSettings struct {
 	ProjectID string `json:"project_id"`
 	AppID     string `json:"app_id"`
@@ -47,6 +49,9 @@ type Service struct {
 	q      db.Querier
 	vault  *vault
 	sentry *sentryClient
+	// crashes resolves apps whose provider is Crashlytics; nil disables it.
+	crashes     crash.Source
+	crashWindow time.Duration
 }
 
 func NewService(q db.Querier, cfg *config.Config) (*Service, error) {
@@ -194,13 +199,25 @@ func (s *Service) ReportCrash(ctx context.Context, ownerID, appID, reportID uuid
 	}
 	saved, err := s.q.GetAppCrashProvider(ctx, appID)
 	if errors.Is(err, pgx.ErrNoRows) {
+		// No provider chosen for the app: its project's Crashlytics
+		// connection, if any, still applies.
+		if event, err := s.resolveCrashlytics(ctx, appID, nil, r); err == nil && event != nil {
+			return Link{Status: "linked", Provider: "crashlytics", Event: event}, nil
+		}
 		return Link{Status: "not_configured"}, nil
 	}
 	if err != nil {
 		return Link{}, err
 	}
 	if saved.Provider == "crashlytics" {
-		return Link{Status: "adapter_pending", Provider: "crashlytics"}, nil
+		event, err := s.resolveCrashlytics(ctx, appID, &saved, r)
+		if err != nil {
+			return Link{}, err
+		}
+		if event == nil {
+			return Link{Status: "event_not_found", Provider: "crashlytics"}, nil
+		}
+		return Link{Status: "linked", Provider: "crashlytics", Event: event}, nil
 	}
 	if r.Sentry == nil {
 		return Link{Status: "no_reference", Provider: "sentry"}, nil
@@ -220,20 +237,20 @@ func (s *Service) ReportCrash(ctx context.Context, ownerID, appID, reportID uuid
 // A validated reference is returned even when Sentry is processing the event or
 // unavailable, so issue publication retains the exact event ID and a useful link.
 func (s *Service) ForReport(ctx context.Context, appID uuid.UUID, report *ingest.Report) (*Event, error) {
-	if report.Sentry == nil {
-		return nil, nil
-	}
 	saved, err := s.q.GetAppCrashProvider(ctx, appID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
+		return s.resolveCrashlytics(ctx, appID, nil, report)
 	}
 	if err != nil {
 		return nil, err
 	}
-	if saved.Provider != "sentry" {
-		return nil, nil
+	switch {
+	case saved.Provider == "crashlytics":
+		return s.resolveCrashlytics(ctx, appID, &saved, report)
+	case saved.Provider == "sentry" && report.Sentry != nil:
+		return s.resolveSentry(ctx, saved, report.Sentry.EventID)
 	}
-	return s.resolveSentry(ctx, saved, report.Sentry.EventID)
+	return nil, nil
 }
 
 func (s *Service) resolveSentry(ctx context.Context, saved db.AppCrashProvider, eventID string) (*Event, error) {
