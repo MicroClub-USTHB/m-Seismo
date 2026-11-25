@@ -41,7 +41,7 @@
       "$ref": "#/$defs/timestamp"
     },
     "platform": {
-      "enum": ["ios", "android", "flutter", "react_native"]
+      "enum": ["ios", "android", "flutter", "react_native", "web"]
     },
     "sdk": {
       "type": "object",
@@ -149,7 +149,7 @@
       }
     },
     "crash": {
-      "description": "Required when trigger is crash or non_fatal.",
+      "description": "Required when trigger is crash or non_fatal unless a sentry event reference is supplied.",
       "type": "object",
       "required": ["type", "stack_trace"],
       "properties": {
@@ -187,6 +187,14 @@
       "type": "boolean",
       "default": false
     },
+    "sentry": {
+      "description": "Exact Sentry event reference, independent of app platform. SDKs never send a Sentry DSN or API token.",
+      "type": "object",
+      "required": ["event_id"],
+      "properties": {
+        "event_id": { "type": "string", "pattern": "^[0-9a-fA-F]{32}$" }
+      }
+    },
     "crashlytics": {
       "description": "Pending decision: the ID that lets the backend find the matching Crashlytics crash.",
       "type": "object",
@@ -197,7 +205,10 @@
   },
   "allOf": [
     {
-      "if": { "properties": { "trigger": { "enum": ["crash", "non_fatal"] } } },
+      "if": {
+        "properties": { "trigger": { "enum": ["crash", "non_fatal"] } },
+        "not": { "required": ["sentry"] }
+      },
       "then": { "required": ["crash"] }
     }
   ],

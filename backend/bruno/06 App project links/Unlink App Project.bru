@@ -1,0 +1,15 @@
+meta {
+  name: Unlink App Project
+  type: http
+  seq: 3
+}
+
+delete {
+  url: {{baseUrl}}/apps/{{appId}}/projects/{{projectId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  204; 404 "app is not linked to this project".
+}

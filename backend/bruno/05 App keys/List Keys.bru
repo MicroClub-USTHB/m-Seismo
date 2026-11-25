@@ -1,0 +1,15 @@
+meta {
+  name: List Keys
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/apps/{{appId}}/keys
+  body: none
+  auth: inherit
+}
+
+docs {
+  200 `[key]`, newest first, revoked ones included.
+}

@@ -1,0 +1,143 @@
+/*
+ * Error-laboratory page layout. Builds on tokens.css + components.css (imported
+ * by src/lab/main.ts). Only lab-specific rules live here: the header, the
+ * controls card, the responsive scenario table and the interaction-target tools.
+ */
+
+.lab-header {
+  position: sticky;
+  top: 0;
+}
+
+.lab-main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: var(--space-5);
+}
+
+.lab-main > .lede {
+  margin-top: 0;
+  color: var(--fg-muted);
+}
+
+.lab-controls {
+  margin-bottom: var(--space-4);
+}
+
+.lab-controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.lab-controls-row + .lab-controls-row {
+  margin-top: var(--space-3);
+}
+
+.lab-controls .spacer {
+  margin-inline-start: auto;
+}
+
+.lab-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+}
+
+.lab-filter select {
+  min-height: 32px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--fg);
+  font: inherit;
+}
+
+.lab-controls .meta {
+  margin-top: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+  word-break: break-word;
+}
+
+.lab-table-wrap {
+  padding: 0;
+  overflow: hidden;
+}
+
+.lab-table {
+  background: var(--panel-alt);
+}
+
+.lab-table td.id {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.lab-table td.group,
+.lab-table td.expected {
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.lab-table .observed {
+  font-size: var(--text-sm);
+  color: var(--fg);
+}
+
+.lab-table tr[hidden] {
+  display: none;
+}
+
+.lab-table .expected.mismatch {
+  color: var(--fail-fg);
+  font-weight: 600;
+}
+
+.empty-state {
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--fg-muted);
+}
+
+.lab-tools {
+  margin-top: var(--space-4);
+}
+
+.lab-tools h2 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-md);
+}
+
+.lab-tools textarea {
+  width: 100%;
+  margin-top: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--fg);
+  font: inherit;
+  resize: vertical;
+}
+
+@media (max-width: 720px) {
+  .lab-main {
+    padding: var(--space-3);
+  }
+
+  .lab-table-wrap {
+    overflow-x: auto;
+  }
+
+  .lab-table td.expected {
+    white-space: normal;
+  }
+}

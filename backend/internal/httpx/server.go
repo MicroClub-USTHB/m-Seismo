@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 	"go.uber.org/fx"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
@@ -36,7 +37,7 @@ type routerParams struct {
 
 // NewRouter builds the root router with common middleware and mounts every
 // registered Routes under /api/v1.
-func NewRouter(p routerParams) http.Handler {
+func NewRouter(p routerParams, cfg *config.Config) http.Handler {
 	r := chi.NewRouter()
 	// No middleware.RealIP: it trusts X-Forwarded-For and friends from any
 	// client, so it would log spoofed addresses. Add a proxy-aware variant
@@ -44,6 +45,16 @@ func NewRouter(p routerParams) http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	// The dashboard (server.frontend_url) is a separate origin calling this
+	// API with a bearer token; browsers refuse that cross-origin call
+	// without this. No cookies are involved, so credentials stay off.
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{cfg.Server.FrontendURL},
+		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
+		AllowedHeaders:   []string{"Authorization", "Content-Type"},
+		AllowCredentials: false,
+		MaxAge:           300,
+	}))
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		JSON(w, http.StatusOK, map[string]string{"status": "ok"})

@@ -1,0 +1,17 @@
+meta {
+  name: Healthz
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrlRoot}}/healthz
+  body: none
+  auth: none
+}
+
+docs {
+  Public, outside `/api/v1`. 200 `{"status":"ok"}` — shows the process is
+  serving HTTP. Does not check Postgres, Redis or NATS (the server won't
+  start unless all three were reachable at boot).
+}

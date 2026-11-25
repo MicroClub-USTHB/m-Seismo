@@ -1,14 +1,14 @@
 # Data model
 
 This page covers the Postgres schema behind owners, projects, apps, provider
-connections and issues. It explains each table and constraint, the migration
-that introduced them, and how sqlc turns the queries into Go.
+connections and issues. It explains each table and constraint, the
+migrations that introduced them, and how sqlc turns the queries into Go.
 
 - [Entity–relationship diagram](#entityrelationship-diagram)
 - [Tables](#tables)
 - [Invariants and how they are enforced](#invariants-and-how-they-are-enforced)
 - [Delete behaviour (cascades)](#delete-behaviour-cascades)
-- [The migration](#the-migration)
+- [The migrations](#the-migrations)
 - [sqlc configuration](#sqlc-configuration)
 - [Query catalogue](#query-catalogue)
 - [Workflow: changing the schema](#workflow-changing-the-schema)
@@ -21,17 +21,18 @@ that introduced them, and how sqlc turns the queries into Go.
 erDiagram
     owners ||--o{ projects : owns
     owners ||--o{ apps : owns
-    owners ||--o{ provider_connections : owns
 
-    projects ||--o{ project_repositories : "sends issues to"
-    provider_connections ||--o{ project_repositories : "reaches"
+    projects ||--o{ project_repositories : "code lives in"
 
     apps ||--o{ app_keys : "authenticates with"
+    apps ||--o{ provider_connections : "reaches trackers through"
     apps ||--o{ app_projects : ""
     projects ||--o{ app_projects : ""
 
     project_repositories ||--o{ issues : "contains"
     apps |o--o{ issues : "reported by"
+    provider_connections |o--o{ issues : "opened through"
+    provider_connections ||--o| connection_secrets : "OAuth token (GitLab, Bitbucket)"
 
     owners {
         uuid id PK
@@ -49,21 +50,10 @@ erDiagram
         timestamptz created_at
         timestamptz updated_at
     }
-    provider_connections {
-        uuid id PK
-        uuid owner_id FK
-        tracker tracker "github|gitlab|bitbucket"
-        text external_id "GitHub installation id"
-        text account_login
-        text account_type "User|Organization"
-        timestamptz suspended_at "nullable"
-        timestamptz created_at
-        timestamptz updated_at
-    }
     project_repositories {
         uuid id PK
         uuid project_id FK
-        uuid provider_connection_id FK
+        tracker tracker "github|gitlab|bitbucket"
         text repository "owner/name"
         bool is_default "max one per project"
         timestamptz created_at
@@ -72,8 +62,26 @@ erDiagram
         uuid id PK
         uuid owner_id FK
         text name
-        app_platform platform "ios|android|flutter|react_native"
+        app_platform platform "web|ios|android"
         text bundle_id
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    provider_connections {
+        uuid id PK
+        uuid app_id FK "(app_id, owner_id) → apps"
+        uuid owner_id "denormalised from the app"
+        tracker tracker "github|gitlab|bitbucket"
+        text external_id "GitHub installation id"
+        text account_login
+        text account_type "User|Organization"
+        timestamptz suspended_at "nullable"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    connection_secrets {
+        uuid provider_connection_id PK,FK
+        bytea ciphertext "AES-256-GCM(token JSON)"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -94,6 +102,7 @@ erDiagram
         uuid id PK
         uuid project_repository_id FK
         uuid app_id FK "nullable"
+        uuid provider_connection_id FK "nullable"
         text external_id "owner/repo#123"
         text url
         text title
@@ -108,11 +117,20 @@ Enums:
 
 | Type | Values | Used by |
 |---|---|---|
-| `tracker` | `github`, `gitlab`, `bitbucket` | `provider_connections.tracker` |
-| `app_platform` | `ios`, `android`, `flutter`, `react_native` | `apps.platform` |
+| `tracker` | `github`, `gitlab`, `bitbucket` | `project_repositories.tracker`, `provider_connections.tracker` |
+| `app_platform` | `web`, `ios`, `android` | `apps.platform` |
 
 All primary keys are `uuid DEFAULT gen_random_uuid()` from the `pgcrypto`
-extension, which the first migration enables.
+extension, which the first migration enables. The `btree_gist` extension
+(enabled by `20261021130000_app_scoped_connections`) backs the exclusion
+constraint on `provider_connections`.
+
+**Where the credentials are.** Apps hold them, projects don't. A project
+repository only names a repository (`github` + `octo-org/app`). When an app
+reports, the issue service picks, for each target repository, one of *that
+app's* connections. So the path from a report to a tracker is
+`apps → app_projects → project_repositories (default)`, with the credentials
+coming separately from `apps → provider_connections`.
 
 ---
 
@@ -131,54 +149,100 @@ shared team login. There are no organisations or roles yet.
 
 ### `projects`
 
-A group of repositories that receive issues. This is the PRD's "project",
-except that SDK keys now belong to apps.
+Where code lives: a group of tracker repositories that receive issues. This
+is the PRD's "project", except that SDK keys and tracker credentials now
+belong to apps.
 
 | Column | Notes |
 |---|---|
 | `owner_id` | `NOT NULL`, `ON DELETE CASCADE`. |
-| `slug` | `UNIQUE (owner_id, slug)`. Two owners can both have `ios-app`. It was globally unique before this migration. Format `^[a-z0-9]+(?:-[a-z0-9]+)*$`, at most 64 characters, derived from the name if not given. |
+| `slug` | `UNIQUE (owner_id, slug)`. Two owners can both have `ios-app`. It was globally unique before `20261017120000`. Format `^[a-z0-9]+(?:-[a-z0-9]+)*$`, at most 64 characters, derived from the name if not given. |
 
-The old `default_repository text` column was **dropped**. The default is now
-the `project_repositories` row with `is_default = true`, which has a real
-foreign key to a connection.
-
-### `provider_connections`
-
-The owner's link to a tracker account. On GitHub, one row means one GitHub
-App installation on a user or organisation.
-
-| Column | Notes |
-|---|---|
-| `tracker` | Which `provider.Provider` handles it. |
-| `external_id` | The tracker's ID for the grant (GitHub: installation ID, as text). `UNIQUE (tracker, external_id)`, so one installation belongs to exactly one owner. |
-| `account_login`, `account_type` | Cached from the tracker for display (`octo-org`, `Organization`). Refreshed on every re-install. |
-| `suspended_at` | When set, the connection is skipped by issue targeting and rejected by repository operations. **Nothing sets it yet**; GitHub webhooks for suspend and uninstall are a follow-up. |
-
-No token is stored. GitHub access uses installation tokens, minted on demand
-from the App's private key (see [github.md](github.md)).
+The default repository is the `project_repositories` row with
+`is_default = true`.
 
 ### `project_repositories`
 
-The repositories a project sends issues to.
+The repositories a project sends issues to. A row names a repository; it
+holds **no credentials**.
 
 | Column | Notes |
 |---|---|
-| `provider_connection_id` | `NOT NULL`, `ON DELETE CASCADE`. The connection that can reach this repository. The tracker is the connection's tracker. The old `tracker` column was dropped so the two can't disagree. |
-| `repository` | Tracker full name, e.g. `octo-org/app`. Checked against the tracker before insert. |
+| `tracker` | `NOT NULL`. Which tracker hosts the repository. Must be a tracker configured on the deployment when linked (`provider.Registry.Get`). |
+| `repository` | Tracker full name, e.g. `octo-org/app`. Its format is checked with `Provider.ValidateRepository`; whether a given app can reach it is decided per app, through its connections. |
 | `is_default` | Partial unique index `project_repositories_one_default_per_project ON (project_id) WHERE is_default`: **at most one default per project**. |
 
-Also `UNIQUE (project_id, provider_connection_id, repository)`, so the same
-repository can't be linked twice through the same connection.
+Also `UNIQUE (project_id, tracker, repository)`
+(`project_repositories_target_key`), so the same repository can't be linked
+twice to a project.
 
 ### `apps`
 
-A mobile app that reports bugs, the "source of issues".
+A mobile app that reports bugs, the "source of issues". It owns its SDK keys
+and its tracker connections.
 
 | Column | Notes |
 |---|---|
 | `platform` | `app_platform` enum. Validated in Go as well, for a clean 422 instead of a Postgres error. |
 | `bundle_id` | iOS bundle identifier or Android application ID, at most 255 characters. Informational for now; ingestion could later check that it matches the reporting app. |
+
+`UNIQUE (id, owner_id)` (`apps_id_owner_id_key`) exists so
+`provider_connections` can reference `(id, owner_id)` together.
+
+### `provider_connections`
+
+An **app's** link to a tracker account. On GitHub, one row means "this app
+uses this GitHub App installation", and the installation is on one user or
+organisation. An app can have several connections, on one tracker or on
+several, such as two GitHub organisations plus a GitLab account.
+
+| Column | Notes |
+|---|---|
+| `app_id` | `NOT NULL`. Composite FK `(app_id, owner_id) → apps (id, owner_id) ON DELETE CASCADE` (`provider_connections_app_owner_fkey`). Deleting the app deletes its connections. |
+| `owner_id` | Copied from the app so owner-scoped queries need no join. The composite FK guarantees it is the app's owner. |
+| `tracker` | Which `provider.Provider` handles it. |
+| `external_id` | The tracker's ID for the grant (GitHub: installation ID, as text). |
+| `account_login`, `account_type` | Cached from the tracker (`octo-org`, `Organization`). Refreshed on every re-connect. `account_login` is also what `Covers` matches against on GitHub. |
+| `suspended_at` | When set, the issue service skips the connection and repository listing rejects it. **Nothing sets it yet**; GitHub webhooks for suspend and uninstall are a follow-up. |
+
+Constraints:
+
+- `UNIQUE (app_id, tracker, external_id)` (`provider_connections_app_target_key`).
+  An app holds a given tracker account at most once; connecting it again
+  updates the row.
+- `EXCLUDE USING gist (tracker WITH =, external_id WITH =, owner_id WITH <>)`
+  (`provider_connections_one_owner_per_account`). Rows for the same tracker
+  account must all have the same owner. **Apps of one owner may share** an
+  installation, each with its own row; **two owners never can**. A violation
+  is SQLSTATE `23P01`, which `apperr.Classify` maps to 409.
+- Index on `app_id`; the old `owner_id` index stays for the owner-wide list.
+
+A GitHub connection stores no token: GitHub access uses installation
+tokens, minted on demand from the App's private key (see
+[github.md](github.md)). A GitLab or Bitbucket connection has its OAuth token
+in `connection_secrets`, next.
+
+| Tracker | `external_id` | `account_login` |
+|---|---|---|
+| `github` | App installation ID | the user or organisation it is installed on |
+| `gitlab` | GitLab user ID | GitLab username |
+| `bitbucket` | Bitbucket user UUID (`{…}`) | Bitbucket username |
+
+### `connection_secrets`
+
+The credentials of connections that need them: GitLab and Bitbucket OAuth
+tokens. There is at most one row per connection.
+
+| Column | Notes |
+|---|---|
+| `provider_connection_id` | Primary key, FK → `provider_connections ON DELETE CASCADE`. Removing the connection, its app or its owner removes the token. |
+| `ciphertext` | `nonce ‖ AES-256-GCM(token JSON)`, with the connection ID as associated data, so a ciphertext copied into another row fails to decrypt. The key is `secrets.encryption_key`; the database never sees the plaintext. |
+| `created_at`, `updated_at` | `updated_at` changes on every reconnect and every token refresh. |
+
+The token JSON is `{"access_token", "refresh_token", "expiry"}`
+(`oauth.Token`). Only `provider.SecretStore` writes the table:
+`provider.Service` on connect, `oauth.Tokens` after a refresh. See
+[gitlab-bitbucket.md → Token storage](gitlab-bitbucket.md#token-storage-and-encryption).
 
 ### `app_keys`
 
@@ -205,7 +269,8 @@ deduplication (FR-54/55) and two-way status (FR-51).
 | Column | Notes |
 |---|---|
 | `project_repository_id` | Where it was opened. `ON DELETE CASCADE`: unlinking a repository forgets its issues. They stay on the tracker. |
-| `app_id` | Which app reported it. `ON DELETE SET NULL`: deleting an app keeps the history. Nullable also for issues opened through `OpenInRepository` without an app. |
+| `app_id` | Which app reported it. `ON DELETE SET NULL`: deleting an app keeps the history. |
+| `provider_connection_id` | **Which credentials opened it**: the reporting app's connection. `ON DELETE SET NULL`. Commenting on the issue or syncing its status later needs a connection, and the repository no longer carries one. When the original connection is gone, the caller has to choose another connection of an app that covers the repository. |
 | `external_id` | The tracker's issue reference as produced by the provider's `Opener`. GitHub: `owner/name#123`. |
 | `state` | `CHECK (state IN ('open','closed'))`, default `open`. `SetIssueState` exists for the future status sync. |
 | `fingerprint` | Optional grouping key. Index `(project_repository_id, fingerprint)` serves `GetOpenIssueByFingerprint`. |
@@ -220,11 +285,16 @@ deduplication (FR-54/55) and two-way status (FR-51).
 | Slug unique per owner | `projects_owner_id_slug_key` |
 | One default repository per project | partial unique index + `ClearDefault` → `Link`/`SetDefault` in one transaction |
 | The first linked repository is the default (FR-59: a project needs a default) | `project.Service.LinkRepository` sets `is_default` when the project has no repositories |
-| An installation belongs to one owner | `UNIQUE (tracker, external_id)` + the `WHERE provider_connections.owner_id = excluded.owner_id` guard on upsert |
-| A repository is linked through a connection that can reach it | `provider.Service.VerifyRepository` → `Provider.HasRepository` before insert |
+| A project repository is on a configured tracker, in that tracker's name format | `project.Service.LinkRepository` → `provider.Registry.Get(tracker).ValidateRepository` |
+| A connection's owner is its app's owner | composite FK `(app_id, owner_id) → apps (id, owner_id)` |
+| A tracker account belongs to one owner (possibly several of their apps) | exclusion constraint `provider_connections_one_owner_per_account` |
+| An app holds a tracker account once | `provider_connections_app_target_key` + `ON CONFLICT … DO UPDATE` in `UpsertProviderConnection` |
+| A connection is only attached across apps of the same owner | `provider.Service.AttachConnection` loads the target app and the source connection owner-scoped |
+| An app opens issues only through its own connections | `issue.Service` reads `ListActiveConnectionsForApp(app_id)` |
+| An app opens issues only in projects it is linked to | `ListIssueTargetsForApp` and `GetIssueTarget` join `app_projects` |
 | App and project in a link have the same owner | `app.Service.LinkProject` loads both with owner-scoped queries |
 | Only active keys authenticate | `GetActiveAppKeyByHash ... AND revoked_at IS NULL` |
-| Suspended connections are never used | `GetIssueTarget` / `ListIssueTargetsForApp` filter `pc.suspended_at IS NULL`; `provider.Service.connection` rejects them |
+| Suspended connections are never used | `ListActiveConnectionsForApp` filters `suspended_at IS NULL`; `provider.Service` rejects them for repository listing and attach |
 
 ---
 
@@ -236,57 +306,116 @@ DELETE owner
  │   ├─ project_repositories CASCADE
  │   │   └─ issues           CASCADE
  │   └─ app_projects        CASCADE
- ├─ apps                   CASCADE
- │   ├─ app_keys            CASCADE
- │   ├─ app_projects        CASCADE
- │   └─ issues.app_id       SET NULL  (rows already gone via repositories above)
- └─ provider_connections   CASCADE
-     └─ project_repositories CASCADE → issues CASCADE
+ └─ apps                   CASCADE
+     ├─ app_keys            CASCADE
+     ├─ app_projects        CASCADE
+     ├─ provider_connections CASCADE
+     │   ├─ connection_secrets CASCADE
+     │   └─ issues.provider_connection_id SET NULL
+     └─ issues.app_id       SET NULL
 
-DELETE provider_connection → its project_repositories and their issues are removed;
-                             projects that used it may be left with no default repository.
+DELETE provider_connection → only that app loses it, with its stored token. Other apps
+                             sharing the same tracker account keep their own rows; project
+                             repositories are untouched; issues it opened keep
+                             provider_connection_id = NULL.
 DELETE project_repository  → its issues are removed; if it was the default, the project has none
                              until another is set with PUT …/default.
-DELETE app                 → keys and links removed; issues keep app_id = NULL.
+DELETE app                 → keys, links and connections removed; issues keep app_id = NULL
+                             and provider_connection_id = NULL.
 ```
 
-Deleting rows in m-Seismo never deletes anything on GitHub.
+Deleting rows in m-Seismo never deletes anything on GitHub, GitLab or
+Bitbucket, and does not revoke the OAuth grant there.
 
 ---
 
-## The migration
+## The migrations
 
-File: `db/migrations/20261017120000_owners_apps_providers.sql` (dbmate
-format: `-- migrate:up` / `-- migrate:down`).
+There are three migrations for these features, in dbmate format (`-- migrate:up` /
+`-- migrate:down`).
+
+### `20261017120000_owners_apps_providers.sql`
+
+This one introduced owners, apps and the first, owner-level connections.
 
 **Up**, in order:
 
 1. Create `owners` and its `lower(email)` unique index.
 2. `projects`: add `owner_id NOT NULL` with an FK; replace the global slug
    unique with a per-owner unique; drop `default_repository`.
-3. Create `provider_connections`.
+3. Create `provider_connections` owned by the owner, with
+   `UNIQUE (tracker, external_id)`.
 4. `project_repositories`: add `provider_connection_id NOT NULL` with an FK;
-   drop `tracker`; add the `(project_id, provider_connection_id, repository)`
-   unique and an index on the connection ID.
+   drop `tracker`.
 5. Create the `app_platform` enum, then `apps`, `app_keys` and `app_projects`.
 6. Drop `project_keys`.
 7. Create `issues`.
 
-> **Existing data:** step 2 and step 4 add `NOT NULL` columns without
-> defaults, so they fail if `projects` or `project_repositories` already have
-> rows. There was no production data when this was written. Recreate local
+> **Existing data:** steps 2 and 4 add `NOT NULL` columns without defaults,
+> so they fail if `projects` or `project_repositories` already have rows.
+> There was no production data when this was written. Recreate local
 > databases (`make db-down` twice, then `make db-up`).
 
-**Down** reverses each step. It recreates `project_keys` (empty), restores
-`project_repositories.tracker` from the connection before dropping the
-connection column, and restores the global slug unique. That last step fails
-if two owners share a slug.
+### `20261021130000_app_scoped_connections.sql`
 
-`db/schema.sql` is the pg_dump-style snapshot sqlc reads. dbmate rewrites it
-on `make db-up` and `make db-down`. In this change it was updated by hand to
-match the migration, because no database was available when it was written.
-The next `make db-up` regenerates it, and the diff should be empty or only
-cosmetic.
+This one moves connections from the owner to the app, and **keeps existing
+data working**.
+
+**Up**, in order:
+
+1. `create extension if not exists btree_gist`.
+2. `provider_connections`: drop `UNIQUE (tracker, external_id)`, add a
+   nullable `app_id`.
+3. **Backfill.** Copy every owner-level connection to **every app of that
+   owner**, keeping the tracker, external ID, account, `suspended_at` and
+   timestamps. Until now every app could use every connection of its owner,
+   so this keeps that behaviour. A temporary `connection_copies` table
+   (`old_id`, `app_id`, `new_id`) remembers the copies.
+4. `issues`: add `provider_connection_id` (FK, `ON DELETE SET NULL`). Fill it
+   with the copy that belongs to (`issues.app_id`, the repository's old
+   connection). Index it.
+5. `project_repositories`: add `tracker`, filled from the old connection, then
+   `NOT NULL`. Drop `provider_connection_id` and its index. Rows that now
+   collide (the same repository linked through two connections) collapse to
+   one, keeping the default and otherwise the oldest. Add
+   `UNIQUE (project_id, tracker, repository)`.
+6. Delete the old owner-level rows (`app_id IS NULL`); set `app_id NOT NULL`.
+   An owner with connections but no apps loses them; they could not be used
+   for anything anyway.
+7. Constraints: `apps (id, owner_id)` unique, the composite FK, the per-app
+   unique, the one-owner-per-account exclusion constraint, and an index on
+   `app_id`.
+
+**Down** is **lossy**:
+
+1. The copies collapse to one row per (tracker, external_id), keeping the
+   oldest.
+2. `app_id` and `issues.provider_connection_id` are dropped, and
+   `UNIQUE (tracker, external_id)` comes back.
+3. Project repositories are re-linked to the connection of the project
+   owner's whose `account_login` matches the repository owner
+   (`split_part(repository, '/', 1)`). Repositories that match nothing are
+   **deleted**, with their issues.
+4. `btree_gist` is dropped.
+
+Both directions were run against the dev database with seeded data: an owner
+with two apps, one connection, a linked repository and an issue reported by
+the second app. After `up`, each app had its own copy, the issue pointed at
+the second app's copy, and that app could still open issues. After `down`
+and `up` again, the result was the same.
+
+### `20261022120000_connection_secrets.sql`
+
+Creates `connection_secrets`. The down migration drops it, along with every
+stored GitLab and Bitbucket token; those apps then have to reconnect. Both
+directions were run on the dev database.
+
+`20261018120000_create_reports.sql` (ingestion, from `main`) runs between
+these migrations and doesn't touch connections.
+
+`db/schema.sql` is the pg_dump snapshot sqlc reads. It is regenerated from
+the dev database with `dbmate dump` after applying the migrations. The
+`\restrict` lines that pg_dump 18 adds are stripped, as `make db-up` does.
 
 ---
 
@@ -349,23 +478,26 @@ owner's data from another (see
 
 | Query | Kind | Notes |
 |---|---|---|
-| `LinkProjectRepository` | `:one` | insert; the service runs it in a transaction |
+| `LinkProjectRepository` | `:one` | insert `(project_id, tracker, repository, is_default)`; the service runs it in a transaction |
 | `GetProjectRepository` | `:one` | `id AND project_id` (currently unused) |
-| `ListProjectRepositories` | `:many` | joins the connection for `tracker` and `account_login` |
+| `ListProjectRepositories` | `:many` | the project's repositories, oldest first |
 | `ClearDefaultProjectRepository` | `:exec` | sets `is_default = false` for the project |
 | `SetDefaultProjectRepository` | `:execrows` | `id AND project_id` |
 | `UnlinkProjectRepository` | `:execrows` | `id AND project_id` |
-| `GetIssueTarget` | `:one` | repository + connection (`tracker`, `external_id`) for one repo; skips suspended connections. Used by `issue.Service.OpenInRepository` |
-| `ListIssueTargetsForApp` | `:many` | `app_projects` → the **default** `project_repositories` → active `provider_connections`. Used by `issue.Service.OpenForApp` |
+| `GetIssueTarget` | `:one` | one repository (`tracker`, `repository`), **only if the app is linked to its project** (joins `app_projects` on `app_id`). Used by `issue.Service.OpenInRepository` |
+| `ListIssueTargetsForApp` | `:many` | `app_projects` → the **default** `project_repositories`. Returns `tracker` and `repository` only; the connection is resolved afterwards from the app's own connections. Used by `issue.Service.Targets` / `OpenForApp` |
 
 ### `provider_connections.sql`
 
 | Query | Kind | Notes |
 |---|---|---|
-| `UpsertProviderConnection` | `:one` | `ON CONFLICT (tracker, external_id) DO UPDATE … WHERE provider_connections.owner_id = excluded.owner_id`. A re-install by the same owner refreshes the login and type and clears `suspended_at`. If **another** owner holds the row, the `WHERE` fails, nothing is returned, and the service turns `pgx.ErrNoRows` into 409. |
-| `GetProviderConnection` | `:one` | `id AND owner_id` |
-| `ListProviderConnections` | `:many` | `owner_id` |
-| `DeleteProviderConnection` | `:execrows` | `id AND owner_id` |
+| `UpsertProviderConnection` | `:one` | `ON CONFLICT (app_id, tracker, external_id) DO UPDATE`. Re-connecting refreshes the login and type and clears `suspended_at`. If **another owner** already holds the tracker account, the exclusion constraint fails with `23P01`, which the service turns into 409. |
+| `GetAppConnection` | `:one` | `id AND app_id AND owner_id` |
+| `GetOwnerConnection` | `:one` | `id AND owner_id` (the source of an attach) |
+| `ListAppConnections` | `:many` | `app_id AND owner_id` |
+| `ListOwnerConnections` | `:many` | `owner_id`: every app's connections, for `GET /providers/connections` |
+| `ListActiveConnectionsForApp` | `:many` | `app_id AND suspended_at IS NULL`, oldest first. The issue service picks from these. |
+| `DeleteAppConnection` | `:execrows` | `id AND app_id AND owner_id` |
 
 ### `apps.sql`
 
@@ -380,11 +512,21 @@ owner's data from another (see
 | `UnlinkAppProject` | `:execrows` | |
 | `ListAppProjects` | `:many` | the projects joined through `app_projects` |
 
+### `connection_secrets.sql`
+
+| Query | Kind | Notes |
+|---|---|---|
+| `UpsertConnectionSecret` | `:exec` | insert or replace the ciphertext of a connection; used on connect and after a token refresh |
+| `GetConnectionSecret` | `:one` | the ciphertext; no row means the connection has no secret (`provider.ErrNoSecret`) |
+
+Both are only called through `provider.SecretStore`, which encrypts and
+decrypts.
+
 ### `issues.sql`
 
 | Query | Kind | Notes |
 |---|---|---|
-| `CreateIssue` | `:one` | called by `issue.Service` after a successful open |
+| `CreateIssue` | `:one` | called by `issue.Service` after a successful open, with the app and the connection used |
 | `GetOpenIssueByFingerprint` | `:one` | **unused yet**; for dedup (FR-55) |
 | `SetIssueState` | `:exec` | **unused yet**; for status sync (FR-51) |
 

@@ -1,0 +1,15 @@
+meta {
+  name: Delete Project
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/projects/{{projectId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  204. Removes its repository links, app links and issue records.
+}

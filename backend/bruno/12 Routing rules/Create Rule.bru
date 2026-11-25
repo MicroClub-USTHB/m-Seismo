@@ -1,0 +1,36 @@
+meta {
+  name: Create Rule
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/projects/{{projectId}}/routing-rules
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "category": "crash",
+    "repository_id": "{{repositoryId}}",
+    "labels": ["crash", "ios"],
+    "assignees": ["octocat"],
+    "milestone": "v2.4"
+  }
+}
+
+vars:post-response {
+  ruleId: res.body.id
+}
+
+docs {
+  201 rule. Conditions `app_id`, `severity` (`low`, `medium`, `high`,
+  `critical`) and `category` (`bug`, `crash`, `ui`, `other`) are optional;
+  an empty one matches any report. A crash the SDK sent on its own counts
+  as category `crash`. `repository_id` is required and must be one of the
+  project's repositories. `position` is optional: the rule goes after the
+  last one. Up to 20 labels (50 characters each) and 10 assignees (tracker
+  usernames, no `@`). 422 invalid body; 404 unknown project, repository or
+  app. Sets `ruleId`.
+}

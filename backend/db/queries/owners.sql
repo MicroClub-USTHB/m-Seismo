@@ -11,6 +11,10 @@ WHERE id = $1;
 SELECT * FROM owners
 WHERE lower(email) = lower(@email::text);
 
+-- name: ListOwners :many
+SELECT * FROM owners
+ORDER BY created_at DESC;
+
 -- name: UpdateOwner :one
 UPDATE owners
 SET email = $2,

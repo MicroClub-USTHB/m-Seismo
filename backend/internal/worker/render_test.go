@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 )
 
@@ -46,7 +47,7 @@ func TestRenderBody(t *testing.T) {
 		},
 	}
 	id, inst := uuid.New(), uuid.New()
-	body := render(&r, reportInfo{ID: id, InstallationID: inst, Screenshot: true}).Body
+	body := render(&r, reportInfo{ID: id, InstallationID: inst, ScreenshotURL: "https://seismo.example.com/api/v1/attachments/1?expires=1&sig=abc"}).Body
 
 	for _, want := range []string{
 		"ping @\u200boctocat",
@@ -56,7 +57,7 @@ func TestRenderBody(t *testing.T) {
 		"| Release | 2.3.1 (87) |",
 		"````\n2026-10-21T10:00:00.000Z ERROR payment failed ``` here\n````",
 		"POST https://api.example.com/pay → no response",
-		"screenshot was sent",
+		"[Screenshot](https://seismo.example.com/api/v1/attachments/1?expires=1&sig=abc)",
 		id.String(),
 		inst.String(),
 	} {
@@ -66,6 +67,34 @@ func TestRenderBody(t *testing.T) {
 	}
 	if strings.Contains(body, "secret-token") {
 		t.Error("body contains a network request body")
+	}
+}
+
+func TestRenderBodyShowsTheCrashlyticsCrash(t *testing.T) {
+	r := ingest.Report{
+		Platform: "android",
+		Trigger:  "crash",
+		Crash:    &ingest.Crash{Type: "IllegalStateException", Reason: "boom", StackTrace: []string{"MainActivity.onCreate"}},
+	}
+	event := &crashprovider.Event{
+		Provider:   "crashlytics",
+		EventID:    "abc",
+		URL:        "https://console.firebase.google.com/project/demo/crashlytics/app/android:demo/issues/1",
+		Title:      "MainActivity.onCreate — boom",
+		StackTrace: []string{"at MainActivity.onCreate(MainActivity.kt:12)"},
+	}
+	body := render(&r, reportInfo{ID: uuid.New(), InstallationID: uuid.New(), CrashEvent: event}).Body
+
+	for _, want := range []string{
+		"**IllegalStateException**: boom",
+		"#### Firebase Crashlytics",
+		"**MainActivity.onCreate — boom**",
+		"at MainActivity.onCreate(MainActivity.kt:12)",
+		"[View in Firebase Crashlytics](https://console.firebase.google.com/project/demo/crashlytics/app/android:demo/issues/1)",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body is missing %q:\n%s", want, body)
+		}
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/fx"
 
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/app"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
 )
 
@@ -19,11 +20,12 @@ var Module = fx.Module("project",
 
 type Handler struct {
 	svc     *Service
+	apps    *app.Service
 	require httpx.AuthMiddleware
 }
 
-func NewHandler(svc *Service, require httpx.AuthMiddleware) *Handler {
-	return &Handler{svc: svc, require: require}
+func NewHandler(svc *Service, apps *app.Service, require httpx.AuthMiddleware) *Handler {
+	return &Handler{svc: svc, apps: apps, require: require}
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -34,6 +36,9 @@ func (h *Handler) Mount(r chi.Router) {
 			r.Get("/", h.get)
 			r.Patch("/", h.update)
 			r.Delete("/", h.delete)
+
+			r.Get("/apps", h.listApps)
+			r.Post("/apps", h.createApp)
 
 			r.Get("/repositories", h.listRepositories)
 			r.Post("/repositories", h.linkRepository)
@@ -107,6 +112,39 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.NoContent(w)
+}
+
+func (h *Handler) listApps(w http.ResponseWriter, r *http.Request) {
+	id, ok := projectID(w, r)
+	if !ok {
+		return
+	}
+	apps, err := h.svc.ListApps(r.Context(), httpx.OwnerID(r.Context()), id)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, apps)
+}
+
+// createApp adds a sub-app to the project — a web, iOS or Android build
+// that reports into the project's repositories.
+func (h *Handler) createApp(w http.ResponseWriter, r *http.Request) {
+	id, ok := projectID(w, r)
+	if !ok {
+		return
+	}
+	var in app.CreateInput
+	if err := httpx.Decode(w, r, &in); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	a, err := h.apps.CreateForProject(r.Context(), httpx.OwnerID(r.Context()), id, in)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, a)
 }
 
 func (h *Handler) listRepositories(w http.ResponseWriter, r *http.Request) {

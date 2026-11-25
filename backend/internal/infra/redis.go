@@ -21,7 +21,7 @@ func NewRedisClient(lc fx.Lifecycle, cfg *config.Config) (*redis.Client, error) 
 	client := redis.NewClient(opts)
 
 	if err := client.Ping(context.Background()).Err(); err != nil {
-		client.Close()
+		_ = client.Close()
 		return nil, fmt.Errorf("infra: ping redis: %w", err)
 	}
 

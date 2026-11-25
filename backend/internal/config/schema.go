@@ -53,6 +53,33 @@ type GitHubConfig struct {
 	// MaxRateLimitWait is the longest one call waits out a GitHub rate limit
 	// before failing with a retryable rate-limit error.
 	MaxRateLimitWait time.Duration
+	// WebhookSecret is the GitHub App's webhook secret. Webhooks are
+	// refused while it is empty.
+	WebhookSecret string
+}
+
+// OAuthTrackerConfig holds the deployment-wide settings of a tracker that
+// is reached with per-connection OAuth tokens (GitLab, Bitbucket). Each
+// app's own OAuth application (client ID and secret) is registered
+// separately, through provider.CredentialStore, and is not here.
+type OAuthTrackerConfig struct {
+	// WebURL is the base of the authorize and token endpoints, e.g.
+	// https://gitlab.com/ (or a self-managed GitLab).
+	WebURL string
+	// APIURL is the REST API base, e.g. https://gitlab.com/api/v4/.
+	APIURL string
+	// RedirectURL is the OAuth callback registered with the tracker. Empty
+	// means {server.public_url}/api/v1/providers/<tracker>/callback.
+	RedirectURL string
+	// MaxRateLimitWait is the longest one call waits out a 429 before
+	// failing with a retryable rate-limit error.
+	MaxRateLimitWait time.Duration
+}
+
+// SecretsConfig holds the key that encrypts stored OAuth tokens.
+type SecretsConfig struct {
+	// EncryptionKey is 32 random bytes, base64-encoded.
+	EncryptionKey string
 }
 
 // LimitsConfig holds m-Seismo's own request limits.
@@ -73,6 +100,38 @@ type IngestConfig struct {
 	InstallationBurst     int
 }
 
+// SuperadminConfig seeds one owner account at startup, so a fresh
+// deployment has someone able to log into the dashboard and create other
+// owners (there is no separate role or permission: the seeded owner is a
+// regular owner, just pre-created from configuration instead of
+// POST /auth/register). Empty Email or Password skips seeding.
+type SuperadminConfig struct {
+	Email    string
+	Password string
+	Name     string
+}
+
+// CrashConfig selects the crash reporter reports are linked to.
+type CrashConfig struct {
+	// Source is "none" or "crashlytics".
+	Source string
+	// Window is how far apart a report and a crash may be and still match.
+	Window      time.Duration
+	Crashlytics CrashlyticsConfig
+}
+
+// CrashlyticsConfig identifies m-Seismo to Google as an OAuth client. Each
+// project's own access (refresh token, Firebase apps) is stored in the
+// database by the OAuth flow, not here.
+type CrashlyticsConfig struct {
+	ClientID     string
+	ClientSecret string
+	// RedirectURL is the public URL of /api/v1/oauth/crashlytics/callback.
+	// Empty means server.public_url plus that path.
+	RedirectURL  string
+	QuotaProject string
+}
+
 // WorkerConfig controls the pipeline worker that turns accepted reports
 // into issues.
 type WorkerConfig struct {
@@ -87,16 +146,73 @@ type WorkerConfig struct {
 	MaxAttempts int
 }
 
+// AttachmentsConfig controls the private, expiring links issues show for a
+// report's attachments (FR-48). Links are signed with auth.jwt_secret, so
+// there is no separate key to configure.
+type AttachmentsConfig struct {
+	// LinkTTL is how long a link stays valid after it is built.
+	LinkTTL time.Duration
+}
+
+// RetentionConfig controls the daily sweep that deletes reports older than
+// their app's retention period.
+type RetentionConfig struct {
+	// DefaultDays is the retention period for apps that don't set their
+	// own retention_days.
+	DefaultDays int
+}
+
+// CoordinatorConfig controls the gRPC server the log coordinator attaches
+// to, and the server logs the worker asks it for.
+type CoordinatorConfig struct {
+	// Enabled serves Coordinator.Attach in this process.
+	Enabled bool
+	// Addr is where the gRPC server listens, e.g. ":9443".
+	Addr string
+	// TLSCertFile and TLSKeyFile hold the server certificate. Without them
+	// the server speaks plain gRPC, which is only allowed in development
+	// or when Plaintext says TLS ends in front of the backend.
+	TLSCertFile string
+	TLSKeyFile  string
+	Plaintext   bool
+	// Window is how far before and after a report the worker asks for
+	// server logs.
+	Window time.Duration
+	// Timeout is how long the worker waits for the coordinator's answer.
+	Timeout time.Duration
+	// MaxBytes is the log budget of one query, for the whole aggregate.
+	MaxBytes int
+	// MaxLinesPerWorkload caps the lines of each service.
+	MaxLinesPerWorkload int
+}
+
+// CrashProvidersConfig holds operator-controlled credential encryption and allowed
+// Sentry origins. API clients cannot introduce arbitrary outbound destinations.
+type CrashProvidersConfig struct {
+	EncryptionKey          string   // base64-encoded 32-byte AES key; empty disables Sentry connections
+	PreviousEncryptionKeys []string // decryption-only keys retained during rotation (at most five)
+	SentryOrigins          []string
+}
+
 type Config struct {
-	Env      string
-	LogLevel string
-	Server   ServerConfig
-	Database DatabaseConfig
-	Redis    RedisConfig
-	NATS     NATSConfig
-	Auth     AuthConfig
-	GitHub   GitHubConfig
-	Limits   LimitsConfig
-	Ingest   IngestConfig
-	Worker   WorkerConfig
+	Env            string
+	LogLevel       string
+	Server         ServerConfig
+	Database       DatabaseConfig
+	Redis          RedisConfig
+	NATS           NATSConfig
+	Auth           AuthConfig
+	GitHub         GitHubConfig
+	GitLab         OAuthTrackerConfig
+	Bitbucket      OAuthTrackerConfig
+	Secrets        SecretsConfig
+	Superadmin     SuperadminConfig
+	Limits         LimitsConfig
+	Ingest         IngestConfig
+	Worker         WorkerConfig
+	Attachments    AttachmentsConfig
+	Retention      RetentionConfig
+	Coordinator    CoordinatorConfig
+	CrashProviders CrashProvidersConfig
+	Crash          CrashConfig
 }

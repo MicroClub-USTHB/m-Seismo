@@ -1,0 +1,18 @@
+meta {
+  name: Unlink Repository
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/projects/{{projectId}}/repositories/{{repositoryId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  204. 409 if routing rules send to this repository (change or delete
+  them first), or if it is the default and other repositories are linked
+  (make another one the default first). Unlinking the last repository
+  leaves the project without one, and issues from linked apps skip it.
+}

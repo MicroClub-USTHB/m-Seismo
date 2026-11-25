@@ -1,0 +1,26 @@
+meta {
+  name: Replace Rule
+  type: http
+  seq: 3
+}
+
+put {
+  url: {{baseUrl}}/projects/{{projectId}}/routing-rules/{{ruleId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "position": 0,
+    "severity": "critical",
+    "repository_id": "{{repositoryId}}",
+    "labels": ["urgent"]
+  }
+}
+
+docs {
+  200 rule. Replaces the whole rule: a field left out is cleared, except
+  `position`, which is kept when left out. Same errors as Create Rule, plus
+  404 for an unknown rule.
+}

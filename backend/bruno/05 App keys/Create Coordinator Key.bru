@@ -1,0 +1,22 @@
+meta {
+  name: Create Coordinator Key
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/apps/{{appId}}/coordinator-keys
+  body: none
+  auth: inherit
+}
+
+vars:post-response {
+  coordinatorKeyId: res.body.id
+}
+
+docs {
+  201 key, plus `"secret": "mco_..."` which appears only in this response.
+  The app's log coordinator sends it to the gRPC Coordinator.Attach
+  (docs/coordinator.md). It is never accepted by POST /reports, and an SDK
+  key is never accepted by Attach. Sets `coordinatorKeyId`.
+}

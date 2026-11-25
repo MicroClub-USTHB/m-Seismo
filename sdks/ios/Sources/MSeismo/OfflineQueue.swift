@@ -9,6 +9,7 @@ public final class OfflineQueue {
     private let store: OfflineQueueStore
     private let now: () -> Date
     private let maxBackoff: TimeInterval
+    private let jitter: (TimeInterval) -> TimeInterval
     private let queue = DispatchQueue(label: "mseismo.offline-queue")
 
     private var items: [QueuedReport]
@@ -33,12 +34,14 @@ public final class OfflineQueue {
         transport: ReportTransport,
         store: OfflineQueueStore = OfflineQueueStore(),
         now: @escaping () -> Date = Date.init,
-        maxBackoff: TimeInterval = 300
+        maxBackoff: TimeInterval = 300,
+        jitter: @escaping (TimeInterval) -> TimeInterval = { Double.random(in: 0...($0 * 0.2)) }
     ) {
         self.transport = transport
         self.store = store
         self.now = now
         self.maxBackoff = maxBackoff
+        self.jitter = jitter
         items = store.load()
     }
 
@@ -46,6 +49,11 @@ public final class OfflineQueue {
     /// returns — the report survives even if the app is killed right
     /// after. The actual network send happens asynchronously.
     public func enqueue(_ report: Report) {
+        // The ID is the backend's idempotency key: fixed here, once, so
+        // every retry of this report carries the same one.
+        var report = report
+        if report.id == nil { report.id = UUID().uuidString }
+
         queue.sync {
             items.append(QueuedReport(report: report, nextAttemptAt: now()))
             store.save(items)
@@ -84,11 +92,18 @@ public final class OfflineQueue {
                 switch result {
                 case .success:
                     self.items.removeAll { $0.id == item.id }
-                case .failure:
-                    if let currentIndex = self.items.firstIndex(where: { $0.id == item.id }) {
+                case .failure(let error):
+                    if let transportError = error as? TransportError, transportError.isPermanent {
+                        // The backend will never accept this report; keep
+                        // it from blocking the ones behind it.
+                        NSLog("[MSeismo] dropped report %@: %@", item.report.id ?? "?", String(describing: transportError))
+                        self.items.removeAll { $0.id == item.id }
+                    } else if let currentIndex = self.items.firstIndex(where: { $0.id == item.id }) {
                         self.items[currentIndex].attempts += 1
                         let backoff = min(self.maxBackoff, pow(2, Double(self.items[currentIndex].attempts)))
-                        self.items[currentIndex].nextAttemptAt = self.now().addingTimeInterval(backoff)
+                        let serverDelay = (error as? TransportError)?.retryAfter ?? 0
+                        let delay = max(backoff + self.jitter(backoff), serverDelay)
+                        self.items[currentIndex].nextAttemptAt = self.now().addingTimeInterval(delay)
                     }
                 }
 

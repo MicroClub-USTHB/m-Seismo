@@ -4,11 +4,10 @@
 #   curl http://localhost:8080/healthz
 #
 # Services: Postgres, Redis, NATS (JetStream), a one-shot dbmate migration,
-# a fake GitHub (so the GitHub connect flow and issue opening work without
-# real credentials) and the backend.
-#
-# To use a real GitHub App instead of the fake, set the SEISMO_GITHUB_*
-# variables in deploy/.env (see deploy/.env.example).
+# and the backend. On a server, add compose.server.yml on top (see
+# deploy/README.md). Configure a real GitHub App, GitLab application and/or
+# Bitbucket consumer via the SEISMO_GITHUB_*, SEISMO_GITLAB_* and
+# SEISMO_BITBUCKET_* variables in deploy/.env (see deploy/.env.example).
 
 name: m-seismo-dev
 
@@ -60,26 +59,18 @@ services:
         condition: service_healthy
     restart: "no"
 
-  fakegithub:
-    build:
-      context: ../backend
-      target: fakegithub
-    environment:
-      FAKEGITHUB_ADDR: ":9090"
-      FAKEGITHUB_KEY_PATH: /shared/github-app.pem
-      FAKEGITHUB_PUBLIC_URL: http://localhost:${FAKEGITHUB_PORT:-9090}
-    ports:
-      - "${FAKEGITHUB_PORT:-9090}:9090"
-    volumes:
-      - github-app-key:/shared
-
   backend:
     build:
       context: ../backend
       target: backend
     ports:
       - "${BACKEND_PORT:-8080}:8080"
+      # Coordinator.Attach (plain gRPC in development)
+      - "${COORDINATOR_PORT:-9443}:9443"
     environment:
+      SEISMO_CRASH_PROVIDERS_ENCRYPTION_KEY: ${SEISMO_CRASH_PROVIDERS_ENCRYPTION_KEY:-}
+      SEISMO_CRASH_PROVIDERS_PREVIOUS_ENCRYPTION_KEYS: ${SEISMO_CRASH_PROVIDERS_PREVIOUS_ENCRYPTION_KEYS:-}
+      SEISMO_CRASH_PROVIDERS_SENTRY_ORIGINS: ${SEISMO_CRASH_PROVIDERS_SENTRY_ORIGINS:-https://sentry.io https://us.sentry.io https://de.sentry.io}
       SEISMO_ENV: development
       SEISMO_LOG_LEVEL: debug
       SEISMO_SERVER_HOST: 0.0.0.0
@@ -87,25 +78,72 @@ services:
       SEISMO_SERVER_PUBLIC_URL: http://localhost:${BACKEND_PORT:-8080}
       SEISMO_SERVER_FRONTEND_URL: ${SEISMO_SERVER_FRONTEND_URL:-http://localhost:3000}
       SEISMO_DATABASE_URL: postgres://seismo:seismo@postgres:5432/seismo?sslmode=disable
+      SEISMO_DATABASE_MAX_CONNS: ${SEISMO_DATABASE_MAX_CONNS:-}
       SEISMO_REDIS_URL: redis://redis:6379/0
       SEISMO_NATS_URL: nats://nats:4222
       SEISMO_AUTH_JWT_SECRET: ${SEISMO_AUTH_JWT_SECRET:-}
       SEISMO_AUTH_JWT_TTL: ${SEISMO_AUTH_JWT_TTL:-24h}
-      # GitHub: defaults point at the fake; override all of them in deploy/.env for a real App.
-      SEISMO_GITHUB_APP_ID: ${SEISMO_GITHUB_APP_ID:-1}
-      SEISMO_GITHUB_APP_SLUG: ${SEISMO_GITHUB_APP_SLUG:-m-seismo-dev}
-      SEISMO_GITHUB_CLIENT_ID: ${SEISMO_GITHUB_CLIENT_ID:-fake-client}
-      SEISMO_GITHUB_CLIENT_SECRET: ${SEISMO_GITHUB_CLIENT_SECRET:-fake-secret}
+      # Seeds one owner at startup; see deploy/.env.example.
+      SEISMO_SUPERADMIN_EMAIL: ${SEISMO_SUPERADMIN_EMAIL:-}
+      SEISMO_SUPERADMIN_PASSWORD: ${SEISMO_SUPERADMIN_PASSWORD:-}
+      SEISMO_SUPERADMIN_NAME: ${SEISMO_SUPERADMIN_NAME:-Super Admin}
+      # GitHub App: set these in deploy/.env (see deploy/.env.example).
+      SEISMO_GITHUB_APP_ID: ${SEISMO_GITHUB_APP_ID:-}
+      SEISMO_GITHUB_APP_SLUG: ${SEISMO_GITHUB_APP_SLUG:-}
+      SEISMO_GITHUB_CLIENT_ID: ${SEISMO_GITHUB_CLIENT_ID:-}
+      SEISMO_GITHUB_CLIENT_SECRET: ${SEISMO_GITHUB_CLIENT_SECRET:-}
       SEISMO_GITHUB_PRIVATE_KEY: ${SEISMO_GITHUB_PRIVATE_KEY:-}
-      SEISMO_GITHUB_PRIVATE_KEY_PATH: /shared/github-app.pem
-      SEISMO_GITHUB_API_URL: ${SEISMO_GITHUB_API_URL:-http://fakegithub:9090/}
-      SEISMO_GITHUB_WEB_URL: ${SEISMO_GITHUB_WEB_URL:-http://fakegithub:9090/}
+      SEISMO_GITHUB_PRIVATE_KEY_PATH: ${SEISMO_GITHUB_PRIVATE_KEY_PATH:-}
+      SEISMO_GITHUB_API_URL: ${SEISMO_GITHUB_API_URL:-}
+      SEISMO_GITHUB_WEB_URL: ${SEISMO_GITHUB_WEB_URL:-}
+      SEISMO_GITHUB_WEBHOOK_SECRET: ${SEISMO_GITHUB_WEBHOOK_SECRET:-}
       # GitHub rate-limit handling (see backend/docs/github.md#rate-limits)
       SEISMO_GITHUB_MIN_WRITE_INTERVAL: ${SEISMO_GITHUB_MIN_WRITE_INTERVAL:-1s}
       SEISMO_GITHUB_MAX_RATE_LIMIT_WAIT: ${SEISMO_GITHUB_MAX_RATE_LIMIT_WAIT:-30s}
+      # GitLab and Bitbucket: deployment-wide instance settings only. Each
+      # app registers its own OAuth application (client ID and secret)
+      # through PUT /apps/{appID}/providers/{tracker}/credentials instead
+      # of one shared here. Tokens and app client secrets are stored
+      # encrypted with this key (empty in development = a fixed
+      # development key).
+      SEISMO_SECRETS_ENCRYPTION_KEY: ${SEISMO_SECRETS_ENCRYPTION_KEY:-}
+      SEISMO_GITLAB_WEB_URL: ${SEISMO_GITLAB_WEB_URL:-}
+      SEISMO_GITLAB_API_URL: ${SEISMO_GITLAB_API_URL:-}
+      SEISMO_GITLAB_MAX_RATE_LIMIT_WAIT: ${SEISMO_GITLAB_MAX_RATE_LIMIT_WAIT:-30s}
+      SEISMO_GITLAB_REDIRECT_URL: ${SEISMO_GITLAB_REDIRECT_URL:-}
+      SEISMO_BITBUCKET_WEB_URL: ${SEISMO_BITBUCKET_WEB_URL:-}
+      SEISMO_BITBUCKET_API_URL: ${SEISMO_BITBUCKET_API_URL:-}
+      SEISMO_BITBUCKET_MAX_RATE_LIMIT_WAIT: ${SEISMO_BITBUCKET_MAX_RATE_LIMIT_WAIT:-30s}
+      SEISMO_BITBUCKET_REDIRECT_URL: ${SEISMO_BITBUCKET_REDIRECT_URL:-}
       SEISMO_LIMITS_TEST_ISSUES_PER_MINUTE: ${SEISMO_LIMITS_TEST_ISSUES_PER_MINUTE:-10}
-    volumes:
-      - github-app-key:/shared:ro
+      # Rate limits on reports sent by the SDKs (see spec/ingestion.md)
+      SEISMO_INGEST_APP_PER_MINUTE: ${SEISMO_INGEST_APP_PER_MINUTE:-}
+      SEISMO_INGEST_APP_BURST: ${SEISMO_INGEST_APP_BURST:-}
+      SEISMO_INGEST_INSTALLATION_PER_MINUTE: ${SEISMO_INGEST_INSTALLATION_PER_MINUTE:-}
+      SEISMO_INGEST_INSTALLATION_BURST: ${SEISMO_INGEST_INSTALLATION_BURST:-}
+      # Report-to-issue worker, retention and attachment links
+      SEISMO_WORKER_ENABLED: ${SEISMO_WORKER_ENABLED:-}
+      SEISMO_WORKER_CONCURRENCY: ${SEISMO_WORKER_CONCURRENCY:-}
+      SEISMO_WORKER_MAX_ATTEMPTS: ${SEISMO_WORKER_MAX_ATTEMPTS:-}
+      SEISMO_RETENTION_DEFAULT_DAYS: ${SEISMO_RETENTION_DEFAULT_DAYS:-}
+      SEISMO_ATTACHMENTS_LINK_TTL: ${SEISMO_ATTACHMENTS_LINK_TTL:-}
+      # Crash reporter linked to reports (see backend/docs/crashlytics.md)
+      SEISMO_CRASH_SOURCE: ${SEISMO_CRASH_SOURCE:-}
+      SEISMO_CRASH_WINDOW: ${SEISMO_CRASH_WINDOW:-}
+      SEISMO_CRASH_CRASHLYTICS_CLIENT_ID: ${SEISMO_CRASH_CRASHLYTICS_CLIENT_ID:-}
+      SEISMO_CRASH_CRASHLYTICS_CLIENT_SECRET: ${SEISMO_CRASH_CRASHLYTICS_CLIENT_SECRET:-}
+      SEISMO_CRASH_CRASHLYTICS_REDIRECT_URL: ${SEISMO_CRASH_CRASHLYTICS_REDIRECT_URL:-}
+      SEISMO_CRASH_CRASHLYTICS_QUOTA_PROJECT: ${SEISMO_CRASH_CRASHLYTICS_QUOTA_PROJECT:-}
+      # Log coordinator (see backend/docs/coordinator.md)
+      SEISMO_COORDINATOR_ENABLED: "true"
+      SEISMO_COORDINATOR_ADDR: ":9443"
+      SEISMO_COORDINATOR_TLS_CERT_FILE: ${SEISMO_COORDINATOR_TLS_CERT_FILE:-}
+      SEISMO_COORDINATOR_TLS_KEY_FILE: ${SEISMO_COORDINATOR_TLS_KEY_FILE:-}
+      SEISMO_COORDINATOR_PLAINTEXT: ${SEISMO_COORDINATOR_PLAINTEXT:-}
+      SEISMO_COORDINATOR_WINDOW: ${SEISMO_COORDINATOR_WINDOW:-}
+      SEISMO_COORDINATOR_TIMEOUT: ${SEISMO_COORDINATOR_TIMEOUT:-}
+      SEISMO_COORDINATOR_MAX_BYTES: ${SEISMO_COORDINATOR_MAX_BYTES:-}
+      SEISMO_COORDINATOR_MAX_LINES_PER_WORKLOAD: ${SEISMO_COORDINATOR_MAX_LINES_PER_WORKLOAD:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -113,10 +151,7 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
-      fakegithub:
-        condition: service_healthy
 
 volumes:
   postgres-data:
   nats-data:
-  github-app-key:

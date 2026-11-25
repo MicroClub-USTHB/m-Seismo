@@ -1,0 +1,28 @@
+meta {
+  name: Login
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "lead@example.com",
+    "password": "s3cure-pass"
+  }
+}
+
+vars:post-response {
+  token: res.body.token.access_token
+}
+
+docs {
+  Public. Same response shape as Register. 401 "invalid email or password"
+  on a wrong email or password (doesn't say which). Token lasts
+  `auth.jwt_ttl` (default 24h); there is no refresh endpoint.
+}

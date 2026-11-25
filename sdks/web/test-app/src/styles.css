@@ -1,0 +1,137 @@
+:root,
+:root[data-theme='light'] {
+  --bg: #f5f6f8;
+  --fg: #14161a;
+  --muted: #5b6470;
+  --panel: #ffffff;
+  --border: #d7dbe2;
+  --accent: #2f6fed;
+  --danger: #c0392b;
+}
+
+:root[data-theme='dark'] {
+  --bg: #14161a;
+  --fg: #eef1f5;
+  --muted: #9aa4b2;
+  --panel: #1d2026;
+  --border: #333a44;
+  --accent: #6da1ff;
+  --danger: #ff6b5e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+}
+
+/*
+ * Deliberately hostile host stylesheet. It proves the SDK's shadow-DOM form is
+ * NOT affected by page CSS: the form sets its own explicit colors inside its
+ * shadow root. Scoped to .page so the harness itself stays readable; the e2e
+ * suite additionally injects a global hostile rule to test isolation harder.
+ */
+.page,
+.page * {
+  color: red !important;
+}
+
+h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+}
+
+.subtitle {
+  color: var(--muted);
+  margin-top: 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.6rem;
+  margin: 1.5rem 0;
+}
+
+button {
+  padding: 0.65rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.15rem;
+  margin-bottom: 1.25rem;
+}
+
+textarea {
+  width: 100%;
+  padding: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  resize: vertical;
+}
+
+kbd {
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0 0.35rem;
+  font-size: 0.85em;
+}
+
+.indicator {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.event-log {
+  margin: 0;
+  padding-left: 1.4rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+
+.event-log li {
+  margin-bottom: 0.25rem;
+}
+
+.diagnostics-buffer {
+  margin-top: 0.75rem;
+  max-height: 18rem;
+  overflow: auto;
+  padding: 0.5rem;
+  border: 1px solid var(--border, currentColor);
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.06);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

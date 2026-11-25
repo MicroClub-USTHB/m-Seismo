@@ -7,29 +7,58 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/coordinator"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/dedup"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
+	seismov1 "github.com/MicroClub-USTHB/m-Seismo/backend/internal/pb/seismo/v1"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
 )
 
 // Issues opens issues in project repositories. Implemented by
 // issue.Service.
 type Issues interface {
-	OpenInRepository(ctx context.Context, projectRepositoryID uuid.UUID, appID *uuid.UUID, d issue.Draft) (issue.Result, error)
+	OpenInRepository(ctx context.Context, appID, projectRepositoryID uuid.UUID, d issue.Draft) (issue.Result, error)
+	CommentOn(ctx context.Context, appID uuid.UUID, iss db.Issue, body string) (bool, error)
 }
 
 // Queries is the part of db.Querier the processor uses.
 type Queries interface {
 	GetReport(ctx context.Context, id uuid.UUID) (db.Report, error)
-	ListReportAttachmentNames(ctx context.Context, reportID uuid.UUID) ([]string, error)
-	ListIssueTargetsForApp(ctx context.Context, appID uuid.UUID) ([]db.ListIssueTargetsForAppRow, error)
-	ListReportDeliveries(ctx context.Context, reportID uuid.UUID) ([]db.ReportDelivery, error)
+	ListReportAttachments(ctx context.Context, reportID uuid.UUID) ([]db.ListReportAttachmentsRow, error)
+	ListReportDeliveryProjects(ctx context.Context, reportID uuid.UUID) ([]uuid.UUID, error)
 	CreateReportDelivery(ctx context.Context, arg db.CreateReportDeliveryParams) error
 	MarkReportProcessed(ctx context.Context, id uuid.UUID) error
+	GetOpenIssueByFingerprint(ctx context.Context, arg db.GetOpenIssueByFingerprintParams) (db.Issue, error)
+	GetIssueOccurrences(ctx context.Context, arg db.GetIssueOccurrencesParams) (db.GetIssueOccurrencesRow, error)
+}
+
+// Router picks where a report's issues go. Implemented by
+// *routing.Router.
+type Router interface {
+	Routes(ctx context.Context, f routing.Facts) ([]routing.Route, error)
+}
+
+// ServerLogs asks an app's log coordinator for server logs. Implemented by
+// *coordinator.Client.
+type ServerLogs interface {
+	QueryLogs(ctx context.Context, appID uuid.UUID, from, to time.Time) (*seismov1.AggregateResult, error)
+}
+
+// ServiceHealth asks an app's log coordinator for a snapshot of its
+// services' health (error rate, restarts, configured CPU and memory,
+// deployed version), for the "Service health" table. Implemented by
+// *coordinator.Client.
+type ServiceHealth interface {
+	QueryMetrics(ctx context.Context, appID uuid.UUID, from, to time.Time) (*seismov1.AggregateMetrics, error)
+	QueryStatus(ctx context.Context, appID uuid.UUID) (*seismov1.AggregateStatus, error)
 }
 
 // permanentError marks a failure that trying again won't fix.
@@ -40,23 +69,48 @@ func (e *permanentError) Unwrap() error { return e.err }
 
 func permanent(err error) error { return &permanentError{err: err} }
 
+// CrashResolver resolves a persisted report within its app's configured project.
+type CrashResolver interface {
+	ForReport(context.Context, uuid.UUID, *ingest.Report) (*crashprovider.Event, error)
+}
+
+// AttachmentLinker builds the private, expiring link an issue uses to show
+// an attachment (FR-48). Implemented by *attachment.Service.
+type AttachmentLinker interface {
+	SignedURL(id uuid.UUID) string
+}
+
 // Processor turns one stored report into issues.
 type Processor struct {
 	q      Queries
 	issues Issues
+	router Router
+	locks  Locks
+	// logs and health are optional; window is how far around the report
+	// they look.
+	logs    ServerLogs
+	health  ServiceHealth
+	window  time.Duration
+	crashes CrashResolver
+	links   AttachmentLinker
 }
 
-func NewProcessor(q Queries, issues Issues) *Processor {
-	return &Processor{q: q, issues: issues}
+func NewProcessor(q Queries, issues Issues, router Router, locks Locks, logs ServerLogs, window time.Duration, crashes CrashResolver, links AttachmentLinker, health ServiceHealth) *Processor {
+	return &Processor{q: q, issues: issues, router: router, locks: locks, logs: logs, window: window, crashes: crashes, links: links, health: health}
 }
 
-// Process opens the report's issue in the default repository of every
-// project its app is linked to.
+// Process opens the report's issue in every project its app is linked to,
+// in the repository and with the labels, assignees and milestone the
+// project's routing rules pick.
+//
+// A report of a bug that already has an open issue in the route's
+// repository (same fingerprint, see package dedup) adds a comment to that
+// issue instead of opening another one.
 //
 // The queue delivers a report at least once, so Process can run several
-// times for the same report: each repository that already got its issue is
+// times for the same report: each project that already got its issue is
 // recorded in report_deliveries and skipped, and a processed report is left
-// alone. When some repositories fail, the others are recorded and the next
+// alone. When some projects fail, the others are recorded and the next
 // attempt only retries the failed ones.
 //
 // A returned error is permanent (trying again won't help), an
@@ -79,39 +133,69 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 		return permanent(fmt.Errorf("decode report %s: %w", id, err))
 	}
 
-	targets, err := p.q.ListIssueTargetsForApp(ctx, row.AppID)
+	routes, err := p.router.Routes(ctx, routing.FactsOf(row.AppID, &r))
 	if err != nil {
-		return fmt.Errorf("list targets of app %s: %w", row.AppID, err)
+		return err
 	}
-	if len(targets) == 0 {
+	if len(routes) == 0 {
 		return permanent(fmt.Errorf("report %s: %w", id, issue.ErrNoTargets))
 	}
 
-	deliveries, err := p.q.ListReportDeliveries(ctx, id)
+	// One issue per project: a project that got it is skipped, even if
+	// its rules changed since and would now pick another repository.
+	projects, err := p.q.ListReportDeliveryProjects(ctx, id)
 	if err != nil {
 		return fmt.Errorf("list deliveries of report %s: %w", id, err)
 	}
-	delivered := make(map[uuid.UUID]bool, len(deliveries))
-	for _, d := range deliveries {
-		delivered[d.ProjectRepositoryID] = true
+	var todo []routing.Route
+	for _, route := range routes {
+		if !slices.Contains(projects, route.ProjectID) {
+			todo = append(todo, route)
+		}
+	}
+	if len(todo) == 0 {
+		return p.markProcessed(ctx, id)
 	}
 
-	names, err := p.q.ListReportAttachmentNames(ctx, id)
+	attachments, err := p.q.ListReportAttachments(ctx, id)
 	if err != nil {
 		return fmt.Errorf("list attachments of report %s: %w", id, err)
 	}
-	draft := render(&r, reportInfo{
+	var crashEvent *crashprovider.Event
+	if p.crashes != nil {
+		var resolveErr error
+		crashEvent, resolveErr = p.crashes.ForReport(ctx, row.AppID, &r)
+		if resolveErr != nil {
+			// Crash reporter delays or outages must not discard or indefinitely
+			// delay the issue. The Sentry resolver still returns a validated link
+			// when its configuration is available.
+			slog.WarnContext(ctx, "crash details unavailable", "report", id, "err", resolveErr)
+		}
+	}
+	info := reportInfo{
+		CrashEvent:     crashEvent,
 		ID:             row.ReportID,
 		InstallationID: row.InstallationID,
-		Screenshot:     slices.Contains(names, ingest.ScreenshotName),
-	})
+		ScreenshotURL:  p.screenshotURL(attachments),
+		ServerLogs:     p.serverLogs(ctx, row),
+		Health:         p.serviceHealth(ctx, row),
+	}
+	base := render(&r, info)
+	fingerprint := dedup.Fingerprint(&r)
 
 	var errs []error
-	for _, t := range targets {
-		if delivered[t.ProjectRepositoryID] {
-			continue
+	for _, t := range todo {
+		draft := base
+		if t.TitleTemplate != nil && t.BodyTemplate != nil {
+			if d, err := renderWithTemplate(*t.TitleTemplate, *t.BodyTemplate, &r, info); err == nil {
+				draft = d
+			} else {
+				slog.WarnContext(ctx, "issue template failed, opening with the default layout", "report", id, "rule", t.RuleID, "err", err)
+			}
 		}
-		res, err := p.issues.OpenInRepository(ctx, t.ProjectRepositoryID, &row.AppID, draft)
+		draft.Fingerprint = fingerprint
+		draft.Labels, draft.Assignees, draft.Milestone = t.Labels, t.Assignees, t.Milestone
+		res, err := p.deliver(ctx, row, &r, info, t, draft)
 		if err != nil {
 			var rl *issue.RateLimitError
 			if errors.As(err, &rl) {
@@ -141,14 +225,122 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 			errs = append(errs, fmt.Errorf("record delivery to %s: %w", t.Repository, err))
 			continue
 		}
-		slog.InfoContext(ctx, "issue opened", "report", id, "repository", t.Repository, "url", res.Ref.URL)
+		if res.grouped {
+			slog.InfoContext(ctx, "report added to an open issue", "report", id, "repository", t.Repository, "url", res.Ref.URL)
+		} else {
+			slog.InfoContext(ctx, "issue opened", "report", id, "repository", t.Repository, "url", res.Ref.URL)
+		}
 	}
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
+	return p.markProcessed(ctx, id)
+}
 
+// delivered is where a report went in one repository.
+type delivered struct {
+	issue.Result
+	// grouped is set when the report was added to an issue already open.
+	grouped bool
+}
+
+// deliver opens the route's issue, or comments on the open issue the
+// repository already has for the same bug. The repository and fingerprint
+// are locked meanwhile, so two reports of a new bug arriving together open
+// one issue between them.
+func (p *Processor) deliver(ctx context.Context, row db.Report, r *ingest.Report, info reportInfo, t routing.Route, draft issue.Draft) (delivered, error) {
+	if draft.Fingerprint == "" {
+		res, err := p.issues.OpenInRepository(ctx, row.AppID, t.ProjectRepositoryID, draft)
+		return delivered{Result: res}, err
+	}
+
+	unlock, err := p.locks.Lock(ctx, t.ProjectRepositoryID.String()+"/"+draft.Fingerprint)
+	if err != nil {
+		return delivered{}, err
+	}
+	defer unlock()
+
+	existing, err := p.q.GetOpenIssueByFingerprint(ctx, db.GetOpenIssueByFingerprintParams{
+		ProjectRepositoryID: t.ProjectRepositoryID,
+		Fingerprint:         &draft.Fingerprint,
+	})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+	case err != nil:
+		return delivered{}, fmt.Errorf("find the open issue of report %s: %w", row.ID, err)
+	default:
+		n, err := p.q.GetIssueOccurrences(ctx, db.GetIssueOccurrencesParams{IssueID: existing.ID, ReportID: row.ID})
+		if err != nil {
+			return delivered{}, fmt.Errorf("count the reports of issue %s: %w", existing.ID, err)
+		}
+		body := renderOccurrence(r, info, occurrences{Reports: int(n.Occurrences), Installations: int(n.Installations), Versions: n.Versions})
+		posted, err := p.issues.CommentOn(ctx, row.AppID, existing, body)
+		if err != nil {
+			return delivered{}, err
+		}
+		if posted {
+			res := issue.Result{IssueID: existing.ID, Ref: issue.Ref{ID: existing.ExternalID, URL: existing.Url}}
+			return delivered{Result: res, grouped: true}, nil
+		}
+		// Closed on the tracker since: the bug is back, it gets a new
+		// issue.
+	}
+
+	res, err := p.issues.OpenInRepository(ctx, row.AppID, t.ProjectRepositoryID, draft)
+	return delivered{Result: res}, err
+}
+
+func (p *Processor) markProcessed(ctx context.Context, id uuid.UUID) error {
 	if err := p.q.MarkReportProcessed(ctx, id); err != nil {
 		return fmt.Errorf("mark report %s processed: %w", id, err)
 	}
 	return nil
+}
+
+// screenshotURL returns the private, expiring link to the report's
+// screenshot, or "" when it sent none.
+func (p *Processor) screenshotURL(attachments []db.ListReportAttachmentsRow) string {
+	for _, a := range attachments {
+		if a.Name == ingest.ScreenshotName {
+			return p.links.SignedURL(a.ID)
+		}
+	}
+	return ""
+}
+
+// serviceHealth asks the app's coordinator for a snapshot of its services'
+// health around the report. The issue is opened without it when there is
+// none, or the coordinator can't fully answer.
+func (p *Processor) serviceHealth(ctx context.Context, row db.Report) []healthRow {
+	if p.health == nil {
+		return nil
+	}
+	metrics, err := p.health.QueryMetrics(ctx, row.AppID, row.OccurredAt.Add(-p.window), row.OccurredAt.Add(p.window))
+	switch {
+	case errors.Is(err, coordinator.ErrNotAttached):
+		return nil
+	case err != nil:
+		slog.WarnContext(ctx, "service metrics unavailable, opening the issue without them", "report", row.ID, "err", err)
+	}
+	status, err := p.health.QueryStatus(ctx, row.AppID)
+	if err != nil && !errors.Is(err, coordinator.ErrNotAttached) {
+		slog.WarnContext(ctx, "service status unavailable, opening the issue without it", "report", row.ID, "err", err)
+	}
+	return mergeHealth(metrics, status)
+}
+
+// serverLogs asks the app's coordinator for the server logs around the
+// report. The issue is opened without them when there are none.
+func (p *Processor) serverLogs(ctx context.Context, row db.Report) *seismov1.AggregateResult {
+	if p.logs == nil {
+		return nil
+	}
+	res, err := p.logs.QueryLogs(ctx, row.AppID, row.OccurredAt.Add(-p.window), row.OccurredAt.Add(p.window))
+	switch {
+	case errors.Is(err, coordinator.ErrNotAttached):
+		slog.DebugContext(ctx, "no coordinator attached, opening the issue without server logs", "report", row.ID)
+	case err != nil:
+		slog.WarnContext(ctx, "server logs unavailable, opening the issue without them", "report", row.ID, "err", err)
+	}
+	return res
 }

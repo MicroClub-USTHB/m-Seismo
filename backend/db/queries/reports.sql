@@ -24,7 +24,18 @@ WHERE id = $1;
 
 -- name: MarkReportProcessed :exec
 UPDATE reports
-SET processed_at = now()
+SET processed_at = now(),
+    delivery_error = NULL
+WHERE id = $1 AND processed_at IS NULL;
+
+-- name: MarkReportFailed :exec
+UPDATE reports
+SET delivery_error = sqlc.arg('delivery_error')::text
+WHERE id = $1 AND processed_at IS NULL;
+
+-- name: ClearReportFailure :exec
+UPDATE reports
+SET delivery_error = NULL
 WHERE id = $1 AND processed_at IS NULL;
 
 -- name: ListReportDeliveries :many
@@ -36,7 +47,86 @@ INSERT INTO report_deliveries (report_id, project_repository_id, issue_id, url)
 VALUES ($1, $2, $3, $4)
 ON CONFLICT (report_id, project_repository_id) DO NOTHING;
 
--- name: ListReportAttachmentNames :many
-SELECT name FROM report_attachments
+-- name: ListReportAttachments :many
+SELECT id, name FROM report_attachments
 WHERE report_id = $1
 ORDER BY name;
+
+-- name: GetReportAttachment :one
+SELECT * FROM report_attachments
+WHERE id = $1;
+
+-- name: ListReportDeliveryProjects :many
+-- The projects that already got the report's issue, whichever of their
+-- repositories it went to.
+SELECT DISTINCT pr.project_id
+FROM report_deliveries d
+JOIN project_repositories pr ON pr.id = d.project_repository_id
+WHERE d.report_id = $1;
+
+-- name: GetIssueOccurrences :one
+-- How often an issue's bug was seen: the reports delivered to it plus
+-- report_id, the one being delivered now.
+WITH grouped AS (
+    SELECT d.report_id FROM report_deliveries d WHERE d.issue_id = sqlc.arg(issue_id)::uuid
+    UNION
+    SELECT sqlc.arg(report_id)::uuid
+)
+SELECT
+    count(*)::int AS occurrences,
+    count(DISTINCT r.installation_id)::int AS installations,
+    coalesce(
+        array_agg(DISTINCT r.payload -> 'release' ->> 'version')
+            FILTER (WHERE r.payload -> 'release' ->> 'version' IS NOT NULL),
+        '{}'
+    )::text[] AS versions
+FROM grouped g
+JOIN reports r ON r.id = g.report_id;
+
+-- name: DeleteReportByReportID :execrows
+-- Attachments cascade; report_deliveries and the issues they point to are
+-- left as they are.
+DELETE FROM reports
+WHERE app_id = $1 AND report_id = $2;
+
+-- name: DeleteReportsByInstallation :execrows
+DELETE FROM reports
+WHERE app_id = $1 AND installation_id = $2;
+
+-- name: DeleteExpiredReports :execrows
+-- Deletes reports older than their app's retention period, falling back to
+-- the operator's default (sqlc.arg(default_days)) for apps that don't set
+-- their own.
+DELETE FROM reports
+USING apps
+WHERE reports.app_id = apps.id
+  AND reports.occurred_at < now() - make_interval(days => COALESCE(apps.retention_days, sqlc.arg(default_days)::int));
+
+
+-- name: ListReportAttachmentsWithData :many
+SELECT name, content_type, data FROM report_attachments
+WHERE report_id = $1
+ORDER BY name;
+
+-- name: ListReports :many
+SELECT * FROM reports
+WHERE app_id = $1
+  AND (
+    sqlc.narg('cursor_time')::timestamptz IS NULL
+    OR (sqlc.narg('cursor_id')::uuid IS NULL AND occurred_at < sqlc.narg('cursor_time')::timestamptz)
+    OR (sqlc.narg('cursor_id')::uuid IS NOT NULL AND (occurred_at, id) < (sqlc.narg('cursor_time')::timestamptz, sqlc.narg('cursor_id')::uuid))
+  )
+  AND (
+    sqlc.narg('status')::text IS NULL
+    OR (sqlc.narg('status')::text = 'delivered' AND processed_at IS NOT NULL)
+    OR (sqlc.narg('status')::text = 'failed' AND processed_at IS NULL AND delivery_error IS NOT NULL)
+    OR (sqlc.narg('status')::text = 'queued' AND processed_at IS NULL AND delivery_error IS NULL)
+  )
+ORDER BY occurred_at DESC, id DESC
+LIMIT sqlc.arg('limit');
+
+-- name: ListReportDeliveriesByReportIDs :many
+SELECT * FROM report_deliveries
+WHERE report_id = ANY(sqlc.arg('report_ids')::uuid[])
+ORDER BY created_at ASC;
+

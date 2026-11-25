@@ -1,12 +1,16 @@
 package owner
 
 import (
+	"context"
+	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/fx"
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/auth"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/config"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/httpx"
 )
 
@@ -15,7 +19,25 @@ var Module = fx.Module("owner",
 		NewService,
 		httpx.AsRoutes(NewHandler),
 	),
+	fx.Invoke(seedSuperadmin),
 )
+
+// seedSuperadmin runs EnsureSuperadmin once the server starts serving, so a
+// transient DB hiccup at boot fails the same way any other startup error
+// does rather than being swallowed.
+func seedSuperadmin(lc fx.Lifecycle, cfg *config.Config, svc *Service) {
+	lc.Append(fx.Hook{OnStart: func(ctx context.Context) error {
+		sa := cfg.Superadmin
+		if sa.Email == "" || sa.Password == "" {
+			return nil
+		}
+		if err := svc.EnsureSuperadmin(ctx, sa.Email, sa.Password, sa.Name); err != nil {
+			return fmt.Errorf("owner: seed superadmin: %w", err)
+		}
+		slog.Info("superadmin ready", "email", sa.Email)
+		return nil
+	}})
+}
 
 type Handler struct {
 	svc     *Service
@@ -30,6 +52,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/auth/register", h.register)
 	r.Post("/auth/login", h.login)
 
+	r.With(h.require).Get("/owners", h.listAll)
 	r.With(h.require).Route("/owners/me", func(r chi.Router) {
 		r.Get("/", h.get)
 		r.Patch("/", h.update)
@@ -73,6 +96,17 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, sessionResponse{Owner: o, Token: tok})
+}
+
+// listAll lists every owner. Only the configured superadmin may call it
+// (see Service.ListAll); anyone else gets the same 401 as a bad login.
+func (h *Handler) listAll(w http.ResponseWriter, r *http.Request) {
+	os, err := h.svc.ListAll(r.Context(), httpx.OwnerID(r.Context()))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, os)
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {

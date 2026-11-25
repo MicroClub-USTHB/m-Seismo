@@ -1,0 +1,149 @@
+import { expect, test, type Page } from '@playwright/test';
+
+const RECEIVER = 'http://localhost:4010';
+
+interface DiagnosticEvent {
+  id: string;
+  kind: 'error' | 'unhandledrejection' | 'captured' | 'navigation' | 'interaction' | 'network' | 'sdk';
+  timestamp: string;
+  error?: { type: string; message: string; stack?: string; cause?: unknown };
+  handled?: boolean;
+  context?: Record<string, unknown>;
+  flags?: string[];
+}
+
+/**
+ * Reads the raw diagnostics buffer (all kinds). Phase 5.3 adds an initial
+ * `navigation`/`load` breadcrumb on init, so error-count assertions use
+ * {@link collectErrors} instead of the raw snapshot length.
+ */
+async function collectRaw(page: Page): Promise<DiagnosticEvent[]> {
+  await page.getByTestId('diag-show-buffer').click();
+  const text = await page.getByTestId('diagnostics-buffer').innerText();
+  return JSON.parse(text) as DiagnosticEvent[];
+}
+
+function isErrorKind(event: DiagnosticEvent): boolean {
+  return event.kind === 'error' || event.kind === 'unhandledrejection' || event.kind === 'captured';
+}
+
+async function collectErrors(page: Page): Promise<DiagnosticEvent[]> {
+  return (await collectRaw(page)).filter(isErrorKind);
+}
+
+test.beforeEach(async ({ page, request }) => {
+  await request.post(`${RECEIVER}/__reset`);
+  await page.goto('/');
+});
+
+test('A: an uncaught TypeError is captured automatically', async ({ page }) => {
+  await page.getByTestId('diag-uncaught-typeerror').click();
+
+  await expect.poll(async () => (await collectErrors(page)).length).toBe(1);
+  const [event] = await collectErrors(page);
+  if (!event || !event.error) throw new Error('expected error event');
+  expect(event.kind).toBe('error');
+  expect(event.handled).toBe(false);
+  expect(event.error.type).toBe('TypeError');
+  expect(event.error.message).toContain('diagnostics TypeError');
+  expect(typeof event.error.stack).toBe('string');
+});
+
+test('B: captureException records a handled event with sanitized context', async ({
+  page,
+}) => {
+  await page.getByTestId('diag-capture-exception').click();
+
+  await expect.poll(async () => (await collectErrors(page)).length).toBe(1);
+  const [event] = await collectErrors(page);
+  if (!event || !event.error) throw new Error('expected captured event');
+  expect(event.kind).toBe('captured');
+  expect(event.handled).toBe(true);
+  expect(event.error.type).toBe('Error');
+  expect(event.context).toEqual({
+    feature: 'checkout',
+    userId: 'user-42',
+    nested: { step: 3, retries: 1 },
+  });
+});
+
+test('C: a non-Error rejection is captured and flagged', async ({ page }) => {
+  await page.getByTestId('diag-reject-string').click();
+
+  await expect.poll(async () => (await collectErrors(page)).length).toBe(1);
+  const [event] = await collectErrors(page);
+  if (!event) throw new Error('expected rejection event');
+  expect(event.kind).toBe('unhandledrejection');
+  expect(event.handled).toBe(false);
+  expect(event.flags).toContain('non-error-rejection');
+});
+
+test('D: resource load failures are not captured', async ({ page }) => {
+  await page.getByTestId('diag-broken-image').click();
+  await page.getByTestId('diag-broken-script').click();
+  await page.waitForTimeout(300);
+
+  expect((await collectErrors(page)).length).toBe(0);
+});
+
+test('E: a cross-origin script error is captured without crashing', async ({ page }) => {
+  await page.getByTestId('diag-cross-origin').click();
+
+  await expect.poll(async () => (await collectErrors(page)).length).toBe(1);
+  const [event] = await collectErrors(page);
+  expect(event!.kind).toBe('error');
+
+  // Chrome masks cross-origin script errors down to "Script error." (so we flag
+  // it); Firefox and Safari expose the real message. Either is acceptable — the
+  // point is that we capture the event and never fabricate hidden detail.
+  if (!event || !event.error) throw new Error('expected error event');
+  if (event.flags?.includes('cross-origin-script-error')) {
+    expect(event.error.message.toLowerCase()).toContain('script error');
+  } else {
+    expect(event.error.message).toContain('cross-origin script failure');
+  }
+});
+
+test('F: flooding errors is capped by the default buffer size', async ({ page }) => {
+  await page.getByTestId('diag-flood').click();
+
+  await expect.poll(async () => (await collectErrors(page)).length).toBe(100);
+});
+
+test('G: re-init keeps events and applies a smaller maxEvents', async ({ page }) => {
+  for (let i = 0; i < 10; i += 1) {
+    await page.getByTestId('diag-uncaught-typeerror').click();
+  }
+  await expect.poll(async () => (await collectErrors(page)).length).toBe(10);
+
+  await page.getByTestId('diag-reinit-small').click();
+  // maxEvents=5 caps the raw buffer at 5. Besides the errors, the SDK also
+  // records a `navigation` breadcrumb on init and the test app polls the
+  // receiver (a network breadcrumb), so the newest errors that survive the
+  // cap may be 3 or 4; assert the cap itself and that recent errors remain.
+  const raw = await collectRaw(page);
+  expect(raw.length).toBe(5);
+  expect((await collectErrors(page)).length).toBeGreaterThanOrEqual(3);
+});
+
+test('H: re-init with capture disabled stops recording', async ({ page }) => {
+  await page.getByTestId('diag-capture-exception').click();
+  await expect.poll(async () => (await collectErrors(page)).length).toBe(1);
+
+  await page.getByTestId('diag-reinit-disabled').click();
+  await page.getByTestId('diag-uncaught-typeerror').click();
+  await page.getByTestId('diag-reject-error').click();
+  await page.waitForTimeout(200);
+
+  expect((await collectErrors(page)).length).toBe(1);
+});
+
+test('I: clearing the buffer empties it', async ({ page }) => {
+  await page.getByTestId('diag-capture-exception').click();
+  await expect.poll(async () => (await collectErrors(page)).length).toBe(1);
+
+  await page.getByTestId('diag-clear-buffer').click();
+  await page.getByTestId('diag-show-buffer').click();
+  const text = await page.getByTestId('diagnostics-buffer').innerText();
+  expect(JSON.parse(text)).toEqual([]);
+});

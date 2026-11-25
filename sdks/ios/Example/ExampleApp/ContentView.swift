@@ -8,7 +8,7 @@ struct ContentView: View {
         VStack(spacing: 12) {
             Text("m-Seismo Example")
                 .font(.headline)
-            Text("Project key: \(mseismo.configuration?.projectKey ?? "none")")
+            Text("SDK key: \(mseismo.configuration?.sdkKey ?? "none")")
             Text("Environment: \(mseismo.configuration?.environment ?? "none")")
             Text("Shake the device (or Device > Shake in the Simulator), take a screenshot, long-press this text, or use the button below to open the report form. The screenshot you see in the form is the real screen, captured at that moment.")
                 .font(.caption)

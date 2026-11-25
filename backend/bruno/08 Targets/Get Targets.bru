@@ -1,0 +1,22 @@
+meta {
+  name: Get Targets
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/apps/{{appId}}/targets
+  body: none
+  auth: inherit
+}
+
+docs {
+  200 `[target]` — previews where the app's issues would be opened,
+  without opening any. One entry per linked project with a default
+  repository, with the connection that would be used (the first active
+  one, on the same tracker, that covers the repository) or an `error`
+  when none covers it. The tracker is not called: a repository the
+  connection wasn't actually granted still shows as covered, and only
+  fails when an issue is opened. `[]` when the app has no linked project
+  with a default repository.
+}

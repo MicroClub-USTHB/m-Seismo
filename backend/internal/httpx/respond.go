@@ -70,6 +70,8 @@ func Error(w http.ResponseWriter, r *http.Request, err error) {
 
 func statusFor(k apperr.Kind) int {
 	switch k {
+	case apperr.KindUnavailable:
+		return http.StatusServiceUnavailable
 	case apperr.KindNotFound:
 		return http.StatusNotFound
 	case apperr.KindConflict:

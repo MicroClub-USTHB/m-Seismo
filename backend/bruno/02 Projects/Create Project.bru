@@ -1,0 +1,28 @@
+meta {
+  name: Create Project
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/projects
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "Shop Mobile"
+  }
+}
+
+vars:post-response {
+  projectId: res.body.id
+}
+
+docs {
+  201 project. `slug` is optional (derived from `name` when left out,
+  e.g. "Shop Mobile!" -> "shop-mobile"); unique per owner, lowercase
+  letters/digits in dash-separated groups, max 64 chars. 409 on a
+  duplicate slug. Sets `projectId`.
+}

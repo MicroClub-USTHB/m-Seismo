@@ -1,0 +1,18 @@
+meta {
+  name: List Owner Connections
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/providers/connections
+  body: none
+  auth: inherit
+}
+
+docs {
+  200 `[connection]`, oldest first: the connections of all your apps,
+  each with its `app_id`. Use it to pick one for **App connections ->
+  Attach Connection** on another app. Read-only; manage connections
+  under `/apps/{appID}/connections`.
+}

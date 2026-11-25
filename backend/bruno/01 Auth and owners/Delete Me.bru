@@ -1,0 +1,17 @@
+meta {
+  name: Delete Me
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/owners/me
+  body: none
+  auth: inherit
+}
+
+docs {
+  204. Permanently deletes the owner's projects, apps, keys, app
+  connections and issue records. Nothing on GitHub/GitLab/Bitbucket is
+  deleted. Destructive — do not run against a shared deployment.
+}

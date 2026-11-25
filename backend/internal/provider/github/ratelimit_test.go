@@ -13,7 +13,7 @@ import (
 
 func TestSecondaryRateLimitIsRetried(t *testing.T) {
 	p, fake := newTestProvider(t)
-	op, err := p.Opener(context.Background(), "42")
+	op, err := p.Opener(context.Background(), inst42)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestSecondaryRateLimitIsRetried(t *testing.T) {
 
 func TestSecondaryRateLimitBeyondDeadlineFailsFast(t *testing.T) {
 	p, fake := newTestProvider(t)
-	op, _ := p.Opener(context.Background(), "42")
+	op, _ := p.Opener(context.Background(), inst42)
 
 	// Retry-After is 1s but only 500ms are left: no point waiting.
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
@@ -57,7 +57,7 @@ func TestSecondaryRateLimitBeyondDeadlineFailsFast(t *testing.T) {
 
 func TestPrimaryRateLimitFailsFast(t *testing.T) {
 	p, _ := newTestProvider(t)
-	op, _ := p.Opener(context.Background(), "42")
+	op, _ := p.Opener(context.Background(), inst42)
 
 	start := time.Now()
 	_, err := op.Open(context.Background(), issue.Issue{Repository: "octo-org/exhausted", Title: "x"})
@@ -85,7 +85,7 @@ func TestPrimaryRateLimitFailsFast(t *testing.T) {
 
 func TestWritesArePaced(t *testing.T) {
 	p, _ := newTestProvider(t, func(o *Options) { o.MinWriteInterval = 300 * time.Millisecond })
-	op, _ := p.Opener(context.Background(), "42")
+	op, _ := p.Opener(context.Background(), inst42)
 	ref := issue.Ref{ID: "octo-org/app#7"}
 
 	start := time.Now()
@@ -119,7 +119,7 @@ func TestWritesArePaced(t *testing.T) {
 
 func TestMilestonesAreCached(t *testing.T) {
 	p, fake := newTestProvider(t)
-	op, _ := p.Opener(context.Background(), "42")
+	op, _ := p.Opener(context.Background(), inst42)
 
 	for range 3 {
 		if _, err := op.Open(context.Background(), issue.Issue{Repository: "octo-org/app", Title: "x", Milestone: "v1.0"}); err != nil {

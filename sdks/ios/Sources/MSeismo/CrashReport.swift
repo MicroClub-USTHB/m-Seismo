@@ -31,7 +31,10 @@ public struct CrashReport: Codable, Equatable {
             title: name,
             description: description,
             category: .crash,
-            severity: isFatal ? .critical : .high
+            severity: isFatal ? .critical : .high,
+            occurredAt: timestamp,
+            trigger: isFatal ? .crash : .nonFatal,
+            crash: self
         )
     }
 }

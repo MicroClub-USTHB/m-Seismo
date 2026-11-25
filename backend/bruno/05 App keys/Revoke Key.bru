@@ -1,0 +1,15 @@
+meta {
+  name: Revoke Key
+  type: http
+  seq: 3
+}
+
+delete {
+  url: {{baseUrl}}/apps/{{appId}}/keys/{{keyId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  204; revokes immediately. 404 "active key not found" if already revoked.
+}

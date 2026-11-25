@@ -1,6 +1,15 @@
-[package]
-name = "m-seismo-agent"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
+[workspace.dependencies]
+seismo-proto = { path = "crates/proto" }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread"] }
+tonic = { version = "0.14.6", features = ["tls-aws-lc", "tls-webpki-roots"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

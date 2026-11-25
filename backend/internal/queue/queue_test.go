@@ -3,7 +3,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
-	"os"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/testenv"
 	"testing"
 	"time"
 
@@ -12,15 +12,11 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
-// This test needs a NATS server with JetStream. It is skipped unless
-// SEISMO_TEST_NATS_URL is set, e.g. nats://localhost:4222. Use a server no
-// backend is running against: its worker's consumer would take the
-// messages, and the test's own consumer can't be created next to it.
+// This test needs a NATS server with JetStream: a container, or the server in
+// SEISMO_TEST_NATS_URL (one no backend is running against: its worker's
+// consumer would take the messages).
 func TestReportAccepted(t *testing.T) {
-	url := os.Getenv("SEISMO_TEST_NATS_URL")
-	if url == "" {
-		t.Skip("SEISMO_TEST_NATS_URL not set")
-	}
+	url := testenv.NATSURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -83,7 +79,9 @@ func TestReportAccepted(t *testing.T) {
 		if json.Unmarshal(m.Data(), &got) == nil && got == msg {
 			found = true
 		}
-		m.Ack()
+		if err := m.Ack(); err != nil {
+			t.Error(err)
+		}
 	}
 	if !found {
 		t.Error("published message not received")

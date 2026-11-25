@@ -30,18 +30,29 @@ func (f *fakeQuerier) GetApp(_ context.Context, arg db.GetAppParams) (db.App, er
 }
 
 func (f *fakeQuerier) CreateAppKey(_ context.Context, arg db.CreateAppKeyParams) (db.AppKey, error) {
-	k := db.AppKey{ID: uuid.New(), AppID: arg.AppID, KeyHash: arg.KeyHash, KeyPrefix: arg.KeyPrefix}
+	k := db.AppKey{ID: uuid.New(), AppID: arg.AppID, Kind: arg.Kind, KeyHash: arg.KeyHash, KeyPrefix: arg.KeyPrefix}
 	f.keys = append(f.keys, k)
 	return k, nil
 }
 
-func (f *fakeQuerier) GetActiveAppKeyByHash(_ context.Context, hash []byte) (db.AppKey, error) {
+func (f *fakeQuerier) GetActiveAppKeyByHash(_ context.Context, arg db.GetActiveAppKeyByHashParams) (db.AppKey, error) {
 	for _, k := range f.keys {
-		if bytes.Equal(k.KeyHash, hash) && k.RevokedAt == nil {
+		if bytes.Equal(k.KeyHash, arg.KeyHash) && k.Kind == arg.Kind && k.RevokedAt == nil {
 			return k, nil
 		}
 	}
 	return db.AppKey{}, pgx.ErrNoRows
+}
+
+func (f *fakeQuerier) UpdateApp(_ context.Context, arg db.UpdateAppParams) (db.App, error) {
+	if arg.ID != f.app.ID || arg.OwnerID != f.app.OwnerID {
+		return db.App{}, pgx.ErrNoRows
+	}
+	f.app.Name = arg.Name
+	f.app.Platform = arg.Platform
+	f.app.BundleID = arg.BundleID
+	f.app.RetentionDays = arg.RetentionDays
+	return f.app, nil
 }
 
 func TestKeyLifecycle(t *testing.T) {
@@ -50,11 +61,11 @@ func TestKeyLifecycle(t *testing.T) {
 	svc := NewService(q, nil, nil, &config.Config{})
 	ctx := context.Background()
 
-	k, err := svc.CreateKey(ctx, owner, q.app.ID)
+	k, err := svc.CreateKey(ctx, owner, q.app.ID, db.AppKeyKindSdk)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(k.Secret, keyPrefix) || !strings.HasPrefix(k.Secret, k.Prefix) || len(k.Prefix) != shownPrefixLen {
+	if !strings.HasPrefix(k.Secret, "msk_") || !strings.HasPrefix(k.Secret, k.Prefix) || len(k.Prefix) != len("msk_")+shownSecretLen {
 		t.Errorf("key = %+v", k)
 	}
 	if bytes.Contains(q.keys[0].KeyHash, []byte(k.Secret)) || len(q.keys[0].KeyHash) != 32 {
@@ -72,8 +83,41 @@ func TestKeyLifecycle(t *testing.T) {
 		}
 	}
 
-	if _, err := svc.CreateKey(ctx, uuid.New(), q.app.ID); kind(err) != apperr.KindNotFound {
+	if _, err := svc.CreateKey(ctx, uuid.New(), q.app.ID, db.AppKeyKindSdk); kind(err) != apperr.KindNotFound {
 		t.Errorf("another owner created a key: err = %v", err)
+	}
+}
+
+func TestKeyKindsAreSeparate(t *testing.T) {
+	owner := uuid.New()
+	q := &fakeQuerier{app: db.App{ID: uuid.New(), OwnerID: owner}}
+	svc := NewService(q, nil, nil, &config.Config{})
+	ctx := context.Background()
+
+	sdk, err := svc.CreateKey(ctx, owner, q.app.ID, db.AppKeyKindSdk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	co, err := svc.CreateKey(ctx, owner, q.app.ID, db.AppKeyKindCoordinator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(co.Secret, "mco_") {
+		t.Errorf("coordinator key = %q", co.Secret)
+	}
+
+	if appID, err := svc.AuthenticateCoordinator(ctx, co.Secret); err != nil || appID != q.app.ID {
+		t.Errorf("AuthenticateCoordinator = %s, %v", appID, err)
+	}
+	if _, err := svc.AuthenticateCoordinator(ctx, sdk.Secret); kind(err) != apperr.KindUnauthorized {
+		t.Errorf("SDK key accepted as a coordinator key: err = %v", err)
+	}
+	if _, err := svc.Authenticate(ctx, co.Secret); kind(err) != apperr.KindUnauthorized {
+		t.Errorf("coordinator key accepted as an SDK key: err = %v", err)
+	}
+	// A coordinator key renamed to look like an SDK key is still refused.
+	if _, err := svc.Authenticate(ctx, "msk_"+strings.TrimPrefix(co.Secret, "mco_")); kind(err) != apperr.KindUnauthorized {
+		t.Errorf("renamed coordinator key accepted: err = %v", err)
 	}
 }
 
@@ -82,6 +126,27 @@ func TestCreateValidation(t *testing.T) {
 	_, err := svc.Create(context.Background(), uuid.New(), CreateInput{Name: "App", Platform: "windows", BundleID: "x"})
 	if kind(err) != apperr.KindInvalid {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestUpdateRetentionDays(t *testing.T) {
+	owner := uuid.New()
+	q := &fakeQuerier{app: db.App{ID: uuid.New(), OwnerID: owner, Name: "App", Platform: db.AppPlatformWeb, BundleID: "x"}}
+	svc := NewService(q, nil, nil, &config.Config{})
+	ctx := context.Background()
+
+	days := 30
+	a, err := svc.Update(ctx, owner, q.app.ID, UpdateInput{RetentionDays: &days})
+	if err != nil {
+		t.Fatalf("Update() err = %v", err)
+	}
+	if a.RetentionDays == nil || *a.RetentionDays != 30 {
+		t.Errorf("RetentionDays = %v", a.RetentionDays)
+	}
+
+	bad := 0
+	if _, err := svc.Update(ctx, owner, q.app.ID, UpdateInput{RetentionDays: &bad}); kind(err) != apperr.KindInvalid {
+		t.Errorf("retention_days = 0: err = %v", err)
 	}
 }
 

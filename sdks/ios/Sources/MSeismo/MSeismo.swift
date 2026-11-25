@@ -41,6 +41,22 @@ public final class MSeismo: ObservableObject {
     /// "N reports waiting to send" indicator.
     public let queue = OfflineQueue(transport: URLSessionTransport())
 
+    /// The app's active feature flags, sent with every report (FR-16).
+    /// Set it when flags load or change; the SDK reads it when a report
+    /// is made.
+    public var featureFlags: [String: FlagValue] = [:]
+
+    /// The experiments the user is in, as experiment name to variant,
+    /// sent with every report (FR-16).
+    public var experiments: [String: String] = [:]
+
+    /// Crashlytics' installation ID, e.g. from
+    /// `Installations.installations().installationID`. Sent with every
+    /// report so the backend can link it to the Crashlytics crash. The
+    /// SDK doesn't depend on Firebase: the app passes the ID in, and
+    /// Crashlytics keeps receiving every crash as before.
+    public var crashlyticsInstallationID: String?
+
     private let crashReporter = CrashReporter.shared
 
     /// Called with a crash/error report that was captured automatically
@@ -68,6 +84,11 @@ public final class MSeismo: ObservableObject {
     /// `.sheet(isPresented:)`.
     @Published public var isReportSheetPresented = false
 
+    /// What opened the report sheet and when, carried onto the report the
+    /// sheet produces (schema `trigger` and `occurred_at`).
+    private var sheetTrigger: Report.Trigger?
+    private var sheetOpenedAt: Date?
+
     /// The real screen, captured at the moment of the trigger, before the
     /// report sheet appears (FR-19). An app reads this when constructing
     /// `ReportFormView`'s initial `Report`.
@@ -77,12 +98,12 @@ public final class MSeismo: ObservableObject {
         crashReporter.start()
 
         shakeDetector.onShake = { [weak self] in
-            self?.report()
+            self?.report(trigger: .shake)
         }
 
         #if os(iOS)
         screenshotObserver.onNotify = { [weak self] in
-            self?.report()
+            self?.report(trigger: .screenshot)
         }
         // Not started here: off by default until configure(_:) says
         // otherwise (Configuration.screenshotEnabled).
@@ -134,7 +155,9 @@ public final class MSeismo: ObservableObject {
     /// Opens the report sheet. Called automatically by the shake and
     /// screenshot triggers; also public so an app can call it directly,
     /// e.g. from a "Report a bug" button or a long-press gesture (FR-07).
-    public func report() {
+    public func report(trigger: Report.Trigger = .manual) {
+        sheetTrigger = trigger
+        sheetOpenedAt = Date()
         #if os(iOS)
         capturedScreenshot = ScreenshotCapture.captureCurrentScreen()?.jpegData(compressionQuality: 0.8)
         #endif
@@ -162,10 +185,18 @@ public final class MSeismo: ObservableObject {
     /// the automatic crash path (`checkForPendingCrash`).
     public func enrich(_ report: Report) -> Report {
         var report = report
+        report.id = report.id ?? UUID().uuidString
+        report.trigger = report.trigger ?? sheetTrigger ?? .manual
+        report.occurredAt = report.occurredAt ?? sheetOpenedAt ?? Date()
+        sheetTrigger = nil
+        sheetOpenedAt = nil
         report.sessionID = session.id
         report.recentLogs = logs.recent
         report.breadcrumbs = breadcrumbs.recent
         report.networkRequests = networkLog.recent
+        if report.featureFlags == nil, !featureFlags.isEmpty { report.featureFlags = featureFlags }
+        if report.experiments == nil, !experiments.isEmpty { report.experiments = experiments }
+        if report.crashlyticsInstallationID == nil { report.crashlyticsInstallationID = crashlyticsInstallationID }
         #if os(iOS)
         if report.deviceContext == nil {
             report.deviceContext = DeviceContext.current()

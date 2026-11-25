@@ -1,0 +1,16 @@
+meta {
+  name: Delete App
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/apps/{{appId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  204. Keys, project links and connections are removed; recorded issues
+  keep a null `app_id` and `provider_connection_id`.
+}

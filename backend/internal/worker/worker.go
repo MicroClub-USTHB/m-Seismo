@@ -14,12 +14,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go/jetstream"
 
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/queue"
 )
@@ -45,11 +47,18 @@ type ReportProcessor interface {
 	Process(ctx context.Context, id uuid.UUID) error
 }
 
+// FailureRecorder persists why the worker gave up on delivering a report.
+// Implemented by db.Querier.
+type FailureRecorder interface {
+	MarkReportFailed(ctx context.Context, arg db.MarkReportFailedParams) error
+}
+
 // Worker reads accepted reports from the queue and hands each one to the
 // processor, a few at a time.
 type Worker struct {
 	js          jetstream.JetStream
 	proc        ReportProcessor
+	failures    FailureRecorder
 	concurrency int
 	maxAttempts int
 
@@ -58,8 +67,8 @@ type Worker struct {
 	done   chan struct{}
 }
 
-func New(js jetstream.JetStream, proc ReportProcessor, concurrency, maxAttempts int) *Worker {
-	return &Worker{js: js, proc: proc, concurrency: concurrency, maxAttempts: maxAttempts}
+func New(js jetstream.JetStream, proc ReportProcessor, failures FailureRecorder, concurrency, maxAttempts int) *Worker {
+	return &Worker{js: js, proc: proc, failures: failures, concurrency: concurrency, maxAttempts: maxAttempts}
 }
 
 // Start creates the consumer and starts reading messages in the
@@ -138,7 +147,7 @@ func (w *Worker) handle(ctx context.Context, msg jetstream.Msg) {
 		return
 	}
 	attempt := 1
-	if meta, err := msg.Metadata(); err == nil {
+	if meta, err := msg.Metadata(); err == nil && meta.NumDelivered <= math.MaxInt32 {
 		attempt = int(meta.NumDelivered)
 	}
 	log := slog.With("report", m.ID, "app", m.AppID, "attempt", attempt)
@@ -156,12 +165,14 @@ func (w *Worker) handle(ctx context.Context, msg jetstream.Msg) {
 		settle(msg.Ack())
 	case errors.As(err, &perm):
 		log.Warn("worker: report dropped", "err", err)
+		w.recordFailure(m.ID, err)
 		settle(msg.Term())
 	case errors.Is(err, context.Canceled) && ctx.Err() != nil:
 		// Shutting down: the next worker takes it right away.
 		settle(msg.Nak())
 	case attempt >= w.maxAttempts:
 		log.Error("worker: giving up on report", "err", err)
+		w.recordFailure(m.ID, err)
 		settle(msg.Term())
 	case errors.As(err, &rl):
 		log.Info("worker: rate limited, trying again later", "wait", rl.Wait)
@@ -199,5 +210,25 @@ func keepAlive(ctx context.Context, msg jetstream.Msg) (stop func()) {
 func settle(err error) {
 	if err != nil {
 		slog.Warn("worker: acknowledge message", "err", err)
+	}
+}
+
+func (w *Worker) recordFailure(reportID uuid.UUID, err error) {
+	if w.failures == nil || err == nil {
+		return
+	}
+	reason := err.Error()
+	if reason == "" {
+		reason = "delivery failed"
+	}
+	// Use a standalone context so a timed-out Process context does not prevent
+	// recording the final delivery failure.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if dbErr := w.failures.MarkReportFailed(ctx, db.MarkReportFailedParams{
+		ID:            reportID,
+		DeliveryError: reason,
+	}); dbErr != nil {
+		slog.Warn("worker: record report failure", "report", reportID, "err", dbErr)
 	}
 }

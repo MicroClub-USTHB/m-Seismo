@@ -16,6 +16,7 @@ import (
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/apperr"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 )
 
 const (
@@ -23,9 +24,11 @@ const (
 	stateKeyPrefix = "provider_state:"
 )
 
-// Connection is the public view of a provider connection.
+// Connection is the public view of a provider connection. Every connection
+// belongs to one app.
 type Connection struct {
 	ID           uuid.UUID  `json:"id"`
+	AppID        uuid.UUID  `json:"app_id"`
 	Tracker      db.Tracker `json:"tracker"`
 	AccountLogin string     `json:"account_login"`
 	AccountType  string     `json:"account_type"`
@@ -37,6 +40,7 @@ type Connection struct {
 func toConnection(c db.ProviderConnection) Connection {
 	return Connection{
 		ID:           c.ID,
+		AppID:        c.AppID,
 		Tracker:      c.Tracker,
 		AccountLogin: c.AccountLogin,
 		AccountType:  c.AccountType,
@@ -44,6 +48,14 @@ func toConnection(c db.ProviderConnection) Connection {
 		CreatedAt:    c.CreatedAt,
 		UpdatedAt:    c.UpdatedAt,
 	}
+}
+
+func toConnections(rows []db.ProviderConnection) []Connection {
+	out := make([]Connection, len(rows))
+	for i, c := range rows {
+		out[i] = toConnection(c)
+	}
+	return out
 }
 
 // StateStore keeps connect-flow states between the redirect to the tracker
@@ -74,22 +86,108 @@ func (s redisStateStore) Take(ctx context.Context, key string) (string, bool, er
 	return v, true, nil
 }
 
-// Service runs the connect flow and manages an owner's connections.
+// Service runs the connect flow and manages each app's connections. Every
+// method is scoped to the owner, and all but ListOwnerConnections to one of
+// the owner's apps.
 type Service struct {
-	q      db.Querier
-	reg    *Registry
-	states StateStore
+	q       db.Querier
+	reg     *Registry
+	states  StateStore
+	secrets SecretStore
+	creds   CredentialStore
 }
 
-func NewService(q db.Querier, reg *Registry, states StateStore) *Service {
-	return &Service{q: q, reg: reg, states: states}
+func NewService(q db.Querier, reg *Registry, states StateStore, secrets SecretStore, creds CredentialStore) *Service {
+	return &Service{q: q, reg: reg, states: states, secrets: secrets, creds: creds}
 }
 
-// StartConnect records a one-time state for the owner and returns the URL
-// that starts the tracker's install/authorize flow.
-func (s *Service) StartConnect(ctx context.Context, ownerID uuid.UUID, tracker db.Tracker) (string, error) {
+// perAppCredentialTrackers are the trackers each app registers its own
+// OAuth application for, instead of sharing one configured for the whole
+// deployment. GitHub is not here: it still uses the one App installed for
+// the deployment.
+var perAppCredentialTrackers = map[db.Tracker]bool{
+	db.TrackerGitlab:    true,
+	db.TrackerBitbucket: true,
+}
+
+// SetCredentials registers the app's own OAuth application (client ID and
+// secret) for tracker, so the app can run its own connect flow against it.
+// Saving again (e.g. after rotating the secret on the tracker) replaces it;
+// existing connections keep working, since Tokens resolves the application
+// fresh on every refresh.
+func (s *Service) SetCredentials(ctx context.Context, ownerID, appID uuid.UUID, tracker db.Tracker, clientID, clientSecret string) error {
+	if !perAppCredentialTrackers[tracker] {
+		return apperr.Invalid(string(tracker) + " does not use a per-app OAuth application")
+	}
+	if clientID == "" || clientSecret == "" {
+		return apperr.Invalid("client_id and client_secret are required")
+	}
+	if err := s.requireApp(ctx, ownerID, appID); err != nil {
+		return err
+	}
+	return s.creds.Save(ctx, appID, tracker, Credentials{ClientID: clientID, ClientSecret: clientSecret})
+}
+
+// CredentialStatus reports whether the app has registered an OAuth
+// application for tracker, without exposing the client secret.
+type CredentialStatus struct {
+	Tracker    db.Tracker `json:"tracker"`
+	Configured bool       `json:"configured"`
+	ClientID   string     `json:"client_id,omitempty"`
+}
+
+// GetCredentialStatus reports the app's OAuth application status for
+// tracker.
+func (s *Service) GetCredentialStatus(ctx context.Context, ownerID, appID uuid.UUID, tracker db.Tracker) (CredentialStatus, error) {
+	if !perAppCredentialTrackers[tracker] {
+		return CredentialStatus{}, apperr.Invalid(string(tracker) + " does not use a per-app OAuth application")
+	}
+	if err := s.requireApp(ctx, ownerID, appID); err != nil {
+		return CredentialStatus{}, err
+	}
+	cred, err := s.creds.Get(ctx, appID, tracker)
+	if errors.Is(err, ErrNoCredentials) {
+		return CredentialStatus{Tracker: tracker, Configured: false}, nil
+	}
+	if err != nil {
+		return CredentialStatus{}, err
+	}
+	return CredentialStatus{Tracker: tracker, Configured: true, ClientID: cred.ClientID}, nil
+}
+
+// connectState is what a state token stands for: who started the flow, for
+// which app, on which tracker.
+type connectState struct {
+	tracker db.Tracker
+	ownerID uuid.UUID
+	appID   uuid.UUID
+}
+
+func (c connectState) encode() string {
+	return string(c.tracker) + ":" + c.ownerID.String() + ":" + c.appID.String()
+}
+
+func decodeState(v string) (connectState, bool) {
+	parts := strings.Split(v, ":")
+	if len(parts) != 3 {
+		return connectState{}, false
+	}
+	ownerID, err1 := uuid.Parse(parts[1])
+	appID, err2 := uuid.Parse(parts[2])
+	if err1 != nil || err2 != nil {
+		return connectState{}, false
+	}
+	return connectState{tracker: db.Tracker(parts[0]), ownerID: ownerID, appID: appID}, true
+}
+
+// StartConnect records a one-time state for the owner's app and returns the
+// URL that starts the tracker's install/authorize flow.
+func (s *Service) StartConnect(ctx context.Context, ownerID, appID uuid.UUID, tracker db.Tracker) (string, error) {
 	p, err := s.reg.Get(tracker)
 	if err != nil {
+		return "", err
+	}
+	if err := s.requireApp(ctx, ownerID, appID); err != nil {
 		return "", err
 	}
 
@@ -99,76 +197,144 @@ func (s *Service) StartConnect(ctx context.Context, ownerID uuid.UUID, tracker d
 	}
 	state := base64.RawURLEncoding.EncodeToString(buf)
 
-	value := string(tracker) + ":" + ownerID.String()
+	value := connectState{tracker: tracker, ownerID: ownerID, appID: appID}.encode()
 	if err := s.states.Put(ctx, stateKeyPrefix+state, value, stateTTL); err != nil {
 		return "", fmt.Errorf("provider: store state: %w", err)
 	}
-	return p.InstallURL(state), nil
+	return p.InstallURL(ctx, appID, state)
 }
 
-// FinishConnect handles the tracker's callback: it consumes the state,
-// lets the provider verify the grant, and saves the connection for the
-// owner who started the flow.
-func (s *Service) FinishConnect(ctx context.Context, tracker db.Tracker, query url.Values) (Connection, error) {
+// FinishConnect handles the tracker's callback: it consumes the state, lets
+// the provider verify the grant, and saves the connection on the app the
+// flow was started for. appID is returned whenever the state was valid,
+// even with an error, so the caller can send the browser back to that app.
+func (s *Service) FinishConnect(ctx context.Context, tracker db.Tracker, query url.Values) (appID uuid.UUID, conn Connection, err error) {
 	p, err := s.reg.Get(tracker)
 	if err != nil {
-		return Connection{}, err
+		return uuid.Nil, Connection{}, err
 	}
 
 	state := query.Get("state")
 	if state == "" {
-		return Connection{}, apperr.Invalid("missing state")
+		return uuid.Nil, Connection{}, apperr.Invalid("missing state")
 	}
 	value, ok, err := s.states.Take(ctx, stateKeyPrefix+state)
 	if err != nil {
-		return Connection{}, fmt.Errorf("provider: read state: %w", err)
+		return uuid.Nil, Connection{}, fmt.Errorf("provider: read state: %w", err)
 	}
 	if !ok {
-		return Connection{}, apperr.Invalid("unknown or expired state")
+		return uuid.Nil, Connection{}, apperr.Invalid("unknown or expired state")
 	}
-	stateTracker, rawOwner, _ := strings.Cut(value, ":")
-	ownerID, err := uuid.Parse(rawOwner)
-	if err != nil || stateTracker != string(tracker) {
-		return Connection{}, apperr.Invalid("state does not match this provider")
+	st, ok := decodeState(value)
+	if !ok || st.tracker != tracker {
+		return uuid.Nil, Connection{}, apperr.Invalid("state does not match this provider")
 	}
 
-	acct, err := p.CompleteInstall(ctx, query)
+	acct, err := p.CompleteInstall(ctx, st.appID, query)
+	if err != nil {
+		return st.appID, Connection{}, err
+	}
+
+	c, err := s.upsert(ctx, st.ownerID, st.appID, tracker, acct)
+	if err != nil {
+		return st.appID, Connection{}, err
+	}
+	return st.appID, c, nil
+}
+
+// AttachConnection gives the app a connection the owner already verified on
+// another of their apps, without a new round trip through the tracker. With
+// GitHub this is the way to share an installation between apps: installing
+// an App that is already installed only shows its settings page.
+//
+// Connections with stored credentials (GitLab and Bitbucket OAuth tokens)
+// cannot be attached: their OAuth grant belongs to the app that made it,
+// and GitLab rotates refresh tokens, so a shared copy would break as soon
+// as either app refreshed. Each app connects those trackers itself.
+func (s *Service) AttachConnection(ctx context.Context, ownerID, appID, fromConnectionID uuid.UUID) (Connection, error) {
+	if err := s.requireApp(ctx, ownerID, appID); err != nil {
+		return Connection{}, err
+	}
+	src, err := s.q.GetOwnerConnection(ctx, db.GetOwnerConnectionParams{ID: fromConnectionID, OwnerID: ownerID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Connection{}, apperr.NotFound("connection not found")
+	}
 	if err != nil {
 		return Connection{}, err
 	}
+	if src.SuspendedAt != nil {
+		return Connection{}, apperr.Invalid("connection is suspended")
+	}
+	if _, err := s.reg.Get(src.Tracker); err != nil {
+		return Connection{}, err
+	}
+	switch _, err := s.secrets.Load(ctx, src.ID); {
+	case err == nil:
+		return Connection{}, apperr.Invalid(string(src.Tracker) + " connections use the app's own OAuth authorization and cannot be shared; connect this app with GET /apps/{appID}/connect/" + string(src.Tracker))
+	case !errors.Is(err, ErrNoSecret):
+		return Connection{}, err
+	}
+	return s.upsert(ctx, ownerID, appID, src.Tracker, Account{
+		ExternalID: src.ExternalID,
+		Login:      src.AccountLogin,
+		Type:       src.AccountType,
+	})
+}
 
+func (s *Service) upsert(ctx context.Context, ownerID, appID uuid.UUID, tracker db.Tracker, acct Account) (Connection, error) {
 	c, err := s.q.UpsertProviderConnection(ctx, db.UpsertProviderConnectionParams{
 		OwnerID:      ownerID,
+		AppID:        appID,
 		Tracker:      tracker,
 		ExternalID:   acct.ExternalID,
 		AccountLogin: acct.Login,
 		AccountType:  acct.Type,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Connection{}, apperr.Conflict("this account is already connected to another owner")
-	}
 	if err != nil {
+		switch kind, _ := apperr.Classify(err); kind {
+		case apperr.KindConflict:
+			return Connection{}, apperr.Conflict("this " + string(tracker) + " account is already connected by another owner")
+		case apperr.KindInvalid:
+			// The app was deleted while the flow was running.
+			return Connection{}, apperr.NotFound("app not found")
+		}
 		return Connection{}, err
+	}
+	if acct.Secret != nil {
+		if err := s.secrets.Save(ctx, c.ID, acct.Secret); err != nil {
+			return Connection{}, err
+		}
 	}
 	return toConnection(c), nil
 }
 
-func (s *Service) ListConnections(ctx context.Context, ownerID uuid.UUID) ([]Connection, error) {
-	rows, err := s.q.ListProviderConnections(ctx, ownerID)
+// ListConnections lists the app's connections.
+func (s *Service) ListConnections(ctx context.Context, ownerID, appID uuid.UUID) ([]Connection, error) {
+	if err := s.requireApp(ctx, ownerID, appID); err != nil {
+		return nil, err
+	}
+	rows, err := s.q.ListAppConnections(ctx, db.ListAppConnectionsParams{AppID: appID, OwnerID: ownerID})
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Connection, len(rows))
-	for i, c := range rows {
-		out[i] = toConnection(c)
-	}
-	return out, nil
+	return toConnections(rows), nil
 }
 
-// Disconnect forgets the connection and every project repository linked
-// through it. It does not uninstall anything on the tracker side.
-func (s *Service) Disconnect(ctx context.Context, ownerID, connectionID uuid.UUID) error {
-	n, err := s.q.DeleteProviderConnection(ctx, db.DeleteProviderConnectionParams{ID: connectionID, OwnerID: ownerID})
+// ListOwnerConnections lists the connections of all the owner's apps, for
+// choosing one to attach to another app.
+func (s *Service) ListOwnerConnections(ctx context.Context, ownerID uuid.UUID) ([]Connection, error) {
+	rows, err := s.q.ListOwnerConnections(ctx, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	return toConnections(rows), nil
+}
+
+// Disconnect removes the connection from the app. Other apps sharing the
+// same tracker account keep theirs, project repositories are untouched,
+// and nothing is uninstalled on the tracker side.
+func (s *Service) Disconnect(ctx context.Context, ownerID, appID, connectionID uuid.UUID) error {
+	n, err := s.q.DeleteAppConnection(ctx, db.DeleteAppConnectionParams{ID: connectionID, AppID: appID, OwnerID: ownerID})
 	if err != nil {
 		return err
 	}
@@ -178,46 +344,29 @@ func (s *Service) Disconnect(ctx context.Context, ownerID, connectionID uuid.UUI
 	return nil
 }
 
-// ListRepositories lists the repositories the owner's connection can reach.
-func (s *Service) ListRepositories(ctx context.Context, ownerID, connectionID uuid.UUID) ([]Repository, error) {
-	c, p, err := s.connection(ctx, ownerID, connectionID)
+// ListRepositories lists the repositories the app's connection can reach.
+func (s *Service) ListRepositories(ctx context.Context, ownerID, appID, connectionID uuid.UUID) ([]Repository, error) {
+	c, err := s.q.GetAppConnection(ctx, db.GetAppConnectionParams{ID: connectionID, AppID: appID, OwnerID: ownerID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.NotFound("connection not found")
+	}
 	if err != nil {
 		return nil, err
 	}
-	return p.ListRepositories(ctx, c.ExternalID)
-}
-
-// VerifyRepository checks that the connection belongs to the owner and can
-// reach repository. Used before a repository is linked to a project.
-func (s *Service) VerifyRepository(ctx context.Context, ownerID, connectionID uuid.UUID, repository string) (Connection, error) {
-	c, p, err := s.connection(ctx, ownerID, connectionID)
-	if err != nil {
-		return Connection{}, err
-	}
-	ok, err := p.HasRepository(ctx, c.ExternalID, repository)
-	if err != nil {
-		return Connection{}, err
-	}
-	if !ok {
-		return Connection{}, apperr.Invalid("repository " + repository + " is not reachable through this connection")
-	}
-	return toConnection(c), nil
-}
-
-func (s *Service) connection(ctx context.Context, ownerID, connectionID uuid.UUID) (db.ProviderConnection, Provider, error) {
-	c, err := s.q.GetProviderConnection(ctx, db.GetProviderConnectionParams{ID: connectionID, OwnerID: ownerID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return db.ProviderConnection{}, nil, apperr.NotFound("connection not found")
-	}
-	if err != nil {
-		return db.ProviderConnection{}, nil, err
-	}
 	if c.SuspendedAt != nil {
-		return db.ProviderConnection{}, nil, apperr.Invalid("connection is suspended")
+		return nil, apperr.Invalid("connection is suspended")
 	}
 	p, err := s.reg.Get(c.Tracker)
 	if err != nil {
-		return db.ProviderConnection{}, nil, err
+		return nil, err
 	}
-	return c, p, nil
+	return p.ListRepositories(ctx, issue.ConnectionFromRow(c))
+}
+
+func (s *Service) requireApp(ctx context.Context, ownerID, appID uuid.UUID) error {
+	_, err := s.q.GetApp(ctx, db.GetAppParams{ID: appID, OwnerID: ownerID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return apperr.NotFound("app not found")
+	}
+	return err
 }

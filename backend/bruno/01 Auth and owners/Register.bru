@@ -1,0 +1,29 @@
+meta {
+  name: Register
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/auth/register
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "lead@example.com",
+    "password": "s3cure-pass",
+    "name": "Team Lead"
+  }
+}
+
+vars:post-response {
+  token: res.body.token.access_token
+}
+
+docs {
+  Public. Email is trimmed/lower-cased, 1-200 char name, 8-72 byte password.
+  409 if the email is already registered. Sets `token` for the rest of the
+  collection.
+}

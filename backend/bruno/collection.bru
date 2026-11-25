@@ -1,0 +1,28 @@
+auth {
+  mode: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  # m-Seismo API
+
+  Run against the dev stack (`make dev-up`) or any deployment: set `baseUrl`
+  and `baseUrlRoot` in an environment (see `environments/local.bru`).
+
+  Every request and response body is JSON. Collection-level auth is a
+  bearer token from the `token` variable, filled in automatically by
+  **Auth and owners / Register** or **Login** (their `vars:post-response`
+  script sets it). Requests that don't need it (register, login, the
+  provider callback, health) override auth to `none`.
+
+  Folders follow backend/docs/*.md: run **Auth and owners → Register**
+  first, then **Apps → Create App** and **Projects → Create Project** to
+  fill in `appId` / `projectId` used by the rest of the collection.
+
+  Errors are always `{"error": "..."}`. See backend/docs/gitlab-bitbucket.md
+  and backend/docs/github.md for the full status-code and failure-mode
+  reference; this collection documents request shape, not every edge case.
+}

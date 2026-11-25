@@ -1,0 +1,16 @@
+meta {
+  name: Revoke Coordinator Key
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/apps/{{appId}}/coordinator-keys/{{coordinatorKeyId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  204; the next Attach with this key is refused. 404 "active key not found"
+  if already revoked, or if the ID is an SDK key.
+}

@@ -1,0 +1,32 @@
+meta {
+  name: Send Test Issue
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/apps/{{appId}}/test-issue
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "title": "Custom title",
+    "body": "Custom body"
+  }
+}
+
+docs {
+  Body is optional (defaults: title "m-Seismo test issue from <app name>",
+  a timestamped body, label `m-seismo-test`). Opens a real issue through
+  `issue.Service.OpenForApp`, exactly as a report would — don't point
+  this at a repository you don't want test noise in.
+
+  201 when at least one issue opened, with one result per target
+  repository. 429 + `Retry-After` if every target was rate-limited by its
+  tracker. 502 "no issue could be opened" otherwise. 422 "app has no
+  linked project with a default repository" if there's nothing to send
+  to. 429 "too many test issues for this app" past
+  `limits.test_issues_per_minute` (default 10) calls/minute.
+}
