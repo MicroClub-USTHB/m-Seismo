@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
 )
 
@@ -45,5 +46,16 @@ func TestRenderOccurrence(t *testing.T) {
 	body = renderOccurrence(r, reportInfo{}, occurrences{Reports: 25, Installations: 25, Versions: many})
 	if !strings.Contains(body, "1.24 and 5 more") || strings.Contains(body, "1.04,") {
 		t.Errorf("versions not capped to the latest %d:\n%s", maxVersions, body)
+	}
+}
+
+func TestRenderOccurrenceLinksTheCrashlyticsCrash(t *testing.T) {
+	r := ingest.Report{Platform: "android", Crash: &ingest.Crash{Type: "IllegalStateException", Reason: "boom"}}
+	url := "https://console.firebase.google.com/project/demo/crashlytics/app/android:demo/issues/1"
+	info := reportInfo{ID: uuid.New(), InstallationID: uuid.New(), CrashEvent: &crashprovider.Event{Provider: "crashlytics", URL: url}}
+
+	body := renderOccurrence(&r, info, occurrences{Reports: 2, Installations: 1})
+	if !strings.Contains(body, "[View in Firebase Crashlytics]("+url+")") {
+		t.Errorf("comment has no Crashlytics link:\n%s", body)
 	}
 }

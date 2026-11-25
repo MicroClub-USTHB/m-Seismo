@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { api, ApiError, type AppKey, type AppKeyCreated, type CrashProviderConnection, type CrashlyticsStatus, type ProjectApp } from '../../lib/api'
+import { api, ApiError, type AppKey, type AppKeyCreated, type CrashProviderConnection, type CrashlyticsStatus, type FirebaseApp, type ProjectApp } from '../../lib/api'
 import { McButton } from '../../components/mc-button'
 import { McInput } from '../../components/mc-input'
 import { McCard } from '../../components/mc-card'
 import { McBadge } from '../../components/mc-badge'
+import { McCheckbox } from '../../components/mc-checkbox'
 
 const errorText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback)
 
@@ -124,7 +125,19 @@ function CrashlyticsPanel({ projectId }: { projectId: string }) {
     queryFn: () => api.get<CrashlyticsStatus>(`/projects/${projectId}/crashlytics`),
     retry: false,
   })
-  const [apps, setApps] = useState('')
+  const connected = !!status.data?.connected
+  const saved = status.data?.apps ?? []
+  // The apps the account can read; when the server cannot list them, the
+  // owner types the names instead.
+  const firebaseApps = useQuery({
+    queryKey: [...key, 'firebase-apps'],
+    queryFn: () => api.get<{ apps: FirebaseApp[] }>(`/projects/${projectId}/crashlytics/firebase-apps`),
+    enabled: connected,
+    retry: false,
+  })
+  const [selected, setSelected] = useState<string[] | null>(null)
+  const chosen = selected ?? saved
+  const [typed, setTyped] = useState('')
 
   const connect = useMutation({
     mutationFn: () => api.post<{ url: string }>(`/projects/${projectId}/crashlytics/connect`),
@@ -132,15 +145,16 @@ function CrashlyticsPanel({ projectId }: { projectId: string }) {
     onSuccess: (r) => window.open(r.url, '_blank', 'noopener'),
   })
   const saveApps = useMutation({
-    mutationFn: () =>
-      api.put(`/projects/${projectId}/crashlytics/apps`, {
-        apps: apps
-          .split('\n')
-          .map((a) => a.trim())
-          .filter(Boolean),
-      }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: key }),
+    mutationFn: (apps: string[]) => api.put(`/projects/${projectId}/crashlytics/apps`, { apps }),
+    onSuccess: () => {
+      setSelected(null)
+      return queryClient.invalidateQueries({ queryKey: key })
+    },
   })
+  const toggle = (name: string, on: boolean) => setSelected(on ? [...chosen, name] : chosen.filter((a) => a !== name))
+  // Saved apps the account no longer lists stay visible so they can be removed.
+  const listed = firebaseApps.data?.apps ?? []
+  const unlisted = saved.filter((a) => !listed.some((f) => f.name === a))
 
   const notEnabled = status.error instanceof ApiError && status.error.status === 404
   return (
@@ -165,31 +179,66 @@ function CrashlyticsPanel({ projectId }: { projectId: string }) {
               Refresh status
             </McButton>
           </div>
-          {status.data?.connected && (
+          {connected && firebaseApps.isPending && <p className="text-sm text-muted-foreground">Loading the Firebase apps…</p>}
+          {connected && firebaseApps.isSuccess && (
+            <form
+              className="space-y-2"
+              data-testid="firebase-apps"
+              onSubmit={(e) => {
+                e.preventDefault()
+                saveApps.mutate(chosen)
+              }}
+            >
+              <p className="text-sm font-medium text-muted-foreground">Firebase apps to search for crashes</p>
+              {listed.length === 0 && unlisted.length === 0 && (
+                <p className="text-sm text-muted-foreground">This Google account cannot read any Firebase app.</p>
+              )}
+              {listed.map((a) => (
+                <McCheckbox
+                  key={a.name}
+                  checked={chosen.includes(a.name)}
+                  onCheckedChange={(on) => toggle(a.name, on)}
+                  text={`${a.display_name || a.namespace || a.name} · ${a.platform.toLowerCase()}`}
+                  supportText={`${a.project} · ${a.namespace}`}
+                />
+              ))}
+              {unlisted.map((name) => (
+                <McCheckbox key={name} checked={chosen.includes(name)} onCheckedChange={(on) => toggle(name, on)} text={name} supportText="not readable by this account" />
+              ))}
+              <McButton type="submit" isLoading={saveApps.isPending} disabled={selected === null}>
+                Save apps
+              </McButton>
+            </form>
+          )}
+          {connected && firebaseApps.isError && (
             <form
               className="space-y-2"
               onSubmit={(e) => {
                 e.preventDefault()
-                saveApps.mutate()
+                saveApps.mutate(
+                  typed
+                    .split('\n')
+                    .map((a) => a.trim())
+                    .filter(Boolean),
+                )
               }}
             >
+              <p className="text-xs text-muted-foreground">{errorText(firebaseApps.error, 'The Firebase apps cannot be listed')}. Type them instead.</p>
               <label className="text-sm font-medium text-muted-foreground" htmlFor="fb-apps">
                 Firebase apps, one per line (projects/&lt;number&gt;/apps/&lt;app id&gt;)
               </label>
               <textarea
                 id="fb-apps"
                 rows={3}
-                value={apps}
-                placeholder={(status.data.apps ?? []).join('\n') || 'projects/123456/apps/1:123456:android:abcd'}
-                onChange={(e) => setApps(e.target.value)}
+                value={typed}
+                placeholder={saved.join('\n') || 'projects/123456/apps/1:123456:android:abcd'}
+                onChange={(e) => setTyped(e.target.value)}
                 className="w-full rounded-md border border-border bg-background p-2 text-sm"
               />
               <McButton type="submit" isLoading={saveApps.isPending}>
                 Save apps
               </McButton>
-              {(status.data.apps ?? []).length > 0 && (
-                <p className="text-xs text-muted-foreground">Saved: {(status.data.apps ?? []).join(', ')}</p>
-              )}
+              {saved.length > 0 && <p className="text-xs text-muted-foreground">Saved: {saved.join(', ')}</p>}
             </form>
           )}
           {(connect.isError || saveApps.isError) && <p className="text-sm text-destructive">{errorText(connect.error ?? saveApps.error, 'request failed')}</p>}

@@ -22,7 +22,7 @@ type occurrences struct {
 // renderOccurrence is the comment added to an open issue when another
 // report of the same bug comes in: the counts so far, then what is new in
 // this report. The crash itself is the same as in the issue, so it is left
-// out.
+// out, but the link to this occurrence's Crashlytics crash is kept.
 func renderOccurrence(r *ingest.Report, info reportInfo, n occurrences) string {
 	var b strings.Builder
 
@@ -45,6 +45,10 @@ func renderOccurrence(r *ingest.Report, info reportInfo, n occurrences) string {
 	}
 	if c := r.Crash; c != nil && c.Reason != "" {
 		fmt.Fprintf(&b, "**%s**: %s\n\n", text(c.Type), text(c.Reason))
+	}
+	if event := info.CrashEvent; event != nil && event.Provider == "crashlytics" && event.URL != "" {
+		// The URL comes from the Crashlytics API, not from the report.
+		fmt.Fprintf(&b, "[View in Firebase Crashlytics](%s)\n\n", event.URL)
 	}
 	b.WriteString(stepsSection(r))
 	b.WriteString(environmentSection(r))

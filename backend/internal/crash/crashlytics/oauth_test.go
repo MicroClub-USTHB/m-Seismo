@@ -75,9 +75,10 @@ func (t tokens) Verify(token string) (uuid.UUID, error) {
 }
 
 type oauthTest struct {
-	store  *memStore
-	states memStates
-	router chi.Router
+	store   *memStore
+	states  memStates
+	router  chi.Router
+	handler *Handler
 	// token is sent as the bearer token; empty sends none.
 	token string
 }
@@ -92,6 +93,7 @@ func newOAuthTest(t *testing.T, refreshToken string, conns ...Connection) *oauth
 	h.oauth.Endpoint = oauth2.Endpoint{AuthURL: "https://accounts.google.test/auth", TokenURL: google.URL + "/token"}
 	h.userinfoURL = google.URL + "/userinfo"
 	h.httpClient = google.Client()
+	ot.handler = h
 
 	ot.router.Route("/api/v1", h.Mount)
 	return ot
