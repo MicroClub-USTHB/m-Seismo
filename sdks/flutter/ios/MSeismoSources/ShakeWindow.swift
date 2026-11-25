@@ -1,0 +1,1 @@
+../../../ios/Sources/MSeismo/ShakeWindow.swift

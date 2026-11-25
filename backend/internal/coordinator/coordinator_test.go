@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/testenv"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -75,7 +76,9 @@ func attach(t *testing.T, in *instance, key string, hello *seismov1.Hello, answe
 		t.Fatal(err)
 	}
 	if hello != nil {
-		if err := stream.Send(&seismov1.CoordinatorEvent{Event: &seismov1.CoordinatorEvent_Hello{Hello: hello}}); err != nil {
+		// The backend may reject the stream before this Send lands; Send then
+		// returns io.EOF and the real status comes from Recv below.
+		if err := stream.Send(&seismov1.CoordinatorEvent{Event: &seismov1.CoordinatorEvent_Hello{Hello: hello}}); err != nil && !errors.Is(err, io.EOF) {
 			t.Fatal(err)
 		}
 	}

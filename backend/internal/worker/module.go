@@ -19,6 +19,7 @@ import (
 var Module = fx.Module("worker",
 	fx.Provide(
 		func(q db.Querier) Queries { return q },
+		func(q db.Querier) FailureRecorder { return q },
 		func(s *issue.Service) Issues { return s },
 		func(pool *pgxpool.Pool) Locks { return pgLocks{pool: pool} },
 		func(s *crashprovider.Service) CrashResolver { return s },
@@ -37,10 +38,10 @@ var Module = fx.Module("worker",
 	fx.Invoke(register),
 )
 
-func register(lc fx.Lifecycle, cfg *config.Config, js jetstream.JetStream, p *Processor) {
+func register(lc fx.Lifecycle, cfg *config.Config, js jetstream.JetStream, p *Processor, f FailureRecorder) {
 	if !cfg.Worker.Enabled {
 		return
 	}
-	w := New(js, p, cfg.Worker.Concurrency, cfg.Worker.MaxAttempts)
+	w := New(js, p, f, cfg.Worker.Concurrency, cfg.Worker.MaxAttempts)
 	lc.Append(fx.Hook{OnStart: w.Start, OnStop: w.Stop})
 }

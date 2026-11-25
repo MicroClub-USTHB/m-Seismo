@@ -185,13 +185,14 @@ func (p *Processor) Process(ctx context.Context, id uuid.UUID) error {
 		return fmt.Errorf("list attachments of report %s: %w", id, err)
 	}
 	var crashEvent *crashprovider.Event
-	if r.Sentry != nil && p.crashes != nil {
+	if p.crashes != nil {
 		var resolveErr error
 		crashEvent, resolveErr = p.crashes.ForReport(ctx, row.AppID, &r)
 		if resolveErr != nil {
-			// Sentry delays or outages must not discard or indefinitely delay the issue.
-			// The resolver returns a validated link when its configuration is available.
-			slog.WarnContext(ctx, "Sentry details unavailable; retaining crash reference", "report", id)
+			// Crash reporter delays or outages must not discard or indefinitely
+			// delay the issue. The Sentry resolver still returns a validated link
+			// when its configuration is available.
+			slog.WarnContext(ctx, "crash details unavailable", "report", id, "err", resolveErr)
 		}
 	}
 	repo := ""

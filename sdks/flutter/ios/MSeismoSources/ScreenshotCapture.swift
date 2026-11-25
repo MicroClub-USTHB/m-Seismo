@@ -1,0 +1,1 @@
+../../../ios/Sources/MSeismo/ScreenshotCapture.swift

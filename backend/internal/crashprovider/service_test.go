@@ -297,7 +297,7 @@ func TestNoProviderAndCrashlyticsDoNotNeedSentryCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	link, err = s.ReportCrash(ctx, owner, app, report)
-	if err != nil || link.Status != "adapter_pending" || link.Provider != "crashlytics" {
-		t.Fatalf("Crashlytics pending: %+v %v", link, err)
+	if err != nil || link.Status != "event_not_found" || link.Provider != "crashlytics" {
+		t.Fatalf("Crashlytics without a crash source: %+v %v", link, err)
 	}
 }

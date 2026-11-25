@@ -24,7 +24,18 @@ WHERE id = $1;
 
 -- name: MarkReportProcessed :exec
 UPDATE reports
-SET processed_at = now()
+SET processed_at = now(),
+    delivery_error = NULL
+WHERE id = $1 AND processed_at IS NULL;
+
+-- name: MarkReportFailed :exec
+UPDATE reports
+SET delivery_error = sqlc.arg('delivery_error')::text
+WHERE id = $1 AND processed_at IS NULL;
+
+-- name: ClearReportFailure :exec
+UPDATE reports
+SET delivery_error = NULL
 WHERE id = $1 AND processed_at IS NULL;
 
 -- name: ListReportDeliveries :many
@@ -96,4 +107,26 @@ WHERE reports.app_id = apps.id
 SELECT name, content_type, data FROM report_attachments
 WHERE report_id = $1
 ORDER BY name;
+
+-- name: ListReports :many
+SELECT * FROM reports
+WHERE app_id = $1
+  AND (
+    sqlc.narg('cursor_time')::timestamptz IS NULL
+    OR (sqlc.narg('cursor_id')::uuid IS NULL AND occurred_at < sqlc.narg('cursor_time')::timestamptz)
+    OR (sqlc.narg('cursor_id')::uuid IS NOT NULL AND (occurred_at, id) < (sqlc.narg('cursor_time')::timestamptz, sqlc.narg('cursor_id')::uuid))
+  )
+  AND (
+    sqlc.narg('status')::text IS NULL
+    OR (sqlc.narg('status')::text = 'delivered' AND processed_at IS NOT NULL)
+    OR (sqlc.narg('status')::text = 'failed' AND processed_at IS NULL AND delivery_error IS NOT NULL)
+    OR (sqlc.narg('status')::text = 'queued' AND processed_at IS NULL AND delivery_error IS NULL)
+  )
+ORDER BY occurred_at DESC, id DESC
+LIMIT sqlc.arg('limit');
+
+-- name: ListReportDeliveriesByReportIDs :many
+SELECT * FROM report_deliveries
+WHERE report_id = ANY(sqlc.arg('report_ids')::uuid[])
+ORDER BY created_at ASC;
 

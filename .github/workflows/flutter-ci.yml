@@ -41,6 +41,12 @@ jobs:
           dart format lib/src/messages.g.dart
           git diff --exit-code -- lib/src/messages.g.dart ios/Classes/Messages.g.swift
 
+      - name: Check iOS SDK links are up to date
+        run: |
+          ./tool/link_ios_sources.sh
+          git add -A ios/MSeismoSources
+          git diff --cached --exit-code -- ios/MSeismoSources
+
       - name: Check formatting
         run: dart format --set-exit-if-changed lib test pigeons example/lib example/integration_test
 
@@ -71,5 +77,14 @@ jobs:
       - name: Build iOS simulator app
         run: flutter build ios --simulator --no-codesign
 
+      - name: Boot iOS simulator
+        id: sim
+        run: |
+          udid=$(xcrun simctl list devices available -j \
+            | jq -r '[.devices | to_entries[] | select(.key | contains("iOS")) | .value[] | select(.name == "iPhone 17")][0].udid')
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+
       - name: Integration test
-        run: flutter test integration_test -d "iPhone 17"
+        run: flutter test integration_test -d "${{ steps.sim.outputs.udid }}"

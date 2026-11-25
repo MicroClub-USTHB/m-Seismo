@@ -12,8 +12,11 @@ the native MSeismo package separately.
   s.author           = { 'MicroClub' => 'microclub@usthb.dz' }
   s.source           = { :path => '.' }
 
+  # CocoaPods ignores files outside the pod directory, so the native SDK is
+  # reached through one symlink per file in MSeismoSources
+  # (regenerate with tool/link_ios_sources.sh).
   s.source_files = 'Classes/**/*.{swift,h}',
-                   '../../ios/Sources/MSeismo/**/*.swift'
+                   'MSeismoSources/*.swift'
   s.resource_bundles = {
     'm_seismo_privacy' => ['Resources/PrivacyInfo.xcprivacy']
   }
