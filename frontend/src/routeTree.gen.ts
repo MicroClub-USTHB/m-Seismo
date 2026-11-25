@@ -16,6 +16,8 @@ import { Route as AppsAppIdIndexRouteImport } from './routes/apps/$appId/index'
 import { Route as AppsAppIdConnectionsRouteImport } from './routes/apps/$appId/connections'
 import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
 import { Route as ProjectsProjectIdSetupRouteImport } from './routes/projects/$projectId/setup'
+import { Route as AppsAppIdReportsIndexRouteImport } from './routes/apps/$appId/reports/index'
+import { Route as AppsAppIdReportsReportIdRouteImport } from './routes/apps/$appId/reports/$reportId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -52,6 +54,17 @@ const ProjectsProjectIdSetupRoute = ProjectsProjectIdSetupRouteImport.update({
   path: '/projects/$projectId/setup',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppsAppIdReportsIndexRoute = AppsAppIdReportsIndexRouteImport.update({
+  id: '/apps/$appId/reports/',
+  path: '/apps/$appId/reports/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppsAppIdReportsReportIdRoute =
+  AppsAppIdReportsReportIdRouteImport.update({
+    id: '/apps/$appId/reports/$reportId',
+    path: '/apps/$appId/reports/$reportId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -61,6 +74,8 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/setup': typeof ProjectsProjectIdSetupRoute
   '/apps/$appId/': typeof AppsAppIdIndexRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
+  '/apps/$appId/reports/$reportId': typeof AppsAppIdReportsReportIdRoute
+  '/apps/$appId/reports/': typeof AppsAppIdReportsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -70,6 +85,8 @@ export interface FileRoutesByTo {
   '/projects/$projectId/setup': typeof ProjectsProjectIdSetupRoute
   '/apps/$appId': typeof AppsAppIdIndexRoute
   '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
+  '/apps/$appId/reports/$reportId': typeof AppsAppIdReportsReportIdRoute
+  '/apps/$appId/reports': typeof AppsAppIdReportsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -80,6 +97,8 @@ export interface FileRoutesById {
   '/projects/$projectId/setup': typeof ProjectsProjectIdSetupRoute
   '/apps/$appId/': typeof AppsAppIdIndexRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
+  '/apps/$appId/reports/$reportId': typeof AppsAppIdReportsReportIdRoute
+  '/apps/$appId/reports/': typeof AppsAppIdReportsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -91,6 +110,8 @@ export interface FileRouteTypes {
     | '/projects/$projectId/setup'
     | '/apps/$appId/'
     | '/projects/$projectId/'
+    | '/apps/$appId/reports/$reportId'
+    | '/apps/$appId/reports/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -100,6 +121,8 @@ export interface FileRouteTypes {
     | '/projects/$projectId/setup'
     | '/apps/$appId'
     | '/projects/$projectId'
+    | '/apps/$appId/reports/$reportId'
+    | '/apps/$appId/reports'
   id:
     | '__root__'
     | '/'
@@ -109,6 +132,8 @@ export interface FileRouteTypes {
     | '/projects/$projectId/setup'
     | '/apps/$appId/'
     | '/projects/$projectId/'
+    | '/apps/$appId/reports/$reportId'
+    | '/apps/$appId/reports/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -119,6 +144,8 @@ export interface RootRouteChildren {
   ProjectsProjectIdSetupRoute: typeof ProjectsProjectIdSetupRoute
   AppsAppIdIndexRoute: typeof AppsAppIdIndexRoute
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
+  AppsAppIdReportsReportIdRoute: typeof AppsAppIdReportsReportIdRoute
+  AppsAppIdReportsIndexRoute: typeof AppsAppIdReportsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -172,6 +199,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdSetupRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/apps/$appId/reports/': {
+      id: '/apps/$appId/reports/'
+      path: '/apps/$appId/reports'
+      fullPath: '/apps/$appId/reports/'
+      preLoaderRoute: typeof AppsAppIdReportsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/apps/$appId/reports/$reportId': {
+      id: '/apps/$appId/reports/$reportId'
+      path: '/apps/$appId/reports/$reportId'
+      fullPath: '/apps/$appId/reports/$reportId'
+      preLoaderRoute: typeof AppsAppIdReportsReportIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -183,6 +224,8 @@ const rootRouteChildren: RootRouteChildren = {
   ProjectsProjectIdSetupRoute: ProjectsProjectIdSetupRoute,
   AppsAppIdIndexRoute: AppsAppIdIndexRoute,
   ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
+  AppsAppIdReportsReportIdRoute: AppsAppIdReportsReportIdRoute,
+  AppsAppIdReportsIndexRoute: AppsAppIdReportsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

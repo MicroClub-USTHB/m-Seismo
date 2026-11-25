@@ -15,6 +15,7 @@ import { Shell } from '../../../lib/Shell'
 import { McButton } from '../../../components/mc-button'
 import { McCard } from '../../../components/mc-card'
 import { McBadge } from '../../../components/mc-badge'
+import { AppTabs } from '../../../features/app-tabs'
 import { KeysSection, RETURN_KEY, TestIssueSection, TrackerCard } from '../../../features/app-sections'
 import {
   McSelect,
@@ -87,6 +88,8 @@ function AppConnectionsPage() {
         </Link>
         <h2 className="header-xs text-foreground">{app.data?.name ?? '…'}</h2>
       </div>
+
+      <AppTabs appId={appId} />
 
       {search.status && (
         <McCard
