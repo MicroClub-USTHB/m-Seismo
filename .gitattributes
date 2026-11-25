@@ -2,3 +2,6 @@
 # or bash fails on the trailing \r.
 *.sh text eol=lf
 Dockerfile text eol=lf
+# Windows batch files need CRLF; the Gradle wrapper script needs LF.
+*.bat text eol=crlf
+gradlew text eol=lf

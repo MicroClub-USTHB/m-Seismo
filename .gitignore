@@ -27,6 +27,7 @@ xcuserdata/
 
 # Android / Kotlin
 .gradle/
+.kotlin/
 build/
 local.properties
 

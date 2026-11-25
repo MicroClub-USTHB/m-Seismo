@@ -1,36 +1,58 @@
 # m-Seismo Flutter SDK
 
-A thin, iOS-only Flutter bridge over the native m-Seismo Swift SDK.
+A thin Flutter bridge over the native m-Seismo Swift (iOS) and Kotlin
+(Android) SDKs.
 
-- **Status:** iOS bridge implemented. Android is deferred until the native
-  Kotlin SDK exists.
-- **Native source of truth:** `sdks/ios/Sources/MSeismo`.
-- **Reports identity:** reports are still tagged `platform: "ios"` and
-  `sdk.name: "mseismo-ios"`. Tagging them as Flutter would require a change
-  to the native Swift SDK, which this bridge deliberately does not make.
+- **Status:** iOS and Android bridges implemented.
+- **Native source of truth:** `sdks/ios/Sources/MSeismo` and
+  `sdks/android/mseismo`.
+- **Reports identity:** reports keep the native tags (`platform: "ios"` /
+  `"android"` and `sdk.name: "mseismo-ios"` / `"mseismo-android"`).
 
 ## Requirements
 
 - Flutter 3.24 or newer.
 - Dart 3.6 or newer.
 - iOS 13 or newer.
+- Android 7.0 (API 24) or newer, `compileSdk` 36, Java 17.
 - A full m-Seismo checkout. The package uses a `path:` dependency and is not
   publishable to pub.dev until the native packaging strategy changes.
 
-## How the native SDK is linked
+The Android build is tested with Flutter 3.44.8, which is where the current
+Flutter Gradle templates use AGP 9.
 
-The plugin pod compiles the existing Swift SDK sources directly:
+## How the native SDKs are linked
+
+The iOS pod compiles the Swift SDK sources directly:
 
 ```ruby
 s.source_files = 'Classes/**/*.{swift,h}',
                  '../../ios/Sources/MSeismo/**/*.swift'
 ```
 
-From `sdks/flutter/ios`, `../../ios` resolves to `sdks/ios`. There is no
-`pod 'MSeismo'` dependency and no separate native package link in the host
-app. **Do not also link the native MSeismo package separately** from a host
-app: that would compile a second copy of the SDK and create two independent
-SDK instances.
+The Android plugin compiles the Kotlin SDK sources through Gradle source sets:
+
+```kotlin
+sourceSets {
+    getByName("main") {
+        java.srcDirs(
+            "src/main/kotlin",
+            "../../android/mseismo/src/main/java",
+        )
+        res.srcDirs("../../android/mseismo/src/main/res")
+    }
+}
+```
+
+From `sdks/flutter`, `../../ios` and `../../android` resolve to `sdks/ios`
+and `sdks/android`. There is no CocoaPods dependency and no Maven/AAR
+dependency on the native packages. **Do not also link the native SDK
+separately** from a host app: that would compile a second copy of the SDK
+and create two independent SDK instances.
+
+The plugin manifest mirrors the native Android manifest, including the
+`ReportActivity` declaration and the permissions used by the native
+triggers.
 
 If CocoaPods rejects source globs outside the pod directory, use the
 fallback described in [CocoaPods fallback](#cocoapods-fallback).
@@ -47,21 +69,21 @@ dependencies:
 
 Then run `flutter pub get`.
 
-The plugin is CocoaPods-only. If your project uses Flutter's Swift Package
-Manager mode, Flutter will automatically fall back to CocoaPods for this
-plugin because it has a podspec and no `Package.swift`.
+The iOS plugin is CocoaPods-only. If your project uses Flutter's Swift
+Package Manager mode, Flutter automatically falls back to CocoaPods for
+this plugin because it has a podspec and no `Package.swift`.
 
 ### Host app configuration
 
-Add motion usage text to `ios/Runner/Info.plist` so the shake trigger can
-use CoreMotion:
+iOS: add motion usage text to `ios/Runner/Info.plist` so the shake trigger
+can use CoreMotion:
 
 ```xml
 <key>NSMotionUsageDescription</key>
 <string>m-Seismo opens the bug report sheet when you shake the device.</string>
 ```
 
-When testing against a local server over HTTP, also allow local networking:
+For a local HTTP server in debug builds, allow local networking:
 
 ```xml
 <key>NSAppTransportSecurity</key>
@@ -70,6 +92,17 @@ When testing against a local server over HTTP, also allow local networking:
   <true/>
 </dict>
 ```
+
+Android: the plugin declares the SDK's internet, network-state and
+screen-capture permissions, so the host app does not need to add them.
+For a local HTTP server in debug builds, allow cleartext traffic in the
+debug manifest:
+
+```xml
+<application android:usesCleartextTraffic="true" />
+```
+
+HTTP endpoints are only accepted in debuggable builds.
 
 ## Initialization
 
@@ -96,10 +129,15 @@ Future<void> main() async {
 }
 ```
 
-`configure` forwards to the native `MSeismo.shared.configure`, starts or
-stops the bridge's CoreMotion shake monitor, and lets the native SDK observe
-screenshots. `checkForPendingCrash()` should run at startup after
-configuration so a crash from the previous launch is reported automatically.
+`configure` forwards to the native SDK after validating the endpoint, SDK
+key and release fields. Invalid configurations throw a `PlatformException`
+with code `invalid-configuration`.
+
+On iOS the native SDK observes screenshots and the bridge feeds CoreMotion
+shakes into the native detector. On Android the native SDK owns both
+triggers. `checkForPendingCrash()` should run at startup after
+configuration so a crash from the previous launch is reported
+automatically.
 
 ## API
 
@@ -120,9 +158,12 @@ final reportId = await MSeismo.instance.submit(
 );
 ```
 
-`report()` opens the native SwiftUI report form. The form submits through
-the native SDK, so screenshot annotation, redaction, context enrichment and
-offline queueing stay native.
+`report()` opens the native report form: SwiftUI on iOS and `ReportActivity`
+on Android. The form submits through the native SDK, so screenshot
+annotation, redaction, context enrichment and offline queueing stay native.
+
+On Android, `report()` requires an attached `Activity`. Calling it without
+one throws a `PlatformException` with code `no-activity`.
 
 ### Errors
 
@@ -136,9 +177,9 @@ FlutterError.onError = (details) {
 };
 ```
 
-Flutter/Dart errors are persisted through the native public `CrashStore`
-and reported on the next `checkForPendingCrash()` call or app launch. Pass
-`fatal: true` when the error should be classified like a crash.
+Flutter/Dart errors are persisted by the native SDK and reported on the
+next `checkForPendingCrash()` call or app launch. Pass `fatal: true` when
+the error should be classified like a crash.
 
 ### Diagnostics
 
@@ -180,6 +221,9 @@ final sessionId = await MSeismo.instance.sessionId;
 final traceId = await MSeismo.instance.newTraceId();
 ```
 
+`installationId` throws a `PlatformException` with code `not-configured`
+until `configure()` succeeds.
+
 ### Automatic reports
 
 ```dart
@@ -189,26 +233,20 @@ MSeismo.instance.autoReports.listen((report) {
 ```
 
 The stream is broadcast and is fed by the native `onAutoReport` callback
-through Pigeon.
+through Pigeon on both platforms.
 
 ## Limitations
 
-- iOS only. Every channel-backed member throws `UnsupportedError` on other
-  platforms; the package is still web-safe to compile.
-- Reports are tagged `platform: "ios"` and `sdk.name: "mseismo-ios"`.
-- Sheet presentation is observed through the native
-  `@Published isReportSheetPresented`; there is no new native callback.
-- Logs, breadcrumbs, and network entries receive native timestamps. The
-  bridge cannot supply custom timestamps.
-- Shake cannot be exercised in the iOS Simulator. Test it on a physical
-  device with `NSMotionUsageDescription` set.
-- The package is a monorepo/local-path dependency, not a pub.dev package.
-- Do not link the native `MSeismo` Swift package in an app that also uses
-  this plugin.
+- iOS and Android only. Every channel-backed member throws
+  `UnsupportedError` on other platforms; the package is still web-safe to
+  compile.
+- Reports are tagged with the native platform and SDK name.
+- Android `pendingReportCount` waits for the native worker thread and may
+  block briefly if the SDK is busy sending.
+- Sheet presentation is observed through the native SDK state; there is no
+  new native callback.
 
-## Testing
-
-From `sdks/flutter`:
+## Development
 
 ```sh
 flutter pub get
@@ -216,52 +254,17 @@ dart run pigeon --input pigeons/messages.dart
 dart format lib test pigeons example/lib example/integration_test
 flutter analyze
 flutter test
-```
 
-On macOS with Xcode:
-
-```sh
 cd example
-flutter pub get
-flutter build ios --simulator --no-codesign
-flutter test integration_test -d "iPhone 17"
+flutter build apk --debug
 ```
 
-The integration test starts an in-process HTTP server and verifies the
-multipart payload, offline-queue submission, automatic crash reporting and
-feature-flag scalar types.
-
-Manual checks:
-
-1. Start the fake server: `python3 sdks/ios/Example/fake_server.py`.
-2. Run the example app and press **Configure SDK**.
-3. Verify **Open report sheet**, **Submit headless report**, screenshot
-   trigger (Cmd+S in the simulator), Cancel, Send and swipe-dismiss.
-4. On a physical device, verify shake opens the sheet.
-5. Turn off the network, submit a report, and confirm it is sent by
-   **Retry now** or after the app relaunches.
-
-## Regenerating Pigeon
-
-Pigeon is pinned to `25.3.0` so generated output is stable:
-
-```sh
-dart run pigeon --input pigeons/messages.dart
-dart format lib/src/messages.g.dart
-```
-
-Commit `lib/src/messages.g.dart` and `ios/Classes/Messages.g.swift` together
-with the Pigeon source.
+The Flutter CI workflow also checks Pigeon drift for the Dart, Swift and
+Kotlin outputs, runs the Dart checks and builds the example APK.
 
 ## CocoaPods fallback
 
-If CocoaPods refuses the `../../ios/Sources/MSeismo/**/*.swift` glob:
-
-1. Add `ios/MSeismo/MSeismo.podspec` under this package with
-   `s.source_files = '../../../ios/Sources/MSeismo/**/*.swift'`.
-2. Make `ios/m_seismo.podspec` depend on `MSeismo`.
-3. In the host app's `Podfile`, add
-   `pod 'MSeismo', :path => '../../ios/MSeismo'`.
-
-This still keeps every file under `sdks/flutter/`; no changes are made to
-`sdks/ios/`.
+If CocoaPods refuses to compile source files outside the pod directory,
+symlink or copy the native Swift sources into `ios/Classes/Native` and
+update `m_seismo.podspec` accordingly. Keep only one copy of the sources
+in the build.

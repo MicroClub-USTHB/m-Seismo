@@ -1,10 +1,14 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:m_seismo/m_seismo.dart';
 
-const String _baseUrl = 'http://127.0.0.1:8787';
-const String _sdkKey = 'example-project-key';
+const String _sdkKey = 'msk_flutter_example';
+
+String get _baseUrl => defaultTargetPlatform == TargetPlatform.android
+    ? 'http://10.0.2.2:8787'
+    : 'http://127.0.0.1:8787';
 
 void main() {
   runApp(const MSeismoExampleApp());
@@ -165,7 +169,7 @@ class _ExamplePageState extends State<ExamplePage> {
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 4),
-                  const Text('Key: example-project-key'),
+                  const Text('Key: msk_flutter_example'),
                   const SizedBox(height: 12),
                   Text(
                     _busy ? 'Working…' : _status,

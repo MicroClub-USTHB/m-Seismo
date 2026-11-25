@@ -6,11 +6,11 @@ m-Seismo is an open-source internal tool from MicroClub that turns mobile and we
 - `spec/`: contracts shared by every component (report schema, ingestion API, SDK conformance cases)
 - `backend/`: Go service for ingestion, enrichment, deduplication and GitHub publishing
 - `agent/`: Rust agent that collects and redacts server logs and diagnostics on demand
-- `sdks/`: native iOS and web SDKs, plus the iOS-first Flutter bridge; Android and React Native SDKs are planned
+- `sdks/`: native iOS, Android and web SDKs, plus the Flutter bridge; a React Native SDK is planned
 - `deploy/`: local development stack and deployment configuration
 
 ## Status
-Backend management, report ingestion, automatic GitHub issue publishing, and per-app Sentry event resolution are implemented. The Crashlytics export adapter remains pending. The iOS SDK, web SDK, and an iOS-first Flutter bridge are available under `sdks/`; the Flutter bridge depends on a local checkout of the native iOS SDK. See [crash-provider setup](backend/docs/crash-providers.md).
+Backend management, report ingestion, automatic GitHub issue publishing, and per-app Sentry event resolution are implemented. The Crashlytics export adapter remains pending. The iOS SDK, Android SDK, web SDK, and Flutter bridge are available under `sdks/`; the Flutter bridge depends on a local checkout of the native SDKs. See [crash-provider setup](backend/docs/crash-providers.md).
 
 ## Make commands
 
