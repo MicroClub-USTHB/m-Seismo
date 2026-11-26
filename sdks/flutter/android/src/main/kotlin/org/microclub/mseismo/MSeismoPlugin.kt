@@ -88,7 +88,10 @@ class MSeismoPlugin : FlutterPlugin, ActivityAware, MSeismoHostApi {
                 null,
             )
         }
-        MSeismo.configure(app, configuration)
+        // The Flutter screen is already showing when Dart configures the SDK,
+        // so it is handed over to get the shake and screenshot triggers now.
+        val screen = activity
+        if (screen != null) MSeismo.configure(screen, configuration) else MSeismo.configure(app, configuration)
         if (MSeismo.configuration == null) {
             throw FlutterError(
                 "invalid-configuration",

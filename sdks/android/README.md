@@ -28,6 +28,12 @@ class MyApp : Application() {
 
 `release` defaults to the app's `versionName` and `versionCode`.
 
+Configure it in `Application.onCreate`, before any screen shows. A framework
+that can only configure it later, once a screen is showing (Flutter, React
+Native), passes that screen instead: `MSeismo.configure(activity, configuration)`.
+Otherwise the screen only gets the shake and screenshot triggers on its next
+resume.
+
 Reports also start without any code from you (FR-05, FR-07):
 
 - **Shake**: a firm shake, back and forth twice. Light shakes and small flicks are
@@ -44,7 +50,8 @@ it is granted at install, with no prompt.
 
 Shake, screenshot, or a call to `MSeismo.showReportScreen(activity)` (for a
 "Report a bug" button) opens the report screen. It first captures the screen
-the user was on, so they can circle the problem with the pen or hide private
+the user was on, including what apps draw on their own surface (Flutter,
+maps, video), so they can circle the problem with the pen or hide private
 parts with the black-out marker, then shows a short form: title, description,
 category and severity. "Send report" uploads it with the drawn-on
 screenshot; "Skip screenshot" sends it without one. `MSeismo.report(...)`

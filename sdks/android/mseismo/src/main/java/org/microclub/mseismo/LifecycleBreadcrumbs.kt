@@ -5,10 +5,11 @@ import android.app.Application
 import android.content.ComponentCallbacks2
 
 // Screens opened and background/foreground, as breadcrumbs.
-internal fun recordLifecycle(app: Application, record: (BreadcrumbKind, String) -> Unit) {
+// Returns the activity callbacks, which the caller registers.
+internal fun recordLifecycle(app: Application, record: (BreadcrumbKind, String) -> Unit): ActivityCallbacks {
     var hidden = true
     var lastScreen: String? = null
-    app.registerActivityLifecycleCallbacks(object : ActivityCallbacks {
+    val callbacks = object : ActivityCallbacks {
         override fun onActivityResumed(activity: Activity) {
             if (activity is ReportActivity) return
             if (hidden) record(BreadcrumbKind.LIFECYCLE, "foreground")
@@ -18,7 +19,7 @@ internal fun recordLifecycle(app: Application, record: (BreadcrumbKind, String) 
             if (screen != lastScreen) record(BreadcrumbKind.NAVIGATION, screen)
             lastScreen = screen
         }
-    })
+    }
     // UI_HIDDEN: no screen of the app is visible any more.
     app.registerComponentCallbacks(object : ComponentCallbacks2 {
         override fun onTrimMemory(level: Int) {
@@ -33,4 +34,5 @@ internal fun recordLifecycle(app: Application, record: (BreadcrumbKind, String) 
         @Suppress("OVERRIDE_DEPRECATION") // required by the interface
         override fun onLowMemory() = Unit
     })
+    return callbacks
 }
