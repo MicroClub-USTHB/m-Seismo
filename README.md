@@ -110,24 +110,9 @@ A React Native SDK is planned.
 
 ## How it works
 
-```
- Mobile / web app                 m-Seismo server                     Tracker
-┌───────────────────┐        ┌──────────────────────────────┐     ┌──────────────┐
-│  SDK               │ HTTPS  │  API (Go)                    │     │  GitHub      │
-│  · shake / button  │──────▶ │  · checks the SDK key        │     │  GitLab      │
-│  · screenshot      │ report │  · stores report + screenshot│     │  Bitbucket   │
-│  · context, logs   │        │  · queues it (NATS)          │     └──────▲───────┘
-│  · offline queue   │        │                              │            │
-└───────────────────┘        │  Worker                      │   issue    │
-                              │  · routing rules → repository│────────────┘
- Firebase Crashlytics ◀──────│  · same bug? → comment       │
- Sentry                       │  · crash details, server logs│
-                              │                              │
- Rust agents (beside   ◀─────│  Coordinator (gRPC)          │
- your services)               └──────────────────────────────┘
-                                         ▲
-                              Dashboard (React) for owners
-```
+![m-Seismo system design](docs/system-design.svg)
+
+<sub>Edit the diagram: open [`docs/system-design.excalidraw`](docs/system-design.excalidraw) on [excalidraw.com](https://excalidraw.com).</sub>
 
 1. The **SDK** builds a report that follows the shared
    [report schema](spec/report.schema.json) and sends it to
