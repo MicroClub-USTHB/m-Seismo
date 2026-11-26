@@ -35,7 +35,7 @@ internal class Triggers(
     // App's main thread: a failure turns the trigger off, never crashes the app.
     override fun onActivityResumed(activity: Activity) {
         if (activity is ReportActivity) return // no shake inside the report screen
-        resumed += activity
+        if (!resumed.add(activity)) return // already listening for this screen
         try {
             if (listening == null && shakeEnabled()) {
                 // The app's, not the screen's: the listener can outlive this screen.
