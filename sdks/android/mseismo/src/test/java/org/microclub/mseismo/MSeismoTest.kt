@@ -243,6 +243,21 @@ class MSeismoTest {
         assertTrue(crumbs, """"message":"background"""" in crumbs)
     }
 
+    @Test
+    fun aScreenAlreadyShowingWhenConfiguredIsWatched() {
+        // Flutter configures the SDK from Dart, once its screen has resumed.
+        val screen = Robolectric.buildActivity(Activity::class.java).setup()
+        MSeismo.configure(screen.get(), valid)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val sent = CountDownLatch(1)
+        var crumbs = ""
+        MSeismo.send = { _, _, reportJson, _ -> crumbs = JSONObject(reportJson).getJSONArray("breadcrumbs").toString(); sent.countDown(); SendResult.Accepted }
+        MSeismo.report()
+        assertTrue(sent.await(5, TimeUnit.SECONDS))
+        assertTrue(crumbs, """"kind":"navigation","message":"Activity"""" in crumbs)
+    }
+
     private val valid = Configuration(endpoint = "https://seismo.example.com", appKey = "msk_test")
 
     private val queueDir get() = File(app.noBackupFilesDir, "mseismo-queue")

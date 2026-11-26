@@ -79,8 +79,20 @@ public object MSeismo {
 
     // Never throws: an invalid configuration turns the SDK off.
     @JvmStatic
-    @Synchronized
     public fun configure(application: Application, configuration: Configuration) {
+        configure(application, configuration, showing = null)
+    }
+
+    // For SDKs configured once a screen is already showing, such as the
+    // Flutter bridge: activity is that screen, which would otherwise only
+    // get the shake and screenshot triggers on its next resume.
+    @JvmStatic
+    public fun configure(activity: Activity, configuration: Configuration) {
+        configure(activity.application, configuration, showing = activity)
+    }
+
+    @Synchronized
+    private fun configure(application: Application, configuration: Configuration, showing: Activity?) {
         try {
             val debuggable = application.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
             configuration.validate(allowHttp = debuggable)
@@ -94,7 +106,17 @@ public object MSeismo {
             // Send what the last launch left, and retry when the network returns.
             worker.execute { safely { drain() } }
             watchNetwork(application)
-            watchLifecycle(application)
+            watchLifecycle(application).let { callbacks ->
+                // Configured after its first screen resumed (Flutter, React
+                // Native): that screen gets the triggers now, not on its next
+                // resume.
+                val screen = showing
+                if (screen != null && callbacks.isNotEmpty()) {
+                    screen.runOnUiThread {
+                        if (!screen.isFinishing && !screen.isDestroyed) callbacks.forEach { it.onActivityResumed(screen) }
+                    }
+                }
+            }
             if (!catchingCrashes) {
                 catchCrashes(::saveCrash)
                 catchingCrashes = true
@@ -642,17 +664,19 @@ public object MSeismo {
     }
 
     @Synchronized
-    private fun watchLifecycle(app: Application) {
-        if (watchedLifecycleOf === app) return
-        recordLifecycle(app, ::breadcrumb)
-        app.registerActivityLifecycleCallbacks(
+    private fun watchLifecycle(app: Application): List<ActivityCallbacks> {
+        if (watchedLifecycleOf === app) return emptyList()
+        val callbacks = listOf(
+            recordLifecycle(app, ::breadcrumb),
             Triggers(
                 shakeEnabled = { configuration?.shakeEnabled == true },
                 screenshotEnabled = { configuration?.screenshotEnabled == true },
                 onTrigger = ::open,
             ),
         )
+        callbacks.forEach(app::registerActivityLifecycleCallbacks)
         watchedLifecycleOf = app
+        return callbacks
     }
 
     // Logs background failures instead of crashing the app.
