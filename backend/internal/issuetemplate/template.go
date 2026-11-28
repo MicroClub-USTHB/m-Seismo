@@ -16,6 +16,7 @@ type TemplateData struct {
 	Crash       string
 	Environment string
 	Logs        string
+	Triage      string
 }
 
 // compile parses tpl as a Go text/template. Referencing a field TemplateData

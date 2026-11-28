@@ -12,6 +12,7 @@ import (
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/db"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/issue"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/routing"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/triage"
 )
 
 // Module runs the worker in this process, unless worker.enabled is false.
@@ -24,8 +25,14 @@ var Module = fx.Module("worker",
 		func(s *crashprovider.Service) CrashResolver { return s },
 		func(s *attachment.Service) AttachmentLinker { return s },
 		func(c *coordinator.Client) ServiceHealth { return c },
-		func(q Queries, is Issues, r *routing.Router, l Locks, c *coordinator.Client, cr CrashResolver, cfg *config.Config, links AttachmentLinker, health ServiceHealth) *Processor {
-			return NewProcessor(q, is, r, l, c, cfg.Coordinator.Window, cr, links, health)
+		func() *triage.Service {
+			return triage.NewService(nil, nil)
+		},
+		func(s *triage.Service) Triager {
+			return s
+		},
+		func(q Queries, is Issues, r *routing.Router, l Locks, c *coordinator.Client, cr CrashResolver, cfg *config.Config, links AttachmentLinker, health ServiceHealth, triager Triager) *Processor {
+			return NewProcessor(q, is, r, l, c, cfg.Coordinator.Window, cr, links, health, WithTriager(triager))
 		},
 	),
 	fx.Invoke(register),

@@ -9,6 +9,7 @@ import (
 
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/crashprovider"
 	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/ingest"
+	"github.com/MicroClub-USTHB/m-Seismo/backend/internal/triage"
 )
 
 func TestTitle(t *testing.T) {
@@ -106,5 +107,51 @@ func TestTruncate(t *testing.T) {
 	}
 	if truncate("short", 10, "…") != "short" {
 		t.Error("short string changed")
+	}
+}
+
+func TestRender_AutoTriageSection(t *testing.T) {
+	r := &ingest.Report{
+		Platform: "ios",
+		Trigger:  "crash",
+	}
+	info := reportInfo{
+		ID:             uuid.New(),
+		InstallationID: uuid.New(),
+		Triage: triage.Suggestion{
+			Severity:       "critical",
+			SeverityReason: "fatal crash",
+			Labels:         []string{"ios", "crash"},
+			Owner:          "@checkout-team",
+			OwnerReason:    "matched CODEOWNERS rule 'Features/Checkout/*'",
+			Screen:         "CheckoutScreen @everyone\n> breakout",
+			AISummary: &triage.AISummary{
+				Title:         "Crash on checkout",
+				ProbableCause: "Nil pointer in @handler",
+			},
+		},
+	}
+
+	draft := render(r, info)
+	if !strings.Contains(draft.Body, "Auto-Triage Suggestions") {
+		t.Errorf("expected Body to contain 'Auto-Triage Suggestions', got:\n%s", draft.Body)
+	}
+	if !strings.Contains(draft.Body, "Suggested Severity: critical") {
+		t.Errorf("expected Body to contain 'Suggested Severity: critical', got:\n%s", draft.Body)
+	}
+	if !strings.Contains(draft.Body, "Suggested Owner: @checkout-team") {
+		t.Errorf("expected Body to contain 'Suggested Owner: @checkout-team', got:\n%s", draft.Body)
+	}
+	if !strings.Contains(draft.Body, "`ios`, `crash`") {
+		t.Errorf("expected Body to contain formatted labels, got:\n%s", draft.Body)
+	}
+	if !strings.Contains(draft.Body, "Active Screen: CheckoutScreen @\u200beveryone > breakout") {
+		t.Errorf("expected sanitized single-line active screen, got:\n%s", draft.Body)
+	}
+	if !strings.Contains(draft.Body, "Suggested Title: Crash on checkout") {
+		t.Errorf("expected Body to contain suggested title, got:\n%s", draft.Body)
+	}
+	if !strings.Contains(draft.Body, "Probable Cause: Nil pointer in @\u200bhandler") {
+		t.Errorf("expected sanitized probable cause, got:\n%s", draft.Body)
 	}
 }
